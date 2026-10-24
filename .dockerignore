@@ -1,0 +1,10 @@
+**/node_modules
+.git
+.env
+.env.*
+!.env.example
+.superpowers
+docs
+e2e
+scripts
+**/*.test.ts

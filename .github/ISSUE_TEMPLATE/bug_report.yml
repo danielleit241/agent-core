@@ -1,0 +1,54 @@
+name: Bug report
+description: Something does not work as documented.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Security problem? Do not use this form. Follow SECURITY.md instead.
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What did you see? Include error messages and the `run_id` if there is one.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      description: The smallest set of requests or commands that shows the problem.
+      placeholder: |
+        1. POST /v1/connections with …
+        2. POST /v1/runs with …
+        3. GET /v1/runs/{id} returns …
+    validations:
+      required: true
+  - type: input
+    id: commit
+    attributes:
+      label: Commit or version
+      placeholder: "for example 3f2a1c9, or v0.1.0"
+    validations:
+      required: true
+  - type: input
+    id: env
+    attributes:
+      label: Environment
+      placeholder: "for example Ubuntu 24.04, Node 24.1, Postgres 17.2, model via OpenRouter"
+  - type: dropdown
+    id: severity
+    attributes:
+      label: Impact
+      options:
+        - "Low: inconvenient, has a workaround"
+        - "Medium: a feature is broken, no easy workaround"
+        - "High: wrong action taken, data lost, or service down"
+    validations:
+      required: true

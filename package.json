@@ -1,0 +1,40 @@
+{
+  "name": "agent-core",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=24",
+    "pnpm": ">=10"
+  },
+  "packageManager": "pnpm@10.34.8",
+  "scripts": {
+    "test": "vitest run --project unit",
+    "test:db": "vitest run --project db --no-file-parallelism --passWithNoTests",
+    "e2e": "vitest run --project e2e --no-file-parallelism --passWithNoTests",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "lint": "eslint .",
+    "db:up": "docker compose up -d --wait postgres",
+    "dev": "tsx watch --env-file-if-exists=.env apps/service/src/main.ts",
+    "start": "tsx --env-file-if-exists=.env apps/service/src/main.ts",
+    "mock:shop": "tsx scripts/mock-shop.ts",
+    "smoke:live": "tsx --env-file-if-exists=.env scripts/smoke-live.ts"
+  },
+  "dependencies": {},
+  "devDependencies": {
+    "@agent-core/core": "workspace:*",
+    "@agent-core/fake-llm": "workspace:*",
+    "@agent-core/llm-openai": "workspace:*",
+    "@agent-core/service": "workspace:*",
+    "@agent-core/shop": "workspace:*",
+    "@agent-core/store-postgres": "workspace:*",
+    "@agent-core/tools-mcp": "workspace:*",
+    "@agent-core/webhooks": "workspace:*",
+    "@types/node": "^24.0.0",
+    "eslint": "^9.0.0",
+    "tsx": "^4.0.0",
+    "typescript": "^5.0.0",
+    "typescript-eslint": "^8.0.0",
+    "vitest": "^3.0.0"
+  }
+}

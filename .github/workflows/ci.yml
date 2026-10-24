@@ -1,0 +1,61 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: agentcore
+          POSTGRES_PASSWORD: agentcore
+          POSTGRES_DB: agentcore_test
+        ports:
+          - 5433:5432
+        options: >-
+          --health-cmd "pg_isready -h localhost -U agentcore -d agentcore_test"
+          --health-interval 2s
+          --health-timeout 5s
+          --health-retries 30
+    env:
+      TEST_DATABASE_URL: postgres://agentcore:agentcore@localhost:5433/agentcore_test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm lint
+      - run: pnpm typecheck
+      - run: pnpm test
+      - run: pnpm test:db
+      - run: pnpm e2e
+      - name: Service starts and shuts down cleanly on SIGINT
+        env:
+          DATABASE_URL: postgres://agentcore:agentcore@localhost:5433/agentcore_test
+          AGENT_CORE_ADMIN_KEY: ci-only
+          LLM_BASE_URL: http://127.0.0.1:9/v1
+          LLM_MODEL_DEFAULT: ci-model
+          PORT: '7300'
+        run: |
+          node --import tsx apps/service/src/main.ts &
+          pid=$!
+          for _ in $(seq 1 60); do
+            curl -fs localhost:7300/healthz && break
+            sleep 0.5
+          done
+          curl -fs localhost:7300/healthz
+          kill -INT "$pid"
+          wait "$pid"

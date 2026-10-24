@@ -1,0 +1,17 @@
+{
+  "name": "@agent-core/webhooks",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@agent-core/core": "workspace:*",
+    "@agent-core/store-postgres": "workspace:*",
+    "pg": "^8.0.0"
+  },
+  "devDependencies": {
+    "@types/pg": "^8.0.0"
+  }
+}

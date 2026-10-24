@@ -1,0 +1,14 @@
+name: Nightly
+
+# Same checks as CI, every day on main. The release gate's soak period counts these runs.
+on:
+  schedule:
+    - cron: '0 2 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  checks:
+    uses: ./.github/workflows/ci.yml

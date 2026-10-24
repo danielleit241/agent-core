@@ -1,0 +1,15 @@
+{
+  "name": "@agent-core/llm-openai",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@agent-core/core": "workspace:*"
+  },
+  "devDependencies": {
+    "@agent-core/fake-llm": "workspace:*"
+  }
+}
