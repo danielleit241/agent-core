@@ -209,7 +209,7 @@ Each task has an ID, a short description and a "done when" line. Only the next m
 - [x] **M0.10** HTTP service: minimal Config and Control APIs, `/healthz`, API-key auth. *Done when:* HTTP tests pass.
 - [x] **M0.11** End-to-end test and live smoke test. *Done when:* `pnpm e2e` and `pnpm smoke:live` pass.
 - [x] **M0.12** README quickstart, ADRs 0001–0004, M0 learning note. *Done when:* a newcomer can follow the README and reproduce the demo.
-- [ ] **M0.13** Continuous integration: a CI workflow runs every check on each pull request and on `main`; community files are updated with the real commands. *Done when:* CI is green on `main`. No version is tagged.
+- [x] **M0.13** Continuous integration: a CI workflow runs every check on each pull request and on `main`; community files are updated with the real commands. *Done when:* CI is green on `main`. No version is tagged.
 
 ### M1 — Evals and tools
 
