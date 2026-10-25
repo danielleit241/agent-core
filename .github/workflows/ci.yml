@@ -40,18 +40,23 @@ jobs:
       - run: pnpm lint
       - run: pnpm typecheck
       - run: pnpm test
+      # The service container does not run docker/initdb, so create the runtime login role here.
+      - name: Create the runtime role
+        run: psql "$TEST_DATABASE_URL" -v ON_ERROR_STOP=1 -f docker/initdb/02-runtime-user.sql
       - run: pnpm test:db
       - run: pnpm e2e
       - name: Evals replay from the recorded cassette (no LLM calls)
         run: pnpm eval
       - name: Service starts and shuts down cleanly on SIGINT
         env:
-          DATABASE_URL: postgres://agentcore:agentcore@localhost:5433/agentcore_test
+          DATABASE_URL: postgres://agentcore_runtime:agentcore_runtime@localhost:5433/agentcore_test
+          MIGRATOR_DATABASE_URL: postgres://agentcore:agentcore@localhost:5433/agentcore_test
           AGENT_CORE_ADMIN_KEY: ci-only
           LLM_BASE_URL: http://127.0.0.1:9/v1
           LLM_MODEL_DEFAULT: ci-model
           PORT: '7300'
         run: |
+          export AGENT_CORE_MASTER_KEY="$(openssl rand -base64 32)"
           node --import tsx apps/service/src/main.ts &
           pid=$!
           for _ in $(seq 1 60); do
