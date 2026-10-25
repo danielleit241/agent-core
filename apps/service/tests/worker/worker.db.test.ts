@@ -618,3 +618,30 @@ test("onRunSettled receives the run's tenant", async () => {
   await worker.stop()
   expect(settled).toEqual([['ra1', 'a', 'completed']])
 })
+
+test('a connection secret that cannot be decrypted fails the run once and does not retry', async () => {
+  const config = new ConfigRepo(pool, 'default', box)
+  await config.putConnection({ id: 'hook', kind: 'webhook', url: 'http://h/x', secret: 'plain-secret', tools: [] })
+  const { version } = await config.putAgent({ ...agent, connections: ['hook'] })
+  await seedRun('rd1', 'helper', version)
+  const settled: Array<[string, RunStatus]> = []
+  const worker = startRunWorker({
+    secrets: createSecretBox(Buffer.alloc(32, 9)), // another master key: the stored secret does not open
+    pool,
+    llm,
+    tools,
+    workerId: 'w1',
+    pollMs: 20,
+    onRunSettled: async (id, _tenantId, status) => {
+      settled.push([id, status])
+    },
+  })
+  await waitFor(() => settled.length === 1)
+  await worker.stop()
+  expect(settled).toEqual([['rd1', 'failed']])
+  expect(await queueRows()).toBe(0)
+  const events = await new PgRunStore(pool, 'default').readEvents('rd1')
+  const raised = events.find((e) => e.type === 'error.raised')
+  expect(raised?.payload).toMatchObject({ message: 'connection secret could not be decrypted: hook', retryable: false })
+  expect(JSON.stringify(events)).not.toContain('plain-secret')
+})

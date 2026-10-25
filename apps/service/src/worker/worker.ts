@@ -1,4 +1,4 @@
-import { advanceRun, projectRun } from '@agent-core/core'
+import { SecretDecryptError, advanceRun, projectRun } from '@agent-core/core'
 import type { AgentDefinition, LLMPort, RunStatus, SecretBox, ToolDescriptor, ToolInvoker } from '@agent-core/core'
 import {
   ConfigRepo,
@@ -52,7 +52,14 @@ async function loadContext(pool: Pool, secrets: SecretBox, runId: string, tenant
   // No prototype: a tool named `toString` must not collide with inherited members.
   const toolsByName: Record<string, ToolDescriptor> = Object.create(null)
   for (const connectionId of agent.definition.connections) {
-    const connection = await config.getConnection(connectionId)
+    let connection: Awaited<ReturnType<typeof config.getConnection>>
+    try {
+      connection = await config.getConnection(connectionId)
+    } catch (err) {
+      // Wrong master key or damaged data: retrying cannot help. The message names the connection only.
+      if (err instanceof SecretDecryptError) throw new ConfigError(`connection secret could not be decrypted: ${connectionId}`)
+      throw err
+    }
     if (!connection) throw new ConfigError(`connection not found: ${connectionId}`)
     for (const tool of connection.tools) {
       if (Object.hasOwn(toolsByName, tool.name)) throw new ConfigError(`duplicate tool name: ${tool.name}`)
