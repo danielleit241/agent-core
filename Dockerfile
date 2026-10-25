@@ -11,8 +11,7 @@ COPY packages/core/package.json packages/core/
 COPY packages/protocol/package.json packages/protocol/
 COPY packages/llm/package.json packages/llm/
 COPY packages/store-postgres/package.json packages/store-postgres/
-COPY packages/tools-mcp/package.json packages/tools-mcp/
-COPY packages/tools-webhook/package.json packages/tools-webhook/
+COPY packages/tools/package.json packages/tools/
 COPY packages/webhooks/package.json packages/webhooks/
 COPY apps/evals/package.json apps/evals/
 COPY apps/service/package.json apps/service/

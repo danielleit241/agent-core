@@ -51,6 +51,7 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions exist
 - A transient LLM error (network, timeout, 429, 5xx) no longer fails the run. The run stays `running` and is retried after 30, 60, 120, 240 and 300 seconds (±20%), or longer when the provider's `Retry-After` asks for it (a hint can only lengthen a wait, and no wait is over 5 minutes, so the last wait is 240 to 300 seconds); the sixth failure in a row fails it. `error.raised` gains `retryAt`.
 - Source layout: adapters moved from `packages/adapters/*` to `packages/*`.
 - `@agent-core/llm` replaces `llm-openai` and `llm-cassette`; each provider is a folder under `src/providers/`.
+- `@agent-core/tools` replaces `tools-mcp` and `tools-webhook`; each tool protocol is a folder under `src/`.
 
 ### Upgrade notes
 

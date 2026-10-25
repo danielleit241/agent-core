@@ -32,12 +32,9 @@ importers:
       '@agent-core/store-postgres':
         specifier: workspace:*
         version: link:packages/store-postgres
-      '@agent-core/tools-mcp':
+      '@agent-core/tools':
         specifier: workspace:*
-        version: link:packages/tools-mcp
-      '@agent-core/tools-webhook':
-        specifier: workspace:*
-        version: link:packages/tools-webhook
+        version: link:packages/tools
       '@types/node':
         specifier: ^24.0.0
         version: 24.19.2
@@ -89,12 +86,9 @@ importers:
       '@agent-core/store-postgres':
         specifier: workspace:*
         version: link:../../packages/store-postgres
-      '@agent-core/tools-mcp':
+      '@agent-core/tools':
         specifier: workspace:*
-        version: link:../../packages/tools-mcp
-      '@agent-core/tools-webhook':
-        specifier: workspace:*
-        version: link:../../packages/tools-webhook
+        version: link:../../packages/tools
       '@agent-core/webhooks':
         specifier: workspace:*
         version: link:../../packages/webhooks
@@ -157,20 +151,7 @@ importers:
         specifier: ^8.0.0
         version: 8.23.1
 
-  packages/tools-mcp:
-    dependencies:
-      '@agent-core/core':
-        specifier: workspace:*
-        version: link:../core
-      '@modelcontextprotocol/sdk':
-        specifier: ^1.0.0
-        version: 1.32.2(zod@4.6.7)
-    devDependencies:
-      '@agent-core/shop':
-        specifier: workspace:*
-        version: link:../../mocks/shop
-
-  packages/tools-webhook:
+  packages/tools:
     dependencies:
       '@agent-core/core':
         specifier: workspace:*
@@ -178,6 +159,13 @@ importers:
       '@agent-core/protocol':
         specifier: workspace:*
         version: link:../protocol
+      '@modelcontextprotocol/sdk':
+        specifier: ^1.0.0
+        version: 1.32.2(zod@4.6.7)
+    devDependencies:
+      '@agent-core/shop':
+        specifier: workspace:*
+        version: link:../../mocks/shop
 
   packages/webhooks:
     dependencies:
