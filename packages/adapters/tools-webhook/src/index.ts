@@ -145,13 +145,8 @@ export function createWebhookInvoker(
       if (ctx.dryRun && tool.safety.effect === 'write' && tool.supports?.includes('dry-run') !== true) {
         throw new WebhookToolError(`dry_run_not_supported: ${tool.name}`, 'dry_run_not_supported', true)
       }
-      try {
-        return await attempt(tool, args, ctx)
-      } catch (err) {
-        // Only reads are retried (once, same key); a write may already have executed.
-        if (tool.safety.effect !== 'read' || !(err instanceof WebhookToolError) || err.notSent) throw err
-        return attempt(tool, args, ctx)
-      }
+      // One attempt only: the runner owns retries.
+      return attempt(tool, args, ctx)
     },
   }
 }
