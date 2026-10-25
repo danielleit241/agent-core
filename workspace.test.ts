@@ -54,8 +54,13 @@ test('library packages never depend on apps or mocks at runtime, nor on apps in 
   expect(violations).toEqual([])
 })
 
+test('packages are one level deep', () => {
+  const nested = packages.filter((m) => posix(relative(ROOT, m.dir)).split('/').length !== 2)
+  expect(nested.map((m) => m.file)).toEqual([])
+})
+
 test('adapters depend at runtime only on core and protocol among workspace packages', () => {
-  const adapters = packages.filter((m) => posix(relative(ROOT, m.dir)).startsWith('packages/adapters/'))
+  const adapters = packages.filter((m) => m.name !== '@agent-core/core' && m.name !== '@agent-core/protocol')
   expect(adapters.length).toBeGreaterThan(0)
   const violations: string[] = []
   for (const m of adapters) {

@@ -19,10 +19,10 @@ importers:
         version: link:mocks/fake-llm
       '@agent-core/llm-cassette':
         specifier: workspace:*
-        version: link:packages/adapters/llm-cassette
+        version: link:packages/llm-cassette
       '@agent-core/llm-openai':
         specifier: workspace:*
-        version: link:packages/adapters/llm-openai
+        version: link:packages/llm-openai
       '@agent-core/protocol':
         specifier: workspace:*
         version: link:packages/protocol
@@ -34,13 +34,13 @@ importers:
         version: link:mocks/shop
       '@agent-core/store-postgres':
         specifier: workspace:*
-        version: link:packages/adapters/store-postgres
+        version: link:packages/store-postgres
       '@agent-core/tools-mcp':
         specifier: workspace:*
-        version: link:packages/adapters/tools-mcp
+        version: link:packages/tools-mcp
       '@agent-core/tools-webhook':
         specifier: workspace:*
-        version: link:packages/adapters/tools-webhook
+        version: link:packages/tools-webhook
       '@types/node':
         specifier: ^24.0.0
         version: 24.19.2
@@ -67,10 +67,10 @@ importers:
         version: link:../../packages/core
       '@agent-core/llm-cassette':
         specifier: workspace:*
-        version: link:../../packages/adapters/llm-cassette
+        version: link:../../packages/llm-cassette
       '@agent-core/llm-openai':
         specifier: workspace:*
-        version: link:../../packages/adapters/llm-openai
+        version: link:../../packages/llm-openai
       '@agent-core/service':
         specifier: workspace:*
         version: link:../service
@@ -79,7 +79,7 @@ importers:
         version: link:../../mocks/shop
       '@agent-core/store-postgres':
         specifier: workspace:*
-        version: link:../../packages/adapters/store-postgres
+        version: link:../../packages/store-postgres
       zod:
         specifier: ^4.6.7
         version: 4.6.7
@@ -91,19 +91,19 @@ importers:
         version: link:../../packages/core
       '@agent-core/llm-openai':
         specifier: workspace:*
-        version: link:../../packages/adapters/llm-openai
+        version: link:../../packages/llm-openai
       '@agent-core/store-postgres':
         specifier: workspace:*
-        version: link:../../packages/adapters/store-postgres
+        version: link:../../packages/store-postgres
       '@agent-core/tools-mcp':
         specifier: workspace:*
-        version: link:../../packages/adapters/tools-mcp
+        version: link:../../packages/tools-mcp
       '@agent-core/tools-webhook':
         specifier: workspace:*
-        version: link:../../packages/adapters/tools-webhook
+        version: link:../../packages/tools-webhook
       '@agent-core/webhooks':
         specifier: workspace:*
-        version: link:../../packages/adapters/webhooks
+        version: link:../../packages/webhooks
       fastify:
         specifier: ^5.0.0
         version: 5.12.7
@@ -129,30 +129,38 @@ importers:
         specifier: ^4.0.0
         version: 4.6.7
 
-  packages/adapters/llm-cassette:
+  packages/core:
     dependencies:
-      '@agent-core/core':
-        specifier: workspace:*
-        version: link:../../core
+      zod:
+        specifier: ^4.0.0
+        version: 4.6.7
 
-  packages/adapters/llm-openai:
+  packages/llm-cassette:
     dependencies:
       '@agent-core/core':
         specifier: workspace:*
-        version: link:../../core
+        version: link:../core
+
+  packages/llm-openai:
+    dependencies:
+      '@agent-core/core':
+        specifier: workspace:*
+        version: link:../core
       zod:
         specifier: ^4.6.7
         version: 4.6.7
     devDependencies:
       '@agent-core/fake-llm':
         specifier: workspace:*
-        version: link:../../../mocks/fake-llm
+        version: link:../../mocks/fake-llm
 
-  packages/adapters/store-postgres:
+  packages/protocol: {}
+
+  packages/store-postgres:
     dependencies:
       '@agent-core/core':
         specifier: workspace:*
-        version: link:../../core
+        version: link:../core
       pg:
         specifier: ^8.0.0
         version: 8.23.1
@@ -161,36 +169,36 @@ importers:
         specifier: ^8.0.0
         version: 8.23.1
 
-  packages/adapters/tools-mcp:
+  packages/tools-mcp:
     dependencies:
       '@agent-core/core':
         specifier: workspace:*
-        version: link:../../core
+        version: link:../core
       '@modelcontextprotocol/sdk':
         specifier: ^1.0.0
         version: 1.32.2(zod@4.6.7)
     devDependencies:
       '@agent-core/shop':
         specifier: workspace:*
-        version: link:../../../mocks/shop
+        version: link:../../mocks/shop
 
-  packages/adapters/tools-webhook:
+  packages/tools-webhook:
     dependencies:
       '@agent-core/core':
         specifier: workspace:*
-        version: link:../../core
+        version: link:../core
       '@agent-core/protocol':
         specifier: workspace:*
-        version: link:../../protocol
+        version: link:../protocol
 
-  packages/adapters/webhooks:
+  packages/webhooks:
     dependencies:
       '@agent-core/core':
         specifier: workspace:*
-        version: link:../../core
+        version: link:../core
       '@agent-core/protocol':
         specifier: workspace:*
-        version: link:../../protocol
+        version: link:../protocol
       pg:
         specifier: ^8.0.0
         version: 8.23.1
@@ -201,14 +209,6 @@ importers:
       '@types/pg':
         specifier: ^8.0.0
         version: 8.23.1
-
-  packages/core:
-    dependencies:
-      zod:
-        specifier: ^4.0.0
-        version: 4.6.7
-
-  packages/protocol: {}
 
 packages:
 

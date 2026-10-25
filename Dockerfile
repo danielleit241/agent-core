@@ -9,12 +9,12 @@ WORKDIR /app
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 COPY packages/core/package.json packages/core/
 COPY packages/protocol/package.json packages/protocol/
-COPY packages/adapters/llm-cassette/package.json packages/adapters/llm-cassette/
-COPY packages/adapters/llm-openai/package.json packages/adapters/llm-openai/
-COPY packages/adapters/store-postgres/package.json packages/adapters/store-postgres/
-COPY packages/adapters/tools-mcp/package.json packages/adapters/tools-mcp/
-COPY packages/adapters/tools-webhook/package.json packages/adapters/tools-webhook/
-COPY packages/adapters/webhooks/package.json packages/adapters/webhooks/
+COPY packages/llm-cassette/package.json packages/llm-cassette/
+COPY packages/llm-openai/package.json packages/llm-openai/
+COPY packages/store-postgres/package.json packages/store-postgres/
+COPY packages/tools-mcp/package.json packages/tools-mcp/
+COPY packages/tools-webhook/package.json packages/tools-webhook/
+COPY packages/webhooks/package.json packages/webhooks/
 COPY apps/evals/package.json apps/evals/
 COPY apps/service/package.json apps/service/
 COPY mocks/fake-llm/package.json mocks/fake-llm/
