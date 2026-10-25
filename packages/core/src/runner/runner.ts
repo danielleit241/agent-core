@@ -215,7 +215,8 @@ async function llmStep(
         { role: 'system', content: `Current time: ${now.toISOString()}`, volatile: true },
         ...proj.messages.slice(at),
       ],
-      tools: Object.values(deps.toolsByName),
+      // A tool changed since review stays hidden until an owner reviews it again.
+      tools: Object.values(deps.toolsByName).filter((t) => t.changedSinceReview !== true),
     })
   } catch (err) {
     await store.append(runId, [
