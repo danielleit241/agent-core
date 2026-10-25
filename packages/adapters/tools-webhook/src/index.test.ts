@@ -3,9 +3,8 @@ import type { IncomingMessage, Server, ServerResponse } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import { afterEach, expect, test } from 'vitest'
 import type { ToolDescriptor } from '@agent-core/core'
-import { verifyWebhook } from '@agent-core/webhooks'
+import { verifyPrincipalJwt, verifyWebhook } from '@agent-core/protocol'
 import { WebhookToolError, createWebhookInvoker } from './index'
-import { verifyPrincipalJwt } from './jwt'
 
 const SECRET = 'whsec-very-secret'
 const NOW_MS = 1761290000_000

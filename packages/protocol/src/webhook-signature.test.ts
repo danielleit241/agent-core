@@ -1,5 +1,5 @@
 import { expect, test } from 'vitest'
-import { signWebhook, verifyWebhook } from './sign'
+import { signWebhook, verifyWebhook } from './webhook-signature'
 
 test('a valid signature verifies', () => {
   const h = signWebhook('{"a":1}', 's3cret', 1761290000)

@@ -93,7 +93,7 @@ pnpm test         # unit tests
 pnpm test:db      # tests that need Postgres (*.db.test.ts)
 pnpm e2e          # end-to-end over real HTTP, with a fake LLM
 pnpm smoke:live   # one run against a real model; uses LLM_BASE_URL and LLM_API_KEY; skips when they are not set
-pnpm eval         # shop eval scenarios, replayed from a recorded cassette (no LLM calls); see packages/evals/README.md
+pnpm eval         # shop eval scenarios, replayed from a recorded cassette (no LLM calls); see apps/evals/README.md
 ```
 
 ## Contributing
