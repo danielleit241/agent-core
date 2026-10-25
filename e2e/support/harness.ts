@@ -20,6 +20,9 @@ export type Stack = {
   /** Like `api`, but with the given API key instead of the admin key. */
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   apiAs(key: string, method: string, path: string, body?: unknown): Promise<{ status: number; body: any }>
+  /** Admin key with `X-Tenant-Id`: registers connections and webhooks for a tenant. */
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  apiForTenant(tenant: string, method: string, path: string, body?: unknown): Promise<{ status: number; body: any }>
   shop: Awaited<ReturnType<typeof startShop>>
   receiver: { url: string; received: Received[] }
   close(): Promise<void>
@@ -73,11 +76,12 @@ export async function startStack(script: FakeTurn[], opts: StackOpts = {}): Prom
   await stack.app.listen({ port: 0, host: '127.0.0.1' })
   const baseUrl = `http://127.0.0.1:${(stack.app.server.address() as AddressInfo).port}`
 
-  async function request(key: string, method: string, path: string, body?: unknown, timeoutMs?: number) {
+  async function request(key: string, method: string, path: string, body?: unknown, timeoutMs?: number, tenant?: string) {
     const res = await fetch(baseUrl + path, {
       method,
       headers: {
         Authorization: `Bearer ${key}`,
+        ...(tenant === undefined ? {} : { 'X-Tenant-Id': tenant }),
         ...(body === undefined ? {} : { 'Content-Type': 'application/json' }),
       },
       body: body === undefined ? undefined : JSON.stringify(body),
@@ -90,6 +94,7 @@ export async function startStack(script: FakeTurn[], opts: StackOpts = {}): Prom
   return {
     api: (method, path, body, timeoutMs) => request(ADMIN_KEY, method, path, body, timeoutMs),
     apiAs: (key, method, path, body) => request(key, method, path, body),
+    apiForTenant: (tenant, method, path, body) => request(ADMIN_KEY, method, path, body, undefined, tenant),
     shop,
     receiver: { url: receiverUrl, received },
     async close() {

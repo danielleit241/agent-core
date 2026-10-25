@@ -1,6 +1,6 @@
 import type pg from 'pg'
 import { afterAll, beforeAll, beforeEach, expect, test } from 'vitest'
-import { assertTestDatabase, createPool, createTenant, resolveApiKey, runMigrations, runtimeTestUrl } from '../../src'
+import { assertTestDatabase, createApiKey, createPool, createTenant, resolveApiKey, runMigrations, runtimeTestUrl } from '../../src'
 
 const url = process.env.TEST_DATABASE_URL ?? 'postgres://agentcore:agentcore@localhost:5433/agentcore_test'
 let migrator: pg.Pool
@@ -49,4 +49,19 @@ test('resolveApiKey returns null for a wrong secret, an unknown tenant, a malfor
     expect(await resolveApiKey(pool, bad)).toBeNull()
   }
   expect(await resolveApiKey(pool, `ak_v1.${'a'.repeat(65)}.${secretA}`)).toBeNull()
+})
+
+test('createApiKey adds a second key; the old key keeps working', async () => {
+  const first = (await createTenant(pool, 'acme'))!
+  const second = await createApiKey(pool, 'acme')
+  expect(second).toMatch(/^ak_v1\.acme\.[A-Za-z0-9_-]{43}$/)
+  expect(second).not.toBe(first.apiKey)
+  expect(await resolveApiKey(pool, second!)).toBe('acme')
+  expect(await resolveApiKey(pool, first.apiKey)).toBe('acme')
+  expect((await migrator.query('SELECT 1 FROM api_keys WHERE tenant_id = $1', ['acme'])).rowCount).toBe(2)
+})
+
+test('createApiKey returns null for a tenant that does not exist', async () => {
+  expect(await createApiKey(pool, 'ghost')).toBeNull()
+  expect((await migrator.query('SELECT 1 FROM api_keys')).rowCount).toBe(0)
 })

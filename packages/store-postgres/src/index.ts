@@ -15,7 +15,7 @@ export {
 export type { RunRow } from './runs/run-store'
 export { runMigrations, runtimeUserOf } from './db/migrate'
 export { InvalidTenantError, TENANT_ID_PATTERN, withClaim, withService, withTenant } from './db/scope'
-export { createTenant, resolveApiKey } from './tenants/tenant-repo'
+export { createApiKey, createTenant, resolveApiKey } from './tenants/tenant-repo'
 export { ConfigRepo, NO_REVIEW } from './config/config-repo'
 export type { Connection, LoadedTool, StoredTool } from './config/config-repo'
 export { ModelProfileRepo } from './config/model-profiles'

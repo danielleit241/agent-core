@@ -1,5 +1,6 @@
 import { createHash, timingSafeEqual } from 'node:crypto'
 import type { FastifyRequest } from 'fastify'
+import { TENANT_ID_PATTERN } from '@agent-core/store-postgres'
 import { apiError } from './errors'
 
 declare module 'fastify' {
@@ -44,4 +45,35 @@ export function requireAdmin(req: FastifyRequest): void {
   if (!req.auth.admin) {
     throw apiError('forbidden', 'This endpoint needs the admin key.', 'Call it with "Authorization: Bearer <AGENT_CORE_ADMIN_KEY>".', 403)
   }
+}
+
+/** Routes where an admin may act for another tenant with the `X-Tenant-Id` header. */
+const TENANT_HEADER_ROUTES = /^\/v1\/(connections|webhooks)(\/|$)/
+
+/**
+ * Applies `X-Tenant-Id` to `auth`. Only the admin key may send it, and only on the connection and webhook routes
+ * (URL registration is admin-only until the SSRF guard exists). `tenantExists` reads the tenants table.
+ */
+export async function applyTenantHeader(
+  auth: Auth,
+  header: string | string[] | undefined,
+  route: string,
+  tenantExists: (id: string) => Promise<boolean>,
+): Promise<Auth> {
+  if (header === undefined) return auth
+  if (!auth.admin || !TENANT_HEADER_ROUTES.test(route) || typeof header !== 'string') {
+    throw apiError(
+      'tenant_header_not_allowed',
+      'The X-Tenant-Id header is not allowed here.',
+      'Send X-Tenant-Id only with the admin key, on /v1/connections and /v1/webhooks routes.',
+      400,
+    )
+  }
+  if (!TENANT_ID_PATTERN.test(header)) {
+    throw apiError('invalid_tenant', 'The X-Tenant-Id header is not a valid tenant id.', 'Use a tenant id that matches ^[a-z0-9_-]{1,64}$.', 400)
+  }
+  if (!(await tenantExists(header))) {
+    throw apiError('tenant_not_found', `Tenant "${header}" does not exist.`, 'Create the tenant with POST /v1/tenants first.', 404)
+  }
+  return { ...auth, tenantId: header }
 }

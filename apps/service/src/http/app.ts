@@ -2,9 +2,9 @@ import Fastify from 'fastify'
 import type { FastifyInstance } from 'fastify'
 import { discoverMcpTools } from '@agent-core/tools'
 import type { SecretBox } from '@agent-core/core'
-import { resolveApiKey } from '@agent-core/store-postgres'
+import { resolveApiKey, withTenant } from '@agent-core/store-postgres'
 import type { createPool } from '@agent-core/store-postgres'
-import { authenticate } from './auth'
+import { applyTenantHeader, authenticate } from './auth'
 import { ApiError, apiError } from './errors'
 import { registerIdempotency } from './idempotency'
 import { registerConfigRoutes } from './routes/config'
@@ -63,7 +63,12 @@ export function buildApp(deps: AppDeps): FastifyInstance {
   void app.register(async (v1) => {
     v1.decorateRequest('auth')
     v1.addHook('onRequest', async (req) => {
-      req.auth = await authenticate(req.headers.authorization, deps.adminKey, (key) => resolveApiKey(deps.pool, key))
+      const auth = await authenticate(req.headers.authorization, deps.adminKey, (key) => resolveApiKey(deps.pool, key))
+      // Resolved here, before the idempotency hook, so idempotency rows live in the target tenant.
+      req.auth = await applyTenantHeader(auth, req.headers['x-tenant-id'], req.routeOptions.url ?? req.url, async (id) => {
+        const found = await withTenant(deps.pool, id, (client) => client.query('SELECT 1 FROM tenants WHERE id = $1', [id]))
+        return found.rowCount === 1
+      })
     })
     registerIdempotency(v1, { pool: deps.pool })
     registerConfigRoutes(v1, { pool: deps.pool, secrets: deps.secrets, discoverTools: deps.discoverTools ?? discoverMcpTools })

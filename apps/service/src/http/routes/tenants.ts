@@ -1,6 +1,6 @@
 import type { FastifyInstance } from 'fastify'
 import { z } from 'zod'
-import { TENANT_ID_PATTERN, createTenant } from '@agent-core/store-postgres'
+import { TENANT_ID_PATTERN, createApiKey, createTenant } from '@agent-core/store-postgres'
 import type { createPool } from '@agent-core/store-postgres'
 import { requireAdmin } from '../auth'
 import { apiError, validationError } from '../errors'
@@ -18,5 +18,15 @@ export function registerTenantRoutes(app: FastifyInstance, deps: { pool: ReturnT
     }
     // The key is shown once. The idempotency record keeps no copy of it.
     return reply.code(201).send({ id: created.id, api_key: created.apiKey })
+  })
+
+  app.post<{ Params: { id: string } }>('/v1/tenants/:id/keys', { config: { idempotent: true } }, async (req, reply) => {
+    requireAdmin(req)
+    const apiKey = TENANT_ID_PATTERN.test(req.params.id) ? await createApiKey(deps.pool, req.params.id) : null
+    if (apiKey === null) {
+      throw apiError('tenant_not_found', `Tenant "${req.params.id}" does not exist.`, 'Create the tenant with POST /v1/tenants first.', 404)
+    }
+    // The key is shown once. The idempotency record keeps no copy of it.
+    return reply.code(201).send({ tenant_id: req.params.id, api_key: apiKey })
   })
 }

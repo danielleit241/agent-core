@@ -55,8 +55,8 @@ test("a completed run delivers only to its own tenant, signed with that tenant's
   const keyB = await createTenantKey(s, 'b')
   const recvA = await startReceiver()
   const recvB = await startReceiver()
-  const hookA = await s.apiAs(keyA, 'POST', '/v1/webhooks', { url: recvA.url, events: ['run.completed'] })
-  const hookB = await s.apiAs(keyB, 'POST', '/v1/webhooks', { url: recvB.url, events: ['run.completed'] })
+  const hookA = await s.apiForTenant('a', 'POST', '/v1/webhooks', { url: recvA.url, events: ['run.completed'] })
+  const hookB = await s.apiForTenant('b', 'POST', '/v1/webhooks', { url: recvB.url, events: ['run.completed'] })
   expect(hookA.status).toBe(201)
   expect(hookB.status).toBe(201)
   for (const key of [keyA, keyB]) {
@@ -84,9 +84,9 @@ test("a completed run delivers only to its own tenant, signed with that tenant's
 
 test('an agent of b that names a connection of a is rejected with unknown_connection', async () => {
   const s = (stack = await startStack([]))
-  const keyA = await createTenantKey(s, 'a')
+  await createTenantKey(s, 'a')
   const keyB = await createTenantKey(s, 'b')
-  expect((await s.apiAs(keyA, 'POST', '/v1/connections', { id: 'shop', url: s.shop.url })).status).toBe(201)
+  expect((await s.apiForTenant('a', 'POST', '/v1/connections', { id: 'shop', url: s.shop.url })).status).toBe(201)
 
   const res = await s.apiAs(keyB, 'POST', '/v1/agents', {
     id: 'helper',
@@ -112,7 +112,7 @@ test('two tenants with the same connection id call only their own shop', async (
     ['b', shopB],
   ] as const) {
     const key = keys[tenant]
-    const conn = await s.apiAs(key, 'POST', '/v1/connections', { id: 'shop', url: shop.url })
+    const conn = await s.apiForTenant(tenant, 'POST', '/v1/connections', { id: 'shop', url: shop.url })
     expect(conn.status).toBe(201)
     for (const t of conn.body.tools as { name: string }[]) {
       const res = await s.apiAs(key, 'PATCH', `/v1/connections/shop/tools/${encodeURIComponent(t.name)}`, { confirm: 'proposed' })

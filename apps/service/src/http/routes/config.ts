@@ -6,6 +6,7 @@ import type { SecretBox, ToolSafety } from '@agent-core/core'
 import { ConfigRepo, NO_REVIEW } from '@agent-core/store-postgres'
 import type { LoadedTool, StoredTool, createPool } from '@agent-core/store-postgres'
 import type { discoverMcpTools } from '@agent-core/tools'
+import { requireAdmin } from '../auth'
 import { apiError, validationError } from '../errors'
 
 const WEBHOOK_EVENTS = ['run.completed', 'run.failed', 'approval.requested', 'run.waiting_human'] as const
@@ -73,7 +74,9 @@ export function registerConfigRoutes(
   const kindConflict = (id: string, kind: string, wanted: string) =>
     apiError('connection_kind_conflict', `Connection "${id}" exists with kind "${kind}".`, `Use a different id for the ${wanted} connection.`, 409)
 
+  // Registering a URL is admin-only until the SSRF guard exists; the admin picks the tenant with X-Tenant-Id.
   app.post('/v1/connections', { config: { idempotent: true } }, async (req, reply) => {
+    requireAdmin(req)
     const config = configFor(req)
     if ((req.body as { kind?: unknown } | null | undefined)?.kind === 'webhook') {
       const wh = WebhookConnectionBody.safeParse(req.body)
@@ -217,6 +220,7 @@ export function registerConfigRoutes(
   })
 
   app.post('/v1/webhooks', { config: { idempotent: true } }, async (req, reply) => {
+    requireAdmin(req)
     const config = configFor(req)
     const parsed = WebhookBody.safeParse(req.body)
     if (!parsed.success) throw validationError(parsed.error)
