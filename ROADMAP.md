@@ -99,7 +99,7 @@ Three parts share one run model. Each has a different job.
 
 ### Architecture
 
-Ports and adapters. `packages/core` holds the domain types, ports, rule gate and runner. It imports nothing except `zod` and `node:crypto`, and lint enforces this. Adapters live in `packages/adapters/*`. `apps/service` wires them behind HTTP.
+Ports and adapters. `packages/core` holds the domain types, ports, rule gate and runner. It imports nothing except `zod` and `node:crypto`, and lint enforces this. Adapters live in `packages/*` (every package except `core` and `protocol`). `apps/service` wires them behind HTTP.
 
 An append-only event log with a hash chain is the single source of truth. Run state is always recomputed from the log, so resuming after a crash means reading the log again.
 
