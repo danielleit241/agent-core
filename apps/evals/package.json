@@ -8,8 +8,7 @@
   },
   "dependencies": {
     "@agent-core/core": "workspace:*",
-    "@agent-core/llm-cassette": "workspace:*",
-    "@agent-core/llm-openai": "workspace:*",
+    "@agent-core/llm": "workspace:*",
     "@agent-core/service": "workspace:*",
     "@agent-core/shop": "workspace:*",
     "@agent-core/store-postgres": "workspace:*",
