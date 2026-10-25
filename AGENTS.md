@@ -28,7 +28,7 @@ pnpm models:check            # probe the configured models (needs a running serv
 
 - `packages/core` imports only `zod`, `node:crypto` and itself. Adapters live in `packages/*` (every package except `core` and `protocol`).
 - Library packages never depend on apps or mocks at runtime. An adapter depends only on `core`, `protocol` and third-party libraries. `packages/protocol` holds the signed wire formats and imports only `node:crypto`. `workspace.test.ts` checks this.
-- Inside a package, `src/` is grouped by responsibility (for example `events/`, `policy/`, `runner/`); a small package stays flat. Tests sit next to the code they test: `*.test.ts` (unit), `*.db.test.ts` (needs Postgres); end-to-end tests live in `e2e/`.
+- Inside a package, `src/` is grouped by responsibility (for example `events/`, `policy/`, `runner/`); a small package stays flat. Tests live in the package's `tests/` folder, which mirrors `src/`: `*.test.ts` (unit), `*.db.test.ts` (needs Postgres); end-to-end tests live in `e2e/`.
 - The event log is the source of truth. Append only; recompute state from events.
 - Unknown tools are treated as writes that reach outside. Code never loosens a rule by itself.
 - No team code runs inside the service. No new integration paths beyond the three gates.

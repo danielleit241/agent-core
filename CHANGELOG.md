@@ -52,6 +52,7 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions exist
 - Source layout: adapters moved from `packages/adapters/*` to `packages/*`.
 - `@agent-core/llm` replaces `llm-openai` and `llm-cassette`; each provider is a folder under `src/providers/`.
 - `@agent-core/tools` replaces `tools-mcp` and `tools-webhook`; each tool protocol is a folder under `src/`.
+- Tests moved from `src/` to a `tests/` folder in each package that mirrors `src/`.
 
 ### Upgrade notes
 
