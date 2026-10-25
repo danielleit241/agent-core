@@ -28,6 +28,16 @@ export function readServiceConfig(env: NodeJS.ProcessEnv): ServiceConfig | { ok:
   if (missing.length > 0) return { ok: false, error: `missing required environment variable(s): ${missing.join(', ')}` }
   const port = Number(env.PORT ?? 7300)
   if (!Number.isInteger(port) || port < 1 || port > 65535) return { ok: false, error: 'PORT must be an integer from 1 to 65535' }
+  for (const name of ['DATABASE_URL', 'MIGRATOR_DATABASE_URL'] as const) {
+    // The URL holds a password: parse inside try/catch and never put the URL or the parser error in the message.
+    let username: string
+    try {
+      username = new URL(env[name]!).username
+    } catch {
+      return { ok: false, error: `${name} must be a valid postgres URL with a user name` }
+    }
+    if (name === 'DATABASE_URL' && username === '') return { ok: false, error: `${name} must be a valid postgres URL with a user name` }
+  }
   let masterKey: Buffer
   try {
     masterKey = parseMasterKey(env.AGENT_CORE_MASTER_KEY!)

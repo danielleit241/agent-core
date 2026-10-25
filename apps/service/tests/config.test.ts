@@ -53,3 +53,14 @@ test('master key of 16 bytes', () => {
 test('a bad PORT', () => {
   expect(readServiceConfig({ ...full, PORT: '70000' })).toEqual({ ok: false, error: 'PORT must be an integer from 1 to 65535' })
 })
+
+test.each(['DATABASE_URL', 'MIGRATOR_DATABASE_URL'] as const)('a malformed %s with a password is rejected without echoing it', (name) => {
+  const c = readServiceConfig({ ...full, [name]: 'postgres://user:s3cr3t-pw@bad host:5433/db' })
+  expect(c).toEqual({ ok: false, error: `${name} must be a valid postgres URL with a user name` })
+  expect(JSON.stringify(c)).not.toContain('s3cr3t-pw')
+})
+
+test('DATABASE_URL without a user name is rejected', () => {
+  const c = readServiceConfig({ ...full, DATABASE_URL: 'postgres://:s3cr3t-pw@localhost:5433/db' })
+  expect(c).toEqual({ ok: false, error: 'DATABASE_URL must be a valid postgres URL with a user name' })
+})

@@ -29,6 +29,7 @@ export function runtimeUserOf(url: string): string {
 
 /** `runtimeUser` is the login role the service connects as; it gets the two scope roles without inheriting them. */
 export async function runMigrations(pool: pg.Pool, opts: { runtimeUser?: string } = {}): Promise<void> {
+  if (opts.runtimeUser === '') throw new Error('DATABASE_URL must name a user (the runtime login role)')
   // The lock comes first: two migrators racing on CREATE TABLE IF NOT EXISTS can still fail.
   await withMigrationLock(pool, async (client) => {
     await client.query('CREATE TABLE IF NOT EXISTS schema_migrations (name text PRIMARY KEY)')
@@ -44,7 +45,10 @@ export async function runMigrations(pool: pg.Pool, opts: { runtimeUser?: string 
       }
     })
   }
-  if (opts.runtimeUser) {
+  if (opts.runtimeUser !== undefined) {
+    // GRANT ... WITH INHERIT FALSE needs PostgreSQL 16.
+    const version = await pool.query<{ v: number }>("SELECT current_setting('server_version_num')::int AS v")
+    if ((version.rows[0]?.v ?? 0) < 160000) throw new Error('PostgreSQL 16 or newer is required')
     const quoted = await pool.query<{ ident: string }>("SELECT format('%I', $1::text) AS ident", [opts.runtimeUser])
     await pool.query(`GRANT agentcore_app, agentcore_claim TO ${quoted.rows[0]?.ident} WITH INHERIT FALSE, SET TRUE`)
   }
