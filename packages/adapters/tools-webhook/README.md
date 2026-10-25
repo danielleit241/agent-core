@@ -20,7 +20,7 @@ Headers:
 | --- | --- |
 | `Content-Type` | `application/json` |
 | `X-AgentCore-Signature` | `t=<unix seconds>,v1=<HMAC-SHA256 hex of "<t>.<body>">` with the connection secret. Same scheme as outbound webhooks. |
-| `Idempotency-Key` | The key of the call. A retry of a read uses the same key. |
+| `Idempotency-Key` | The key of the call. The runner retries reads and keyed writes with the same key, up to 3 attempts. |
 | `X-AgentCore-Dry-Run` | `true` or `false`. |
 | `X-AgentCore-Principal` | Only when the run has a principal. An HS256 JWT signed with the connection secret. |
 
@@ -40,4 +40,4 @@ The service does not follow redirects. It waits `timeoutMs` (default 15 s) and r
 | Connection lookup failed | `WebhookToolError` `connection_unavailable`, `notSent: true`. |
 | Dry run of a write tool without `supports: ["dry-run"]` | `WebhookToolError` `dry_run_not_supported`, `notSent: true`. No request is sent. |
 
-A `read` tool that fails with `notSent: false` is retried once with the same key. A `write` tool is never retried. Errors name the connection id, never the URL or the secret.
+The adapter makes one attempt per call; the runner owns retries. Errors name the connection id, never the URL or the secret.

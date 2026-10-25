@@ -163,7 +163,8 @@ const payloadSchemas = {
     to: RunStatusSchema,
     reason: z.string().optional(), // a WaitingReason or free text
   }),
-  'error.raised': z.object({ message: z.string(), retryable: z.boolean() }),
+  // `retryAt` (ISO 8601) is set only by an LLM retry wait.
+  'error.raised': z.object({ message: z.string(), retryable: z.boolean(), retryAt: z.string().optional() }),
 } as const
 
 export type EventPayloads = { [K in keyof typeof payloadSchemas]: z.infer<(typeof payloadSchemas)[K]> }

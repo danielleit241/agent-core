@@ -10,12 +10,25 @@ export { probeModel } from './probe'
 export class LlmError extends Error {
   readonly status: number
   readonly retryable: boolean
-  constructor(message: string, status: number, retryable: boolean) {
+  readonly retryAfterMs?: number
+  constructor(message: string, status: number, retryable: boolean, retryAfterMs?: number) {
     super(message)
     this.name = 'LlmError'
     this.status = status
     this.retryable = retryable
+    if (retryAfterMs !== undefined) this.retryAfterMs = retryAfterMs
   }
+}
+
+/** The provider's wait hint in ms: `retry-after-ms` wins over `retry-after` (integer seconds or an HTTP date). */
+export function parseRetryAfterMs(headers: Headers, nowMs: number): number | undefined {
+  const ms = headers.get('retry-after-ms')?.trim()
+  if (ms && /^\d+(\.\d+)?$/.test(ms)) return Math.round(Number(ms))
+  const ra = headers.get('retry-after')?.trim()
+  if (!ra) return undefined
+  if (/^\d+$/.test(ra)) return Number(ra) * 1000
+  const at = Date.parse(ra)
+  return Number.isNaN(at) || at <= nowMs ? undefined : at - nowMs
 }
 
 type Opts = {
@@ -132,7 +145,11 @@ export function createOpenAICompatible(opts: Opts): LLMPort {
       // Provider text can echo part of the key (for example on a 401), so only the status is kept.
       const message = `LLM provider returned HTTP ${res.status}`
       if (res.status === 429 || res.status >= 500) {
-        last = new LlmError(message, res.status, true)
+        // A hint longer than the fast retries still left is not waited out here; the caller schedules that wait.
+        const retryAfterMs = parseRetryAfterMs(res.headers, Date.now())
+        const fastLeft = delays.slice(attempt).reduce((a, b) => a + b, 0)
+        if (retryAfterMs !== undefined && retryAfterMs > fastLeft) throw new LlmError(message, res.status, true, retryAfterMs)
+        last = new LlmError(message, res.status, true, retryAfterMs)
         continue
       }
       throw new LlmError(message, res.status, false)

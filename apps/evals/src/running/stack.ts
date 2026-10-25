@@ -5,6 +5,7 @@ import type { LLMPort } from '@agent-core/core'
 import { createServiceStack } from '@agent-core/service'
 import { assertTestDatabase, assertTestPool, createPool, runMigrations } from '@agent-core/store-postgres'
 import { startShop } from '@agent-core/shop'
+import { withoutLlmRetry } from './no-llm-retry'
 
 const ADMIN_KEY = 'eval-admin-key'
 const AGENT_PATH = fileURLToPath(new URL('../../agents/shop.json', import.meta.url))
@@ -35,7 +36,7 @@ export async function startEvalStack(opts: { llm: LLMPort }): Promise<EvalStack>
     service = createServiceStack({
       pool,
       adminKey: ADMIN_KEY,
-      llm: opts.llm,
+      llm: withoutLlmRetry(opts.llm),
       workerId: 'eval-worker',
       runPollMs: 20,
       deliveryPollMs: 1000,

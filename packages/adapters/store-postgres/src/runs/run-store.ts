@@ -142,7 +142,7 @@ async function inTransaction<T>(pool: pg.Pool, fn: (client: pg.PoolClient) => Pr
   }
 }
 
-type AppendOpts = { expect?: { status: RunStatus; waitingReason?: string }; enqueue?: boolean }
+type AppendOpts = { expect?: { status: RunStatus; waitingReason?: string; lastSeq?: number }; enqueue?: boolean }
 
 /** Appends inside the caller's transaction: row lock, chain, status, log head and optional queue row. */
 async function appendInTransaction(
@@ -174,7 +174,8 @@ async function appendInTransaction(
   if (
     expect &&
     (run.rows[0]!.status !== expect.status ||
-      (expect.waitingReason !== undefined && run.rows[0]!.waiting_reason !== expect.waitingReason))
+      (expect.waitingReason !== undefined && run.rows[0]!.waiting_reason !== expect.waitingReason) ||
+      (expect.lastSeq !== undefined && run.rows[0]!.last_seq !== expect.lastSeq))
   ) {
     throw new StateConflictError(`run ${runId} is not in the expected state`)
   }

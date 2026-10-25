@@ -160,14 +160,8 @@ export function createMcpInvoker(
     async call(tool, args, ctx) {
       // No dry-run protocol in M0: a write cannot be simulated, a read is harmless to run.
       if (ctx.dryRun && tool.safety.effect === 'write') throw new Error(`dry_run_not_supported: ${tool.name}`)
-      let result
-      try {
-        result = await attempt(tool, args, ctx.idempotencyKey)
-      } catch (err) {
-        // Only reads are retried (once); a write may already have executed.
-        if (tool.safety.effect !== 'read') throw err
-        result = await attempt(tool, args, ctx.idempotencyKey)
-      }
+      // One attempt only: the runner owns retries.
+      const result = await attempt(tool, args, ctx.idempotencyKey)
       const parts = Array.isArray(result.content) ? result.content : []
       const content = parts
         .filter((p): p is { type: 'text'; text: string } => p.type === 'text' && typeof p.text === 'string')

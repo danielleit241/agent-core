@@ -170,16 +170,18 @@ test('write tool is never retried when the connection drops after execution', as
   expect(shop.state.refunds).toEqual([{ orderId: '1042', amount: 5 }])
 })
 
-test('read tool is retried once when the connection drops', async () => {
+test('a failing read is attempted once; the runner owns retries', async () => {
   const shop = await shopUnderTest()
   const [get] = await discoverMcpTools('shop', shop.url)
   const inv = invokerFor(shop.url)
+  // The fake fails only one response, so a second attempt would succeed: the throw proves there was exactly one attempt.
   shop.failNextResponseAfterExecute()
-  const res = await inv.call(confirmedTool(get!), { order_id: '1042' }, ctx)
-  expect(res.isError).toBe(false)
+  const err = await inv.call(confirmedTool(get!), { order_id: '1042' }, ctx).catch((e: unknown) => e)
+  expect(err).toBeInstanceOf(ToolInvocationError)
+  expect(err).toMatchObject({ code: 'tool_call_failed', notSent: false })
 })
 
-test('unreachable server gives connection_unreachable with notSent true, and writes are not retried', async () => {
+test('unreachable server gives connection_unreachable with notSent true, and no call is retried', async () => {
   const shop = await shopUnderTest()
   const [get, refund] = await discoverMcpTools('shop', shop.url)
   const url = shop.url

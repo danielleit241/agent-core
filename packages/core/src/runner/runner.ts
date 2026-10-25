@@ -15,11 +15,25 @@ export type RunnerDeps = {
   signal?: AbortSignal
   /** Clock for the current-time context item. Tests inject a fixed one. */
   now?: () => Date
+  /** Jitter source for retry waits. Tests inject a fixed one. */
+  random?: () => number
+  /** Waits between tool attempts. Tests inject one that resolves at once. */
+  sleep?: (ms: number) => Promise<void>
 }
 
 const DEFAULT_MAX_LLM_CALLS = 30
 // About 12k tokens: a large tool output would fill the LLM context and every later request.
 const MAX_TOOL_OUTPUT_CHARS = 48_000
+
+const TOOL_MAX_ATTEMPTS = 3
+const TOOL_RETRY_WAITS_MS = [500, 1000]
+const LLM_RETRY_WAITS_MS = [30_000, 60_000, 120_000, 240_000, 300_000]
+const LLM_MAX_WAIT_MS = 300_000
+
+const jitter = (ms: number, random: () => number): number => Math.round(ms * (0.8 + 0.4 * random()))
+const sleepMs = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms))
+const isRetryable = (tool: ToolDescriptor): boolean =>
+  tool.safety.effect === 'read' || (tool.safety.effect === 'write' && tool.safety.idempotency === true)
 
 const isHighSurrogate = (code: number): boolean => code >= 0xd800 && code <= 0xdbff
 
@@ -105,12 +119,15 @@ async function handleToolCall(
   const inFlight = proj.inFlight.includes(call.id)
 
   if (inFlight) {
-    // The worker died after `tool.requested`. Reads are retried with the same key; writes are never repeated.
-    if (tool === undefined || tool.safety.effect !== 'read') {
+    // The worker died after `tool.requested`. Reads and keyed writes are called again with the same key; other writes are never repeated.
+    const changed = tool !== undefined && isRetryable(tool) && tool.safety.effect === 'write' && tool.changedSinceReview === true
+    if (tool === undefined || !isRetryable(tool) || changed) {
       const why =
         tool === undefined
           ? 'The run stopped after the tool call was sent, and the tool is no longer known. It may have run.'
-          : 'The run stopped after the tool call was sent. It may have run.'
+          : changed
+            ? 'The run stopped after the tool call was sent, and the tool changed since review. It may have run.'
+            : 'The run stopped after the tool call was sent. It may have run.'
       await append(...unknownOutcome(why))
       return 'waiting_human'
     }
@@ -182,20 +199,44 @@ async function execute(
       },
     ])
   }
-  let result: Awaited<ReturnType<ToolInvoker['call']>>
-  try {
-    result = await deps.tools.call(tool, call.arguments, {
-      idempotencyKey,
-      dryRun: false,
-      ...(proj.principal === null ? {} : { principal: proj.principal }),
-    })
-  } catch (err) {
-    if (isNotSent(err) || tool.safety.effect === 'read') {
-      await deps.store.append(runId, [toolError(call.id, toolUnavailable(err))])
-      return 'continue'
+  const retryable = isRetryable(tool)
+  const maxAttempts = retryable ? TOOL_MAX_ATTEMPTS : 1
+  const random = deps.random ?? Math.random
+  const sleep = deps.sleep ?? sleepMs
+  // On a resume an earlier attempt may have landed, so the call counts as sent.
+  let sent = !recordRequest
+  let result: Awaited<ReturnType<ToolInvoker['call']>> | undefined
+  for (let attempt = 1; result === undefined; attempt++) {
+    if (attempt > 1) {
+      await sleep(jitter(TOOL_RETRY_WAITS_MS[attempt - 2]!, random))
+      if (deps.signal?.aborted) return proj.status
     }
-    await deps.store.append(runId, unknownOutcome(failedAfterSend(err)))
-    return 'waiting_human'
+    try {
+      result = await deps.tools.call(tool, call.arguments, {
+        idempotencyKey,
+        dryRun: false,
+        ...(proj.principal === null ? {} : { principal: proj.principal }),
+      })
+    } catch (err) {
+      if (!isNotSent(err)) sent = true
+      if (retryable) {
+        await deps.store.append(runId, [
+          {
+            type: 'error.raised',
+            payload: { message: isNotSent(err) ? toolUnavailable(err) : failedAfterSend(err), retryable: attempt < maxAttempts },
+            labels: [],
+          },
+        ])
+      }
+      if (attempt >= maxAttempts) {
+        if (tool.safety.effect === 'read' || !sent) {
+          await deps.store.append(runId, [toolError(call.id, toolUnavailable(err))])
+          return 'continue'
+        }
+        await deps.store.append(runId, unknownOutcome(failedAfterSend(err)))
+        return 'waiting_human'
+      }
+    }
   }
   await deps.store.append(runId, [
     {
@@ -214,6 +255,9 @@ async function llmStep(
   maxLlmCalls: number,
 ): Promise<RunStatus | 'continue'> {
   const { store } = deps
+  const now = deps.now ?? (() => new Date())
+  // The run waits for an LLM retry; the worker calls again once `retryAt` has passed.
+  if (proj.llmRetry.retryAt !== null && new Date(proj.llmRetry.retryAt).getTime() > now().getTime()) return 'running'
   if (proj.llmCalls >= maxLlmCalls) {
     await store.append(runId, [waitHuman('running', 'breaker')])
     return 'waiting_human'
@@ -224,24 +268,32 @@ async function llmStep(
     // The time goes into the request only. It is not an event, so the projection never holds it.
     const firstTurn = proj.messages.findIndex((m) => m.role !== 'system')
     const at = firstTurn === -1 ? proj.messages.length : firstTurn
-    const now = (deps.now ?? (() => new Date()))()
+    const requestedAt = now()
     res = await deps.llm.complete({
       model: deps.agent.model,
       messages: [
         ...proj.messages.slice(0, at),
-        { role: 'system', content: `Current time: ${now.toISOString()}`, volatile: true },
+        { role: 'system', content: `Current time: ${requestedAt.toISOString()}`, volatile: true },
         ...proj.messages.slice(at),
       ],
       // A tool changed since review stays hidden until an owner reviews it again.
       tools: Object.values(deps.toolsByName).filter((t) => t.changedSinceReview !== true),
     })
   } catch (err) {
+    const { retryable, retryAfterMs } = (err ?? {}) as { retryable?: unknown; retryAfterMs?: unknown }
+    const attempts = proj.llmRetry.attempts
+    if (retryable === true && attempts < LLM_RETRY_WAITS_MS.length) {
+      // The provider's hint can only lengthen the computed wait.
+      const hint = typeof retryAfterMs === 'number' && Number.isFinite(retryAfterMs) && retryAfterMs >= 0 ? retryAfterMs : 0
+      const wait = Math.max(hint, jitter(LLM_RETRY_WAITS_MS[attempts]!, deps.random ?? Math.random))
+      const retryAt = new Date(now().getTime() + Math.min(wait, LLM_MAX_WAIT_MS)).toISOString()
+      await store.append(runId, [
+        { type: 'error.raised', payload: { message: errorMessage(err), retryable: true, retryAt }, labels: [] },
+      ])
+      return 'running'
+    }
     await store.append(runId, [
-      {
-        type: 'error.raised',
-        payload: { message: errorMessage(err), retryable: (err as { retryable?: unknown } | null)?.retryable === true },
-        labels: [],
-      },
+      { type: 'error.raised', payload: { message: errorMessage(err), retryable: false }, labels: [] },
       stateChanged('running', 'failed'),
     ])
     return 'failed'

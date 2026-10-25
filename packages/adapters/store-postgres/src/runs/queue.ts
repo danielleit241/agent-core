@@ -47,10 +47,10 @@ export async function heartbeat(pool: pg.Pool, runId: string, workerId: string):
   return (res.rowCount ?? 0) > 0
 }
 
-/** Unlocks the job and makes it due now, but only while this worker still holds the lock. */
-export async function requeueIfHolder(pool: pg.Pool, runId: string, workerId: string): Promise<void> {
+/** Unlocks the job and makes it due at `availableAt` (default now), but only while this worker still holds the lock. */
+export async function requeueIfHolder(pool: pg.Pool, runId: string, workerId: string, availableAt?: Date): Promise<void> {
   await pool.query(
-    'UPDATE queue SET available_at = now(), locked_by = NULL, locked_at = NULL WHERE run_id = $1 AND locked_by = $2',
-    [runId, workerId],
+    'UPDATE queue SET available_at = COALESCE($3, now()), locked_by = NULL, locked_at = NULL WHERE run_id = $1 AND locked_by = $2',
+    [runId, workerId, availableAt ?? null],
   )
 }

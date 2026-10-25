@@ -202,15 +202,10 @@ test('a dry run of a write without dry-run support is refused before any request
   expect((await inv.call(tool(), {}, { ...ctx, dryRun: true })).isError).toBe(false)
 })
 
-test('a read is retried once with the same key; a second failure is reported', async () => {
-  let n = 0
-  const { url, seen } = await start((_q, res) => (n++ === 0 ? res.writeHead(500).end() : json(res, 200, { output: 'ok' })))
-  expect(await invoker(url).call(tool(), {}, ctx)).toEqual({ content: 'ok', isError: false })
-  expect(seen.map((s) => s.headers['idempotency-key'])).toEqual(['key-1', 'key-1'])
-
+test('a failing read is attempted once; the runner owns retries', async () => {
   const always = await start((_q, res) => res.writeHead(500).end())
-  await failure(invoker(always.url).call(tool(), {}, ctx))
-  expect(always.seen).toHaveLength(2)
+  expect(await failure(invoker(always.url).call(tool(), {}, ctx))).toMatchObject({ code: 'tool_call_failed', notSent: false })
+  expect(always.seen).toHaveLength(1)
 })
 
 test('a write is never retried', async () => {

@@ -13,6 +13,8 @@ export type RunProjection = {
   llmCalls: number
   output: string | null
   principal: { id: string; roles: string[] } | null
+  /** LLM retry waits (`error.raised` with `retryAt`) since the last `llm.responded`. */
+  llmRetry: { attempts: number; retryAt: string | null }
 }
 
 /** Recomputes the whole run state from its event log. The log is the only source of truth. */
@@ -34,6 +36,7 @@ export function projectRun(events: StoredEvent[], instructions: string): RunProj
   let lastToolCalls: ToolCall[] = []
   let output: string | null = null
   let llmCalls = 0
+  let llmRetry: RunProjection['llmRetry'] = { attempts: 0, retryAt: null }
   const responded = new Set<string>()
   const requested = new Set<string>()
   const approvalRequested = new Set<string>()
@@ -49,6 +52,7 @@ export function projectRun(events: StoredEvent[], instructions: string): RunProj
         break
       case 'llm.responded':
         llmCalls++
+        llmRetry = { attempts: 0, retryAt: null }
         messages.push(e.payload.message)
         lastToolCalls = e.payload.message.toolCalls ?? []
         output = e.payload.stopReason === 'end' ? e.payload.message.content : null
@@ -78,6 +82,9 @@ export function projectRun(events: StoredEvent[], instructions: string): RunProj
         ruleDecisions.set(e.payload.toolCallId, e.payload.decision)
         ruleReasons.set(e.payload.toolCallId, e.payload.reason)
         break
+      case 'error.raised':
+        if (e.payload.retryAt !== undefined) llmRetry = { attempts: llmRetry.attempts + 1, retryAt: e.payload.retryAt }
+        break
       default:
         break
     }
@@ -94,6 +101,7 @@ export function projectRun(events: StoredEvent[], instructions: string): RunProj
     ruleDecisions,
     ruleReasons,
     llmCalls,
+    llmRetry,
     output,
     principal: principal === undefined ? null : { id: principal.id, roles: principal.roles },
   }

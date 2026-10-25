@@ -2,7 +2,7 @@ import { DEFAULT_MODEL_PROFILE } from '@agent-core/core'
 import type { LLMPort, ModelProfile, ToolDescriptor } from '@agent-core/core'
 import { startFakeLlm } from '@agent-core/fake-llm'
 import { z } from 'zod'
-import { createOpenAICompatible, fromWireName, LlmError, toWireName } from './index'
+import { createOpenAICompatible, fromWireName, LlmError, parseRetryAfterMs, toWireName } from './index'
 
 type Fake = Awaited<ReturnType<typeof startFakeLlm>>
 
@@ -371,4 +371,58 @@ test('a network error does not carry the cause text', async () => {
   await llm.close()
   const err = await port.complete(req).catch((e: unknown) => e)
   expect((err as Error).message).toBe('LLM request failed: network error')
+})
+
+describe('Retry-After', () => {
+  const fetchWith = (status: number, headers: Record<string, string>, retryDelaysMs = [1, 1]) => {
+    const calls = { n: 0 }
+    const fetchFn = (async () => {
+      calls.n++
+      return new Response('{}', { status, headers })
+    }) as typeof fetch
+    const port = createOpenAICompatible({
+      baseUrl: 'http://llm.test',
+      apiKey: 'secret-key',
+      models: { default: 'fake' },
+      fetch: fetchFn,
+      retryDelaysMs,
+    })
+    return { calls, port }
+  }
+
+  test('parseRetryAfterMs reads retry-after-ms, seconds and an HTTP date', () => {
+    const now = Date.parse('2026-01-01T00:00:00Z')
+    const h = (o: Record<string, string>) => new Headers(o)
+    expect(parseRetryAfterMs(h({ 'retry-after-ms': '1500' }), now)).toBe(1500)
+    expect(parseRetryAfterMs(h({ 'retry-after': '7' }), now)).toBe(7000)
+    expect(parseRetryAfterMs(h({ 'retry-after': new Date(now + 10_000).toUTCString() }), now)).toBe(10_000)
+    expect(parseRetryAfterMs(h({ 'retry-after-ms': '1500', 'retry-after': '7' }), now)).toBe(1500)
+    expect(parseRetryAfterMs(h({ 'retry-after': '-3' }), now)).toBeUndefined()
+    expect(parseRetryAfterMs(h({ 'retry-after': 'soon' }), now)).toBeUndefined()
+    expect(parseRetryAfterMs(h({ 'retry-after': new Date(now - 10_000).toUTCString() }), now)).toBeUndefined()
+    expect(parseRetryAfterMs(h({}), now)).toBeUndefined()
+  })
+
+  test('a 429 with Retry-After throws at once with retryAfterMs', async () => {
+    const { calls, port } = fetchWith(429, { 'retry-after': '7' })
+    const err = await port.complete(req).catch((e: unknown) => e)
+    expect(calls.n).toBe(1)
+    expect(err).toMatchObject({ status: 429, retryable: true, retryAfterMs: 7000 })
+  })
+
+  test('a short Retry-After hint keeps the fast retries and the error carries it', async () => {
+    // The hint (50 ms) is shorter than every fast retry delay left, so they run.
+    const { calls, port } = fetchWith(429, { 'retry-after-ms': '50' }, [100, 100])
+    const err = await port.complete(req).catch((e: unknown) => e)
+    expect(calls.n).toBe(3)
+    expect(err).toMatchObject({ status: 429, retryable: true, retryAfterMs: 50 })
+  })
+
+  test('a 503 without Retry-After keeps the fast retries', async () => {
+    const { calls, port } = fetchWith(503, {})
+    const err = await port.complete(req).catch((e: unknown) => e)
+    expect(calls.n).toBe(3)
+    expect(err).toMatchObject({ status: 503, retryable: true })
+    expect((err as LlmError).retryAfterMs).toBeUndefined()
+  })
 })
