@@ -6,7 +6,7 @@ Basic context for anyone, person or coding agent, changing agent-core.
 
 agent-core is an agent service. Teams connect systems through three gates (in: Control API; tool: MCP, OpenAPI, webhook tools; out: signed webhooks). The service runs the harness: agent loop, tool calls, rules, approval, event log.
 
-Status: in development. Current milestone: M1 (see `ROADMAP.md`).
+Status: in development. `ROADMAP.md` holds the milestones and the one in progress.
 
 ## Where to look
 
