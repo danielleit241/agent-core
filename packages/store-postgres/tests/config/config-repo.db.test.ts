@@ -3,9 +3,10 @@ import { afterAll, beforeAll, beforeEach, expect, test } from 'vitest'
 import { STRICT_SAFETY, toolFingerprint } from '@agent-core/core'
 import type { AgentDefinition } from '@agent-core/core'
 import type { Connection, StoredTool } from '../../src/config/config-repo'
-import { ConfigRepo, assertTestDatabase, createPool, runMigrations } from '../../src'
+import { ConfigRepo, assertTestDatabase, runtimeTestUrl, createPool, runMigrations } from '../../src'
 
 const url = process.env.TEST_DATABASE_URL ?? 'postgres://agentcore:agentcore@localhost:5433/agentcore_test'
+let migrator: pg.Pool
 let pool: pg.Pool
 let repo: ConfigRepo
 
@@ -34,15 +35,17 @@ const agent: AgentDefinition = {
 
 beforeAll(() => {
   assertTestDatabase(url)
-  pool = createPool(url)
+  migrator = createPool(url)
+  pool = createPool(runtimeTestUrl(url))
 })
 beforeEach(async () => {
-  await pool.query('DROP SCHEMA public CASCADE; CREATE SCHEMA public')
-  await runMigrations(pool)
+  await migrator.query('DROP SCHEMA public CASCADE; CREATE SCHEMA public')
+  await runMigrations(migrator, { runtimeUser: 'agentcore_runtime' })
   repo = new ConfigRepo(pool, 'default')
 })
 afterAll(async () => {
   await pool.end()
+  await migrator.end()
 })
 
 test('connection round trip keeps source and confirmed; upsert and miss', async () => {
@@ -95,7 +98,7 @@ test('a tool stored without a safety source reads as unconfirmed', async () => {
   const legacy: Record<string, unknown> = { ...tool }
   delete legacy.source
   delete legacy.confirmed
-  await pool.query(`INSERT INTO connections (tenant_id, id, kind, url, tools) VALUES ('default', 'old', 'mcp', 'http://o/mcp', $1)`, [
+  await migrator.query(`INSERT INTO connections (tenant_id, id, kind, url, tools) VALUES ('default', 'old', 'mcp', 'http://o/mcp', $1)`, [
     JSON.stringify([legacy]),
   ])
   expect((await repo.getConnection('old'))!.tools[0]).toMatchObject({ source: {}, confirmed: {} })
@@ -165,7 +168,7 @@ test('updateTool returns the tool as read back, and computed fields are not stor
   await repo.putConnection({ id: 'shop', kind: 'mcp', url: 'http://a/mcp', tools: [{ ...tool, confirmed: {} }] })
   const updated = await repo.updateTool('shop', 'orders.get', (t) => ({ ...t, confirmed: { effect: 'read' }, reviewedFor: t.fingerprint }))
   expect(updated).toMatchObject({ confirmed: { effect: 'read' }, changedSinceReview: false, safety: { effect: 'read' } })
-  const row = await pool.query<{ tools: Record<string, unknown>[] }>("SELECT tools FROM connections WHERE id = 'shop'")
+  const row = await migrator.query<{ tools: Record<string, unknown>[] }>("SELECT tools FROM connections WHERE id = 'shop'")
   expect(Object.keys(row.rows[0]!.tools[0]!)).not.toContain('fingerprint')
   expect(Object.keys(row.rows[0]!.tools[0]!)).not.toContain('changedSinceReview')
 })
