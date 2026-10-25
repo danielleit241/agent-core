@@ -315,6 +315,14 @@ async function llmStep(
     seen.add(c.id)
   }
   const hasToolCalls = (res.message.toolCalls?.length ?? 0) > 0
+  if (res.stopReason === 'filtered') {
+    await store.append(runId, [
+      responded,
+      { type: 'error.raised', payload: { message: 'LLM response filtered by the provider', retryable: false }, labels: [] },
+      stateChanged('running', 'failed', 'filtered'),
+    ])
+    return 'failed'
+  }
   if (res.stopReason === 'end') {
     await store.append(runId, [responded, stateChanged('running', 'completed')])
     return 'completed'

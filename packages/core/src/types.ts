@@ -125,7 +125,7 @@ const payloadSchemas = {
   'llm.responded': z.object({
     message: MessageSchema,
     usage: UsageSchema,
-    stopReason: z.enum(['end', 'tool_calls', 'length']),
+    stopReason: z.enum(['end', 'tool_calls', 'length', 'filtered']),
   }),
   'rule.decided': z.object({
     toolCallId: z.string(),

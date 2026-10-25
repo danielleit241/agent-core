@@ -8,7 +8,7 @@ export interface LLMPort {
     tools: ToolDescriptor[]
     /** When set, `message.content` is JSON text that matches `schema`. */
     output?: { name: string; schema: z.ZodType }
-  }): Promise<{ message: Message; usage: Usage; stopReason: 'end' | 'tool_calls' | 'length' }>
+  }): Promise<{ message: Message; usage: Usage; stopReason: 'end' | 'tool_calls' | 'length' | 'filtered' }>
 }
 
 export interface ToolInvoker {
