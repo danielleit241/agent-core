@@ -12,6 +12,8 @@ export type RunView = {
   waiting_reason: WaitingReason | null
   output: string | null
   pending_approval: { tool_call_id: string; tool: string; args: Record<string, unknown>; reason: string } | null
+  /** `reason` is the recorded evidence of why the outcome is unknown; null for runs logged before it existed. */
+  pending_outcome: { tool_call_id: string; tool: string; args: Record<string, unknown>; reason: string | null } | null
 }
 
 /** The body of `GET /v1/runs/{id}`, or null when the run does not exist. */
@@ -34,6 +36,19 @@ export async function getRunView(pool: Pool, tenantId: string, runId: string): P
           reason: requested.payload.reason,
         }
       : null
+  const inFlightId = run.waitingReason === 'unknown_outcome' ? proj?.inFlight[0] : undefined
+  const sentAt = inFlightId ? events.findLastIndex((e) => e.type === 'tool.requested' && e.payload.toolCallId === inFlightId) : -1
+  const sent = events[sentAt]
+  const why = events.slice(sentAt + 1).findLast((e) => e.type === 'error.raised')
+  const pendingOutcome =
+    sentAt >= 0 && sent?.type === 'tool.requested'
+      ? {
+          tool_call_id: sent.payload.toolCallId,
+          tool: sent.payload.tool,
+          args: sent.payload.args,
+          reason: why?.type === 'error.raised' ? why.payload.message : null,
+        }
+      : null
   return {
     id: run.id,
     agent: run.agentId,
@@ -41,5 +56,6 @@ export async function getRunView(pool: Pool, tenantId: string, runId: string): P
     waiting_reason: run.waitingReason,
     output: proj?.output ?? null,
     pending_approval: pending,
+    pending_outcome: pendingOutcome,
   }
 }

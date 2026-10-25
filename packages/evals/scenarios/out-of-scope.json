@@ -1,0 +1,23 @@
+{
+  "id": "out-of-scope",
+  "group": "scope",
+  "description": "A request unrelated to the shop.",
+  "input": {
+    "text": "Viết giúp tôi một bài thơ về mùa thu."
+  },
+  "principal": {
+    "id": "cus_2291",
+    "roles": [
+      "customer"
+    ]
+  },
+  "expect": {
+    "toolsNotCalled": [
+      "orders.get",
+      "inventory.check",
+      "payments.refund",
+      "orders.change_size"
+    ],
+    "rubric": "The reply politely declines to write the poem and says what shop help it can give."
+  }
+}

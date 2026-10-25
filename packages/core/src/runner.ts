@@ -13,6 +13,8 @@ export type RunnerDeps = {
   maxLlmCalls?: number
   /** When aborted, `advanceRun` stops before its next step and appends nothing more. */
   signal?: AbortSignal
+  /** Clock for the current-time context item. Tests inject a fixed one. */
+  now?: () => Date
 }
 
 const DEFAULT_MAX_LLM_CALLS = 30
@@ -38,6 +40,19 @@ const toolUnavailable = (err: unknown): string => {
   const code = (err as { code?: unknown } | null)?.code
   return typeof code === 'string' ? `Tool unavailable (${code}).` : 'Tool unavailable.'
 }
+// An adapter may add a short `detail` (for example "HTTP 503"); anything that could hold a URL or a secret is dropped.
+const SAFE_DETAIL = /^[A-Za-z0-9 ._-]{1,40}$/
+const failedAfterSend = (err: unknown): string => {
+  const { code, detail } = (err ?? {}) as { code?: unknown; detail?: unknown }
+  const c = typeof code === 'string' && SAFE_DETAIL.test(code) ? code : 'tool_call_failed'
+  const d = typeof detail === 'string' && SAFE_DETAIL.test(detail) ? `: ${detail}` : ''
+  return `The tool call failed after it was sent (${c}${d}). It may have run.`
+}
+/** The evidence of why a run waits on an unknown outcome. The text is fixed, so it is safe for events. */
+const unknownOutcome = (why: string): NewEvent[] => [
+  { type: 'error.raised', payload: { message: why, retryable: false }, labels: [] },
+  waitHuman('running', 'unknown_outcome'),
+]
 
 /**
  * Advances a run until it completes, fails, or needs a human. State is recomputed from
@@ -75,10 +90,14 @@ async function handleToolCall(
   if (inFlight) {
     // The worker died after `tool.requested`. Reads are retried with the same key; writes are never repeated.
     if (tool === undefined || tool.safety.effect !== 'read') {
-      await append(waitHuman('running', 'unknown_outcome'))
+      const why =
+        tool === undefined
+          ? 'The run stopped after the tool call was sent, and the tool is no longer known. It may have run.'
+          : 'The run stopped after the tool call was sent. It may have run.'
+      await append(...unknownOutcome(why))
       return 'waiting_human'
     }
-    return execute(runId, deps, call, tool, false)
+    return execute(runId, deps, proj, call, tool, false)
   }
   if (call.argumentsError !== undefined) {
     await append(toolError(call.id, `Invalid arguments: ${call.argumentsError}. Send valid JSON matching the schema.`))
@@ -123,12 +142,13 @@ async function handleToolCall(
     await append(...events)
     return 'waiting_human'
   }
-  return execute(runId, deps, call, tool, true)
+  return execute(runId, deps, proj, call, tool, true)
 }
 
 async function execute(
   runId: string,
   deps: RunnerDeps,
+  proj: RunProjection,
   call: ToolCall,
   tool: ToolDescriptor,
   recordRequest: boolean,
@@ -145,13 +165,17 @@ async function execute(
   }
   let result: Awaited<ReturnType<ToolInvoker['call']>>
   try {
-    result = await deps.tools.call(tool, call.arguments, { idempotencyKey, dryRun: false })
+    result = await deps.tools.call(tool, call.arguments, {
+      idempotencyKey,
+      dryRun: false,
+      ...(proj.principal === null ? {} : { principal: proj.principal }),
+    })
   } catch (err) {
     if (isNotSent(err) || tool.safety.effect === 'read') {
       await deps.store.append(runId, [toolError(call.id, toolUnavailable(err))])
       return 'continue'
     }
-    await deps.store.append(runId, [waitHuman('running', 'unknown_outcome')])
+    await deps.store.append(runId, unknownOutcome(failedAfterSend(err)))
     return 'waiting_human'
   }
   await deps.store.append(runId, [
@@ -178,9 +202,17 @@ async function llmStep(
   await store.append(runId, [{ type: 'llm.requested', payload: { model: deps.agent.model }, labels: [] }])
   let res: Awaited<ReturnType<LLMPort['complete']>>
   try {
+    // The time goes into the request only. It is not an event, so the projection never holds it.
+    const firstTurn = proj.messages.findIndex((m) => m.role !== 'system')
+    const at = firstTurn === -1 ? proj.messages.length : firstTurn
+    const now = (deps.now ?? (() => new Date()))()
     res = await deps.llm.complete({
       model: deps.agent.model,
-      messages: proj.messages,
+      messages: [
+        ...proj.messages.slice(0, at),
+        { role: 'system', content: `Current time: ${now.toISOString()}`, volatile: true },
+        ...proj.messages.slice(at),
+      ],
       tools: Object.values(deps.toolsByName),
     })
   } catch (err) {

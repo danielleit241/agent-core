@@ -10,6 +10,14 @@ export function assertTestDatabase(url: string): void {
   }
 }
 
+/** Checks the database the pool really reaches; a crafted URL can hide it from `assertTestDatabase`. */
+export async function assertTestPool(pool: pg.Pool): Promise<void> {
+  const res = await pool.query<{ db: string }>('SELECT current_database() AS db')
+  if (!res.rows[0]?.db.endsWith('_test')) {
+    throw new Error('refusing to reset the database: the connected database does not end in _test')
+  }
+}
+
 export function createPool(url: string): pg.Pool {
   return new pg.Pool({ connectionString: url })
 }
@@ -169,6 +177,13 @@ async function appendInTransaction(
       (expect.waitingReason !== undefined && run.rows[0]!.waiting_reason !== expect.waitingReason))
   ) {
     throw new StateConflictError(`run ${runId} is not in the expected state`)
+  }
+  // A transition written from a stale read (e.g. a worker starting a run that was just cancelled) is refused.
+  let status = run.rows[0]!.status
+  for (const e of valid) {
+    if (e.type !== 'run.state_changed') continue
+    if (e.payload.from !== status) throw new StateConflictError(`run ${runId} is ${status}, not ${e.payload.from}`)
+    status = e.payload.to
   }
   const agentVersion = run.rows[0]!.agent_version
   const last = await client.query<{ seq: number; hash: string }>(

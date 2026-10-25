@@ -1,6 +1,7 @@
 import { hostname } from 'node:os'
-import { createOpenAICompatible } from '@agent-core/llm-openai'
-import { createPool, runMigrations } from '@agent-core/store-postgres'
+import { DEFAULT_MODEL_PROFILE } from '@agent-core/core'
+import { createOpenAICompatible, probeModel } from '@agent-core/llm-openai'
+import { ModelProfileRepo, createPool, runMigrations } from '@agent-core/store-postgres'
 import { createServiceStack } from './stack'
 
 async function main(): Promise<void> {
@@ -18,15 +19,32 @@ async function main(): Promise<void> {
   const pool = createPool(env.DATABASE_URL!)
   await runMigrations(pool)
 
+  const baseUrl = env.LLM_BASE_URL!
+  const apiKey = env.LLM_API_KEY ?? ''
+  const models: Record<string, string> = {
+    default: env.LLM_MODEL_DEFAULT!,
+    ...(env.LLM_MODEL_SMART ? { smart: env.LLM_MODEL_SMART } : {}),
+  }
+  const profiles = new ModelProfileRepo(pool)
   const llm = createOpenAICompatible({
-    baseUrl: env.LLM_BASE_URL!,
-    apiKey: env.LLM_API_KEY ?? '',
-    models: { default: env.LLM_MODEL_DEFAULT! },
+    baseUrl,
+    apiKey,
+    models,
+    profile: async (model) => {
+      try {
+        return (await profiles.get(model))?.profile ?? DEFAULT_MODEL_PROFILE
+      } catch (err) {
+        console.error(`agent-core: could not read the model profile, using the default profile (${err instanceof Error ? err.name : 'error'})`)
+        return DEFAULT_MODEL_PROFILE
+      }
+    },
   })
   const stack = createServiceStack({
     pool,
     adminKey: env.AGENT_CORE_ADMIN_KEY!,
     llm,
+    models,
+    probe: (model) => probeModel({ baseUrl, apiKey, model }),
     workerId: `${hostname()}:${process.pid}`,
   })
   const { app } = stack

@@ -1,0 +1,29 @@
+{
+  "id": "order-status",
+  "group": "lookup",
+  "description": "A customer asks where their order is.",
+  "input": {
+    "text": "Đơn 1042 của tôi tới đâu rồi?"
+  },
+  "principal": {
+    "id": "cus_2291",
+    "roles": [
+      "customer"
+    ]
+  },
+  "expect": {
+    "toolsCalled": [
+      {
+        "tool": "orders.get",
+        "args": {
+          "order_id": "1042"
+        }
+      }
+    ],
+    "toolsNotCalled": [
+      "payments.refund",
+      "orders.change_size"
+    ],
+    "rubric": "The reply says order 1042 has been delivered."
+  }
+}

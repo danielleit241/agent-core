@@ -12,6 +12,7 @@ export type RunProjection = {
   ruleReasons: Map<string, string>
   llmCalls: number
   output: string | null
+  principal: { id: string; roles: string[] } | null
 }
 
 /** Recomputes the whole run state from its event log. The log is the only source of truth. */
@@ -21,8 +22,13 @@ export function projectRun(events: StoredEvent[], instructions: string): RunProj
 
   let status: RunStatus = 'queued'
   let waitingReason: WaitingReason | null = null
+  const principal = first.payload.principal
   const messages: Message[] = [
     { role: 'system', content: instructions },
+    ...(principal === undefined
+      ? []
+      : // JSON keeps a caller-supplied id from adding lines to the system context.
+        [{ role: 'system' as const, content: `Requester: ${JSON.stringify({ id: principal.id, roles: principal.roles })}` }]),
     { role: 'user', content: first.payload.input.text },
   ]
   let lastToolCalls: ToolCall[] = []
@@ -54,6 +60,11 @@ export function projectRun(events: StoredEvent[], instructions: string): RunProj
       case 'tool.requested':
         requested.add(e.payload.toolCallId)
         break
+      case 'outcome.settled':
+        // Not happened: the call goes back to pending and may run again. Happened changes nothing here;
+        // the API also appends a `tool.responded`.
+        if (e.payload.outcome === 'not_happened') requested.delete(e.payload.toolCallId)
+        break
       case 'approval.requested':
         approvalRequested.add(e.payload.toolCallId)
         break
@@ -81,5 +92,6 @@ export function projectRun(events: StoredEvent[], instructions: string): RunProj
     ruleReasons,
     llmCalls,
     output,
+    principal: principal === undefined ? null : { id: principal.id, roles: principal.roles },
   }
 }

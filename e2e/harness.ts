@@ -2,7 +2,7 @@ import { createServer } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import { createServiceStack } from '@agent-core/service'
 import { createOpenAICompatible } from '@agent-core/llm-openai'
-import { assertTestDatabase, createPool, runMigrations } from '@agent-core/store-postgres'
+import { assertTestDatabase, assertTestPool, createPool, runMigrations } from '@agent-core/store-postgres'
 import { startFakeLlm } from '@agent-core/fake-llm'
 import type { FakeTurn } from '@agent-core/fake-llm'
 import { startShop } from '@agent-core/shop'
@@ -31,6 +31,7 @@ export type StackOpts = {
 export async function startStack(script: FakeTurn[], opts: StackOpts = {}): Promise<Stack> {
   assertTestDatabase(DATABASE_URL) // the reset below drops every table
   const pool = createPool(DATABASE_URL)
+  await assertTestPool(pool)
   await pool.query('DROP SCHEMA public CASCADE; CREATE SCHEMA public')
   await runMigrations(pool)
 

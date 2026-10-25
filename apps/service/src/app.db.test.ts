@@ -1,5 +1,6 @@
 import type { FastifyInstance } from 'fastify'
 import { afterAll, beforeAll, beforeEach, expect, test } from 'vitest'
+import { toolFingerprint } from '@agent-core/core'
 import type { LLMPort, NewEvent, ToolDescriptor } from '@agent-core/core'
 import { ConfigRepo, PgRunStore, assertTestDatabase, createPool, createRun, getRunHead, runMigrations } from '@agent-core/store-postgres'
 import { buildApp } from './app'
@@ -19,7 +20,14 @@ const readTool: ToolDescriptor = {
   safety: { effect: 'read', idempotency: false, reachesOutside: false, outputLabel: 'untrusted' },
   connectionId: 'shop',
 }
-const discoverTools = async (connectionId: string) => [{ tool: { ...readTool, connectionId }, needsConfirmation: ['idempotency'] }]
+const readSource = { annotations: { readOnlyHint: true, openWorldHint: false } }
+const readProposal = { effect: 'read', idempotency: false, reachesOutside: false, outputLabel: 'internal' }
+const strict = { effect: 'write', idempotency: false, reachesOutside: true, outputLabel: 'untrusted' }
+const discoverTools = async (connectionId: string) => [
+  { tool: { ...readTool, safety: strict as ToolDescriptor['safety'], connectionId }, source: readSource },
+]
+const readFingerprint = toolFingerprint({ ...readTool, source: readSource })
+const fresh = { description: readTool.description, inputSchema: readTool.inputSchema, fingerprint: readFingerprint, changedSinceReview: false }
 
 beforeAll(() => {
   assertTestDatabase(url)
@@ -37,7 +45,7 @@ afterAll(async () => {
 const agentBody = { id: 'helper', instructions: 'help', connections: [] as string[], autonomy: 'supervised', allow: [] }
 const runBody = { agent: 'helper', input: { text: 'hi' } }
 
-function authed(method: 'GET' | 'POST', path: string, payload?: unknown, headers: Record<string, string> = {}) {
+function authed(method: 'GET' | 'POST' | 'PATCH', path: string, payload?: unknown, headers: Record<string, string> = {}) {
   return app.inject({
     method,
     url: path,
@@ -79,6 +87,46 @@ async function runWaitingForApproval(runId = 'r-wait'): Promise<string> {
   return runId
 }
 
+async function runWaitingForOutcome(runId = 'r-out', reason: string | null = 'The tool call failed after it was sent (tool_call_failed: HTTP 503). It may have run.'): Promise<string> {
+  const { version } = await seedAgent()
+  await createRun(pool, { tenantId: 'default', runId, agentId: 'helper', agentVersion: version, input: { text: 'hi' } })
+  const events: NewEvent[] = [
+    { type: 'run.created', payload: { agentId: 'helper', input: { text: 'hi' } }, labels: ['trusted'] },
+    { type: 'run.state_changed', payload: { from: 'queued', to: 'running' }, labels: [] },
+    {
+      type: 'llm.responded',
+      payload: {
+        message: { role: 'assistant', content: '', toolCalls: [{ id: 'call_1', name: 'payments.refund', arguments: { amount: 5 } }] },
+        usage: { inputTokens: 1, outputTokens: 1 },
+        stopReason: 'tool_calls',
+      },
+      labels: [],
+    },
+    {
+      type: 'tool.requested',
+      payload: { toolCallId: 'call_1', tool: 'payments.refund', args: { amount: 5 }, idempotencyKey: 'key_1' },
+      labels: [],
+    },
+    ...(reason === null ? [] : [{ type: 'error.raised' as const, payload: { message: reason, retryable: false }, labels: [] }]),
+    { type: 'run.state_changed', payload: { from: 'running', to: 'waiting_human', reason: 'unknown_outcome' }, labels: [] },
+  ]
+  await new PgRunStore(pool, 'default').append(runId, events)
+  return runId
+}
+
+async function runWaitingFor(reason: 'breaker' | 'handoff' | 'needs_input', runId = 'r-other'): Promise<string> {
+  const { version } = await seedAgent()
+  await createRun(pool, { tenantId: 'default', runId, agentId: 'helper', agentVersion: version, input: { text: 'hi' } })
+  await new PgRunStore(pool, 'default').append(runId, [
+    { type: 'run.created', payload: { agentId: 'helper', input: { text: 'hi' } }, labels: ['trusted'] },
+    { type: 'run.state_changed', payload: { from: 'queued', to: 'running' }, labels: [] },
+    { type: 'run.state_changed', payload: { from: 'running', to: 'waiting_human', reason }, labels: [] },
+  ])
+  return runId
+}
+
+const eventTypes = async (runId: string) => (await new PgRunStore(pool, 'default').readEvents(runId)).map((e) => e.type)
+
 const queueRows = async (runId: string) => (await pool.query('SELECT 1 FROM queue WHERE run_id = $1', [runId])).rowCount
 
 test('rejects requests without the admin key', async () => {
@@ -116,19 +164,155 @@ test('bad JSON and unknown routes use the error envelope', async () => {
   expect(missing.json().error).toMatchObject({ code: 'not_found', fix: expect.any(String) })
 })
 
-test('creating a connection stores the discovered tools', async () => {
+test('creating a connection stores the discovered tools and proposes their safety', async () => {
   const res = await authed('POST', '/v1/connections', { id: 'shop', url: 'http://shop.test/mcp' })
   expect(res.statusCode).toBe(201)
   expect(res.json()).toEqual({
     id: 'shop',
     kind: 'mcp',
-    tools: [{ name: 'orders.get', safety: readTool.safety, needsConfirmation: ['idempotency'] }],
+    tools: [
+      { name: 'orders.get', safety: strict, proposed: readProposal, needsConfirmation: ['effect', 'reachesOutside', 'outputLabel'], ...fresh },
+    ],
   })
   const stored = await new ConfigRepo(pool, 'default').getConnection('shop')
-  expect(stored?.tools[0]?.connectionId).toBe('shop')
+  expect(stored?.tools[0]).toMatchObject({ connectionId: 'shop', source: readSource, confirmed: {} })
   // an existing id is overwritten
   expect((await authed('POST', '/v1/connections', { id: 'shop', url: 'http://shop2.test/mcp' })).statusCode).toBe(201)
   expect((await new ConfigRepo(pool, 'default').getConnection('shop'))?.url).toBe('http://shop2.test/mcp')
+})
+
+test('GET tools lists the views; an unknown connection gives 404', async () => {
+  await authed('POST', '/v1/connections', { id: 'shop', url: 'http://shop.test/mcp' })
+  const res = await authed('GET', '/v1/connections/shop/tools')
+  expect(res.statusCode).toBe(200)
+  expect(res.json().tools).toEqual([
+    { name: 'orders.get', safety: strict, proposed: readProposal, needsConfirmation: ['effect', 'reachesOutside', 'outputLabel'], ...fresh },
+  ])
+  const missing = await authed('GET', '/v1/connections/nope/tools')
+  expect(missing.statusCode).toBe(404)
+  expect(missing.json().error).toMatchObject({ code: 'connection_not_found', fix: expect.any(String) })
+})
+
+test('PATCH confirms the whole proposal', async () => {
+  await authed('POST', '/v1/connections', { id: 'shop', url: 'http://shop.test/mcp' })
+  const res = await authed('PATCH', '/v1/connections/shop/tools/orders.get', { confirm: 'proposed' })
+  expect(res.statusCode).toBe(200)
+  expect(res.json()).toEqual({ name: 'orders.get', safety: readProposal, proposed: readProposal, needsConfirmation: [], ...fresh })
+  const stored = await new ConfigRepo(pool, 'default').getConnection('shop')
+  expect(stored?.tools[0]).toMatchObject({ safety: readProposal, confirmed: readProposal, reviewedFor: readFingerprint })
+})
+
+test('PATCH with explicit values confirms only those keys and merges', async () => {
+  await authed('POST', '/v1/connections', { id: 'shop', url: 'http://shop.test/mcp' })
+  const first = await authed('PATCH', '/v1/connections/shop/tools/orders.get', { effect: 'read' })
+  expect(first.json()).toMatchObject({ safety: { ...strict, effect: 'read' }, needsConfirmation: ['reachesOutside', 'outputLabel'] })
+  const second = await authed('PATCH', '/v1/connections/shop/tools/orders.get', { reachesOutside: false, outputLabel: 'internal' })
+  expect(second.json()).toMatchObject({ safety: readProposal, needsConfirmation: [] })
+})
+
+test('PATCH errors: unknown tool or connection 404, empty or unknown body 400', async () => {
+  await authed('POST', '/v1/connections', { id: 'shop', url: 'http://shop.test/mcp' })
+  const tool = await authed('PATCH', '/v1/connections/shop/tools/nope', { confirm: 'proposed' })
+  expect(tool.statusCode).toBe(404)
+  expect(tool.json().error).toMatchObject({ code: 'tool_not_found', fix: expect.any(String) })
+  const conn = await authed('PATCH', '/v1/connections/nope/tools/orders.get', { confirm: 'proposed' })
+  expect(conn.statusCode).toBe(404)
+  expect(conn.json().error.code).toBe('connection_not_found')
+  for (const body of [
+    {},
+    { confirm: 'other' },
+    { effect: 'maybe' },
+    { bogus: true },
+    { confirm: 'proposed', effect: 'read' },
+    { fingerprint: readFingerprint },
+    { confirm: 'proposed', fingerprint: 'abc' },
+  ]) {
+    const bad = await authed('PATCH', '/v1/connections/shop/tools/orders.get', body)
+    expect(bad.statusCode).toBe(400)
+    expect(bad.json().error.code).toBe('invalid_request')
+  }
+  const stored = await new ConfigRepo(pool, 'default').getConnection('shop')
+  expect(stored?.tools[0]?.confirmed).toEqual({})
+})
+
+test('a PATCH error names the fields to send', async () => {
+  await authed('POST', '/v1/connections', { id: 'shop', url: 'http://shop.test/mcp' })
+  const res = await authed('PATCH', '/v1/connections/shop/tools/orders.get', {})
+  expect(res.json().error.message).toBe(
+    'body: set either "confirm": "proposed" or at least one of effect, idempotency, reachesOutside, outputLabel',
+  )
+})
+
+/** An app whose MCP server now describes `orders.get` differently. */
+const changedApp = (change: Partial<ToolDescriptor>) =>
+  buildApp({
+    pool,
+    adminKey: ADMIN_KEY,
+    discoverTools: async (id: string) => (await discoverTools(id)).map((d) => ({ ...d, tool: { ...d.tool, ...change } })),
+  })
+const register = (a: FastifyInstance) =>
+  a.inject({ method: 'POST', url: '/v1/connections', payload: { id: 'shop', url: 'http://shop.test/mcp' }, headers: { authorization: `Bearer ${ADMIN_KEY}` } })
+
+test('a tool whose definition changed loses its confirmation and runs strict until confirmed again', async () => {
+  await authed('POST', '/v1/connections', { id: 'shop', url: 'http://shop.test/mcp' })
+  await authed('PATCH', '/v1/connections/shop/tools/orders.get', { confirm: 'proposed' })
+
+  const res = await register(changedApp({ description: 'get an order; also refunds it' }))
+  expect(res.json().tools[0]).toMatchObject({ safety: strict, changedSinceReview: true, needsConfirmation: ['effect', 'reachesOutside', 'outputLabel'] })
+  const newFingerprint = res.json().tools[0].fingerprint as string
+  // The admin sees what changed before confirming again.
+  expect(res.json().tools[0].description).toBe('get an order; also refunds it')
+  expect(newFingerprint).not.toBe(readFingerprint)
+  // What the worker loads runs strict too.
+  expect((await new ConfigRepo(pool, 'default').getConnection('shop'))?.tools[0]?.safety).toEqual(strict)
+
+  // Confirming one key does not bring back the keys confirmed for the old definition.
+  const one = await authed('PATCH', '/v1/connections/shop/tools/orders.get', { effect: 'read', fingerprint: newFingerprint })
+  expect(one.json()).toMatchObject({ safety: { ...strict, effect: 'read' }, changedSinceReview: false, fingerprint: newFingerprint })
+})
+
+test('an unchanged tool keeps its confirmation when registered again', async () => {
+  await authed('POST', '/v1/connections', { id: 'shop', url: 'http://shop.test/mcp' })
+  await authed('PATCH', '/v1/connections/shop/tools/orders.get', { confirm: 'proposed' })
+  const again = await authed('POST', '/v1/connections', { id: 'shop', url: 'http://shop.test/mcp' })
+  expect(again.json().tools[0]).toMatchObject({ safety: readProposal, ...fresh })
+})
+
+test('PATCH with an old fingerprint gives 409 tool_changed and confirms nothing', async () => {
+  await authed('POST', '/v1/connections', { id: 'shop', url: 'http://shop.test/mcp' })
+  await register(changedApp({ inputSchema: { type: 'object', properties: { order_id: { type: 'string' } } } }))
+  const res = await authed('PATCH', '/v1/connections/shop/tools/orders.get', { confirm: 'proposed', fingerprint: readFingerprint })
+  expect(res.statusCode).toBe(409)
+  expect(res.json().error).toMatchObject({ code: 'tool_changed', fix: expect.stringContaining('GET /v1/connections/{id}/tools') })
+  const stored = await new ConfigRepo(pool, 'default').getConnection('shop')
+  expect(stored?.tools[0]).toMatchObject({ confirmed: {}, safety: strict })
+})
+
+test('registering a connection again keeps confirmations of tools with the same name', async () => {
+  await authed('POST', '/v1/connections', { id: 'shop', url: 'http://shop.test/mcp' })
+  await authed('PATCH', '/v1/connections/shop/tools/orders.get', { confirm: 'proposed' })
+  const again = await authed('POST', '/v1/connections', { id: 'shop', url: 'http://shop2.test/mcp' })
+  expect(again.json().tools[0]).toMatchObject({ safety: readProposal, needsConfirmation: [] })
+  const renamed = buildApp({
+    pool,
+    adminKey: ADMIN_KEY,
+    discoverTools: async (id: string) => (await discoverTools(id)).map((d) => ({ ...d, tool: { ...d.tool, name: 'orders.list' } })),
+  })
+  const res = await renamed.inject({
+    method: 'POST',
+    url: '/v1/connections',
+    payload: { id: 'shop', url: 'http://shop.test/mcp' },
+    headers: { authorization: `Bearer ${ADMIN_KEY}` },
+  })
+  expect(res.json().tools[0]).toMatchObject({ name: 'orders.list', safety: strict })
+})
+
+test('registering an MCP connection over a webhook connection gives 409', async () => {
+  await new ConfigRepo(pool, 'default').putConnection({ id: 'hook', kind: 'webhook', url: 'http://h/x', secret: 's', tools: [] })
+  const res = await authed('POST', '/v1/connections', { id: 'hook', url: 'http://shop.test/mcp' })
+  expect(res.statusCode).toBe(409)
+  expect(res.json().error).toMatchObject({ code: 'connection_kind_conflict', fix: expect.any(String) })
+  expect((await new ConfigRepo(pool, 'default').getConnection('hook'))?.kind).toBe('webhook')
 })
 
 test('an unreachable connection gives 422 and a non-http url gives 400', async () => {
@@ -279,6 +463,7 @@ test('GET run shows the pending approval, and events report a valid chain', asyn
     waiting_reason: 'approval',
     output: null,
     pending_approval: { tool_call_id: 'call_1', tool: 'orders.cancel', args: { id: 7 }, reason: 'write tool' },
+    pending_outcome: null,
   })
   const ev = (await authed('GET', `/v1/runs/${runId}/events`)).json()
   expect(ev.events).toHaveLength(6)
@@ -346,6 +531,7 @@ test('the settled handler enqueues exactly one delivery per subscribed webhook',
     waiting_reason: 'approval',
     output: null,
     pending_approval: { tool_call_id: 'call_1', tool: 'orders.cancel', args: { id: 7 }, reason: 'write tool' },
+    pending_outcome: null,
   })
 
   // other statuses and non-approval waits queue nothing
@@ -483,4 +669,346 @@ test('after tail deletion, append is refused and the events route still reports 
     new PgRunStore(pool, 'default').append(runId, [{ type: 'llm.requested', payload: { model: 'm' }, labels: [] }]),
   ).rejects.toThrow(/log head/)
   expect((await authed('GET', `/v1/runs/${runId}/events`)).json().chain).toEqual({ valid: false, broken_at_seq: 5 })
+})
+
+const webhookTool = {
+  name: 'loyalty.points_add',
+  description: 'add loyalty points',
+  inputSchema: { type: 'object', properties: { points: { type: 'number' } } },
+  safety: { effect: 'write', idempotency: true, reachesOutside: false, outputLabel: 'internal' },
+  supports: ['principal', 'idempotency-key'],
+}
+const webhookBody = { id: 'loyalty', kind: 'webhook', url: 'http://loyalty.test/tools', tools: [webhookTool] }
+
+test('registering a webhook connection stores confirmed tools and returns the secret once', async () => {
+  const res = await authed('POST', '/v1/connections', webhookBody)
+  expect(res.statusCode).toBe(201)
+  const { secret, ...rest } = res.json()
+  expect(secret).toMatch(/^[0-9a-f]{64}$/)
+  expect(rest).toMatchObject({ id: 'loyalty', kind: 'webhook' })
+  expect(rest.tools[0]).toMatchObject({ name: 'loyalty.points_add', safety: webhookTool.safety, needsConfirmation: [] })
+  const stored = await new ConfigRepo(pool, 'default').getConnection('loyalty')
+  expect(stored).toMatchObject({ kind: 'webhook', url: webhookBody.url, secret })
+  expect(stored?.tools[0]).toMatchObject({
+    connectionId: 'loyalty',
+    supports: webhookTool.supports,
+    source: { declared: webhookTool.safety, supports: webhookTool.supports },
+    confirmed: webhookTool.safety,
+    changedSinceReview: false,
+  })
+  expect(stored?.tools[0]?.reviewedFor).toBe(stored?.tools[0]?.fingerprint)
+
+  const again = await authed('POST', '/v1/connections', { ...webhookBody, url: 'http://loyalty2.test/tools' })
+  expect(again.statusCode).toBe(201)
+  expect(again.json()).not.toHaveProperty('secret')
+  expect(await new ConfigRepo(pool, 'default').getConnection('loyalty')).toMatchObject({ url: 'http://loyalty2.test/tools', secret })
+})
+
+test('registering a webhook connection over an MCP connection gives 409', async () => {
+  await authed('POST', '/v1/connections', { id: 'shop', url: 'http://shop.test/mcp' })
+  const res = await authed('POST', '/v1/connections', { ...webhookBody, id: 'shop' })
+  expect(res.statusCode).toBe(409)
+  expect(res.json().error).toMatchObject({ code: 'connection_kind_conflict', fix: expect.any(String) })
+  expect((await new ConfigRepo(pool, 'default').getConnection('shop'))?.kind).toBe('mcp')
+})
+
+test('webhook connection validation gives 400', async () => {
+  const bad: unknown[] = [
+    { ...webhookBody, tools: [] },
+    { ...webhookBody, tools: [webhookTool, webhookTool] },
+    { ...webhookBody, tools: [{ ...webhookTool, name: 'Bad Name' }] },
+    { ...webhookBody, tools: [{ ...webhookTool, inputSchema: 'x' }] },
+    { ...webhookBody, tools: [{ ...webhookTool, safety: { effect: 'write' } }] },
+    { ...webhookBody, tools: [{ ...webhookTool, supports: ['teleport'] }] },
+    { ...webhookBody, url: 'ftp://x' },
+    { ...webhookBody, tools: Array.from({ length: 101 }, (_, i) => ({ ...webhookTool, name: `t${i}` })) },
+  ]
+  for (const body of bad) {
+    const res = await authed('POST', '/v1/connections', body)
+    expect(res.statusCode, JSON.stringify(body).slice(0, 80)).toBe(400)
+  }
+  expect(await new ConfigRepo(pool, 'default').getConnection('loyalty')).toBeNull()
+})
+
+test('GET run shows the pending outcome of an unknown_outcome wait', async () => {
+  const runId = await runWaitingForOutcome()
+  const view = (await authed('GET', `/v1/runs/${runId}`)).json()
+  expect(view).toMatchObject({
+    status: 'waiting_human',
+    waiting_reason: 'unknown_outcome',
+    pending_approval: null,
+    pending_outcome: {
+      tool_call_id: 'call_1',
+      tool: 'payments.refund',
+      args: { amount: 5 },
+      reason: 'The tool call failed after it was sent (tool_call_failed: HTTP 503). It may have run.',
+    },
+  })
+})
+
+test('a pending outcome logged without a reason shows reason null', async () => {
+  const runId = await runWaitingForOutcome('r-out-old', null)
+  expect((await authed('GET', `/v1/runs/${runId}`)).json().pending_outcome).toEqual({
+    tool_call_id: 'call_1',
+    tool: 'payments.refund',
+    args: { amount: 5 },
+    reason: null,
+  })
+})
+
+test('outcome_happened settles the call, answers the model, and enqueues', async () => {
+  const runId = await runWaitingForOutcome()
+  const res = await authed('POST', `/v1/runs/${runId}/resolve`, { action: 'outcome_happened' })
+  expect(res.statusCode).toBe(202)
+  expect(res.json()).toEqual({ run_id: runId, status: 'queued' })
+  const events = await new PgRunStore(pool, 'default').readEvents(runId)
+  expect(events.slice(-3).map((e) => e.type)).toEqual(['outcome.settled', 'tool.responded', 'run.state_changed'])
+  expect(events.at(-3)!.payload).toEqual({ toolCallId: 'call_1', outcome: 'happened' })
+  expect(events.at(-2)).toMatchObject({
+    payload: { toolCallId: 'call_1', content: 'A human confirmed that this action happened. Its result is not available.', isError: false },
+    labels: ['trusted'],
+  })
+  expect(events.at(-1)!.payload).toEqual({ from: 'waiting_human', to: 'running' })
+  expect((await authed('GET', `/v1/runs/${runId}`)).json()).toMatchObject({ status: 'running', pending_outcome: null })
+  expect(await queueRows(runId)).toBe(1)
+})
+
+test('outcome_not_happened settles the call and enqueues without answering the model', async () => {
+  const runId = await runWaitingForOutcome()
+  const res = await authed('POST', `/v1/runs/${runId}/resolve`, { action: 'outcome_not_happened' })
+  expect(res.statusCode).toBe(202)
+  const events = await new PgRunStore(pool, 'default').readEvents(runId)
+  expect(events.slice(-2).map((e) => e.type)).toEqual(['outcome.settled', 'run.state_changed'])
+  expect(events.at(-2)!.payload).toEqual({ toolCallId: 'call_1', outcome: 'not_happened' })
+  expect(await queueRows(runId)).toBe(1)
+})
+
+test('cancel through resolve ends a run waiting for any reason', async () => {
+  const ids = [
+    await runWaitingForApproval('r-a'),
+    await runWaitingForOutcome('r-o'),
+    await runWaitingFor('breaker', 'r-b'),
+    await runWaitingFor('handoff', 'r-h'),
+    await runWaitingFor('needs_input', 'r-n'),
+  ]
+  for (const id of ids) {
+    const res = await authed('POST', `/v1/runs/${id}/resolve`, { action: 'cancel' })
+    expect(res.statusCode).toBe(202)
+    expect(res.json()).toEqual({ run_id: id, status: 'cancelled' })
+    expect((await authed('GET', `/v1/runs/${id}`)).json().status).toBe('cancelled')
+    expect((await eventTypes(id)).at(-1)).toBe('run.state_changed')
+    expect(await queueRows(id)).toBe(0)
+  }
+})
+
+test('an action that does not fit the waiting reason gives 409 action_not_allowed with the allowed actions', async () => {
+  const approvalRun = await runWaitingForApproval('r-a')
+  const outcomeRun = await runWaitingForOutcome('r-o')
+  const breakerRun = await runWaitingFor('breaker', 'r-b')
+  const cases: [string, string, string[]][] = [
+    [approvalRun, 'outcome_happened', ['approve', 'reject', 'cancel']],
+    [approvalRun, 'outcome_not_happened', ['approve', 'reject', 'cancel']],
+    [outcomeRun, 'approve', ['outcome_happened', 'outcome_not_happened', 'cancel']],
+    [outcomeRun, 'reject', ['outcome_happened', 'outcome_not_happened', 'cancel']],
+    [breakerRun, 'approve', ['cancel']],
+    [breakerRun, 'outcome_happened', ['cancel']],
+  ]
+  for (const [id, action, allowed] of cases) {
+    const before = (await eventTypes(id)).length
+    const res = await authed('POST', `/v1/runs/${id}/resolve`, { action })
+    expect(res.statusCode).toBe(409)
+    expect(res.json().error.code).toBe('action_not_allowed')
+    for (const a of allowed) expect(res.json().error.fix).toContain(a)
+    expect((await eventTypes(id)).length).toBe(before)
+  }
+})
+
+test('resolve with a new action on a run that is not waiting gives 409 not_waiting_human', async () => {
+  await seedAgent()
+  const { run_id } = (await authed('POST', '/v1/runs', runBody)).json()
+  for (const action of ['outcome_happened', 'outcome_not_happened', 'cancel']) {
+    const res = await authed('POST', `/v1/runs/${run_id}/resolve`, { action })
+    expect(res.statusCode).toBe(409)
+    expect(res.json().error.code).toBe('not_waiting_human')
+  }
+})
+
+test('resolve rejects an unknown action with 400', async () => {
+  const runId = await runWaitingForOutcome()
+  expect((await authed('POST', `/v1/runs/${runId}/resolve`, { action: 'resume' })).statusCode).toBe(400)
+})
+
+test('concurrent outcome resolves: exactly one wins', async () => {
+  const runId = await runWaitingForOutcome()
+  const results = await Promise.all([
+    authed('POST', `/v1/runs/${runId}/resolve`, { action: 'outcome_happened' }),
+    authed('POST', `/v1/runs/${runId}/resolve`, { action: 'outcome_not_happened' }),
+    authed('POST', `/v1/runs/${runId}/resolve`, { action: 'cancel' }),
+  ])
+  expect(results.map((r) => r.statusCode).sort()).toEqual([202, 409, 409])
+  const settled = (await eventTypes(runId)).filter((t) => t === 'outcome.settled')
+  expect(settled.length).toBeLessThanOrEqual(1)
+})
+
+test('POST /cancel cancels a queued run', async () => {
+  await seedAgent()
+  const { run_id } = (await authed('POST', '/v1/runs', runBody)).json()
+  const res = await authed('POST', `/v1/runs/${run_id}/cancel`)
+  expect(res.statusCode).toBe(202)
+  expect(res.json()).toEqual({ run_id, status: 'cancelled' })
+  expect((await authed('GET', `/v1/runs/${run_id}`)).json().status).toBe('cancelled')
+  expect((await new PgRunStore(pool, 'default').readEvents(run_id)).at(-1)!.payload).toEqual({ from: 'queued', to: 'cancelled' })
+})
+
+test('POST /cancel cancels a waiting run', async () => {
+  const runId = await runWaitingForApproval()
+  const res = await authed('POST', `/v1/runs/${runId}/cancel`)
+  expect(res.statusCode).toBe(202)
+  expect(res.json()).toEqual({ run_id: runId, status: 'cancelled' })
+  expect((await new PgRunStore(pool, 'default').readEvents(runId)).at(-1)!.payload).toEqual({ from: 'waiting_human', to: 'cancelled' })
+})
+
+test('POST /cancel on a running or finished run gives 409 run_not_cancellable; unknown run gives 404', async () => {
+  const runId = await runWaitingForApproval()
+  await pool.query("UPDATE runs SET status = 'running', waiting_reason = NULL WHERE id = $1", [runId])
+  const running = await authed('POST', `/v1/runs/${runId}/cancel`)
+  expect(running.statusCode).toBe(409)
+  expect(running.json().error.code).toBe('run_not_cancellable')
+  expect(running.json().error.fix).toBe('A running run can be cancelled from M2; wait for it to pause or end.')
+
+  const done = await runWaitingForApproval('r-done')
+  expect((await authed('POST', `/v1/runs/${done}/cancel`)).statusCode).toBe(202)
+  const again = await authed('POST', `/v1/runs/${done}/cancel`)
+  expect(again.statusCode).toBe(409)
+  expect(again.json().error.code).toBe('run_not_cancellable')
+
+  expect((await authed('POST', '/v1/runs/ghost/cancel')).statusCode).toBe(404)
+})
+
+test('two concurrent cancels: exactly one 202 and one 409', async () => {
+  const runId = await runWaitingForOutcome()
+  const results = await Promise.all([authed('POST', `/v1/runs/${runId}/cancel`), authed('POST', `/v1/runs/${runId}/cancel`)])
+  expect(results.map((r) => r.statusCode).sort()).toEqual([202, 409])
+})
+
+test('the settled handler queues run.waiting_human for non-approval waits only', async () => {
+  const config = new ConfigRepo(pool, 'default')
+  await config.putWebhook({ id: 'w1', url: 'https://a.test', secret: 's1', events: ['run.waiting_human'] })
+  await config.putWebhook({ id: 'w2', url: 'https://b.test', secret: 's2', events: ['approval.requested'] })
+  const settled = createRunSettledHandler(pool)
+
+  await settled(await runWaitingForApproval(), 'waiting_human')
+  expect((await pool.query("SELECT 1 FROM webhook_deliveries WHERE type = 'run.waiting_human'")).rowCount).toBe(0)
+
+  const runId = await runWaitingForOutcome()
+  await settled(runId, 'waiting_human')
+  const rows = await pool.query<{ webhook_id: string; type: string; body: string }>(
+    "SELECT webhook_id, type, body FROM webhook_deliveries WHERE type = 'run.waiting_human'",
+  )
+  expect(rows.rows.map((r) => r.webhook_id)).toEqual(['w1'])
+  expect(JSON.parse(rows.rows[0]!.body).data).toMatchObject({
+    run_id: runId,
+    waiting_reason: 'unknown_outcome',
+    pending_outcome: { tool_call_id: 'call_1', tool: 'payments.refund', args: { amount: 5 } },
+  })
+})
+
+test('webhooks accept the run.waiting_human event', async () => {
+  const res = await authed('POST', '/v1/webhooks', { url: 'https://a.test/hook', events: ['run.waiting_human'] })
+  expect(res.statusCode).toBeLessThan(300)
+})
+
+test('a principal with an overlong id or too many roles gives 400', async () => {
+  const run = (principal: unknown) => authed('POST', '/v1/runs', { agent: 'support', input: { text: 'hi' }, principal })
+  for (const principal of [
+    { id: 'x'.repeat(201), roles: [] },
+    { id: 'cus_1', roles: Array.from({ length: 21 }, (_, i) => `r${i}`) },
+    { id: 'cus_1', roles: ['r'.repeat(65)] },
+  ]) {
+    const res = await run(principal)
+    expect(res.statusCode).toBe(400)
+    expect(res.json().error.code).toBe('invalid_request')
+  }
+})
+
+test('a cancel that lands while a worker starts the run wins, and the worker writes nothing', async () => {
+  const { version } = await seedAgent()
+  await createRun(pool, { tenantId: 'default', runId: 'r-race', agentId: 'helper', agentVersion: version, input: { text: 'hi' } })
+  await new PgRunStore(pool, 'default').append('r-race', [{ type: 'run.created', payload: { agentId: 'helper', input: { text: 'hi' } }, labels: ['trusted'] }], {
+    enqueue: true,
+  })
+  const waiters = async () => Number((await pool.query<{ n: string }>('SELECT count(*) AS n FROM pg_locks WHERE NOT granted')).rows[0]!.n)
+  const until = async (n: number) => {
+    for (let i = 0; i < 200 && (await waiters()) < n; i++) await new Promise((r) => setTimeout(r, 10))
+    expect(await waiters()).toBe(n)
+  }
+  let llmCalls = 0
+  const llm: LLMPort = {
+    complete: async () => {
+      llmCalls++
+      return { message: { role: 'assistant', content: 'done' }, usage: { inputTokens: 1, outputTokens: 1 }, stopReason: 'end' }
+    },
+  }
+
+  // Hold the run row, so the cancel and then the worker queue up on it in that order.
+  const holder = await pool.connect()
+  await holder.query('BEGIN')
+  await holder.query("SELECT 1 FROM runs WHERE id = 'r-race' FOR UPDATE")
+  const cancel = authed('POST', '/v1/runs/r-race/cancel')
+  await until(1)
+  // The worker reads the run as queued, then waits to write queued -> running.
+  const worker = startRunWorker({ pool, llm, tools: { call: async () => ({ content: '', isError: false }) }, workerId: 'w-race', pollMs: 10 })
+  await until(2)
+  await holder.query('COMMIT')
+  holder.release()
+
+  expect((await cancel).statusCode).toBe(202)
+  for (let i = 0; i < 200 && (await pool.query("SELECT 1 FROM queue WHERE run_id = 'r-race'")).rowCount !== 0; i++) {
+    await new Promise((r) => setTimeout(r, 10))
+  }
+  await worker.stop()
+  const events = await new PgRunStore(pool, 'default').readEvents('r-race')
+  expect(events.map((e) => [e.type, e.type === 'run.state_changed' ? e.payload.to : null])).toEqual([
+    ['run.created', null],
+    ['run.state_changed', 'cancelled'],
+  ])
+  expect(llmCalls).toBe(0)
+  expect((await authed('GET', '/v1/runs/r-race')).json().status).toBe('cancelled')
+})
+
+test('an allow rule does not cover a tool whose definition changed: the worker waits for approval', async () => {
+  await authed('POST', '/v1/connections', { id: 'shop', url: 'http://shop.test/mcp' })
+  // An allow rule written for the definition the admin saw at registration.
+  const { version } = await new ConfigRepo(pool, 'default').putAgent({
+    ...agentBody,
+    connections: ['shop'],
+    allow: [{ tool: 'orders.get' }],
+    autonomy: 'supervised',
+    model: 'default',
+  })
+  await register(changedApp({ inputSchema: { type: 'object', properties: { order_id: { type: 'string' }, cancel: { type: 'boolean' } } } }))
+
+  await createRun(pool, { tenantId: 'default', runId: 'r-changed', agentId: 'helper', agentVersion: version, input: { text: 'hi' } })
+  await new PgRunStore(pool, 'default').append('r-changed', [{ type: 'run.created', payload: { agentId: 'helper', input: { text: 'hi' } }, labels: ['trusted'] }], {
+    enqueue: true,
+  })
+  const llm: LLMPort = {
+    complete: async () => ({
+      message: { role: 'assistant', content: '', toolCalls: [{ id: 'call_1', name: 'orders.get', arguments: { order_id: '1', cancel: true } }] },
+      usage: { inputTokens: 1, outputTokens: 1 },
+      stopReason: 'tool_calls',
+    }),
+  }
+  let toolCalls = 0
+  const worker = startRunWorker({ pool, llm, tools: { call: async () => (toolCalls++, { content: '', isError: false }) }, workerId: 'w-ch', pollMs: 10 })
+  for (let i = 0; i < 300 && (await authed('GET', '/v1/runs/r-changed')).json().status !== 'waiting_human'; i++) {
+    await new Promise((r) => setTimeout(r, 10))
+  }
+  await worker.stop()
+  expect((await authed('GET', '/v1/runs/r-changed')).json()).toMatchObject({
+    status: 'waiting_human',
+    waiting_reason: 'approval',
+    pending_approval: { tool: 'orders.get', reason: 'tool_changed_since_review' },
+  })
+  expect(toolCalls).toBe(0)
 })

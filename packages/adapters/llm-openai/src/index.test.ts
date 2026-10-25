@@ -1,5 +1,7 @@
-import type { LLMPort, ToolDescriptor } from '@agent-core/core'
+import { DEFAULT_MODEL_PROFILE } from '@agent-core/core'
+import type { LLMPort, ModelProfile, ToolDescriptor } from '@agent-core/core'
 import { startFakeLlm } from '@agent-core/fake-llm'
+import { z } from 'zod'
 import { createOpenAICompatible, fromWireName, LlmError, toWireName } from './index'
 
 type Fake = Awaited<ReturnType<typeof startFakeLlm>>
@@ -219,4 +221,140 @@ test('provider tool-call ids are replaced by our own, so reuse across turns is h
 test('a provider id like "constructor" comes back as a call_ UUID', async () => {
   const port = cannedPort({ content: null, tool_calls: [{ id: 'constructor', function: { name: 'a', arguments: '{}' } }] })
   expect((await port.complete(req)).message.toolCalls![0]!.id).toMatch(/^call_[0-9a-f-]{36}$/)
+})
+
+test('merges consecutive system messages into one, because some providers keep only the first', async () => {
+  const llm = await fake([{ content: 'ok' }])
+  await portFor(llm).complete({
+    ...req,
+    messages: [
+      { role: 'system', content: 'Instructions' },
+      { role: 'system', content: 'Requester: cus_1 (roles: customer)' },
+      { role: 'system', content: 'Current time: 2026-01-01T00:00:00.000Z', volatile: true },
+      { role: 'user', content: 'hi' },
+      { role: 'system', content: 'Later note' },
+    ],
+  })
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  expect((llm.requests[0] as any).messages).toEqual([
+    { role: 'system', content: 'Instructions\n\nRequester: cus_1 (roles: customer)\n\nCurrent time: 2026-01-01T00:00:00.000Z' },
+    { role: 'user', content: 'hi' },
+    { role: 'system', content: 'Later note' },
+  ])
+})
+
+describe('model profiles and structured output', () => {
+  const schema = z.object({ sum: z.number().int() })
+  const outReq = { ...req, output: { name: 'sum', schema } }
+  const withProfile = (llm: Fake, profile: ModelProfile) => {
+    const seen: string[] = []
+    const port = createOpenAICompatible({
+      baseUrl: llm.url,
+      apiKey: 'x',
+      models: { default: 'real-id' },
+      retryDelaysMs: [],
+      profile: (m) => {
+        seen.push(m)
+        return profile
+      },
+    })
+    return { port, seen }
+  }
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const sent = (llm: Fake) => llm.requests as any[]
+
+  test('strict profile sends response_format with a closed schema', async () => {
+    const llm = await fake([{ content: '{"sum":5}' }])
+    const { port, seen } = withProfile(llm, { ...DEFAULT_MODEL_PROFILE, jsonSchemaStrict: true })
+    const res = await port.complete(outReq)
+    expect(seen).toEqual(['real-id'])
+    expect(sent(llm)[0].response_format).toMatchObject({
+      type: 'json_schema',
+      json_schema: { name: 'sum', strict: true, schema: { type: 'object', additionalProperties: false } },
+    })
+    expect(res.message.content).toBe('{"sum":5}')
+  })
+
+  test('non-strict profile adds a user message and returns normalised JSON', async () => {
+    const llm = await fake([{ content: '{ "sum": 5 }' }])
+    const res = await withProfile(llm, DEFAULT_MODEL_PROFILE).port.complete(outReq)
+    const body = sent(llm)[0]
+    expect(body.response_format).toBeUndefined()
+    // A user message: some providers keep only the first system message.
+    expect(body.messages.at(-1)).toMatchObject({
+      role: 'user',
+      content: expect.stringContaining('Reply with only a JSON object that matches this JSON Schema:'),
+    })
+    expect(res.message.content).toBe('{"sum":5}')
+  })
+
+  test('accepts JSON inside a Markdown fence without a retry', async () => {
+    const llm = await fake([{ content: '```json\n{"sum": 5}\n```' }])
+    const res = await withProfile(llm, DEFAULT_MODEL_PROFILE).port.complete(outReq)
+    expect(res.message.content).toBe('{"sum":5}')
+    expect(sent(llm)).toHaveLength(1)
+  })
+
+  test('a strict profile falls back to validate-and-retry when the schema has an optional field', async () => {
+    // Strict providers require every property to be listed in `required`, so this schema would be refused.
+    const optional = { ...req, output: { name: 'note', schema: z.object({ sum: z.number(), note: z.object({ text: z.string().optional() }) }) } }
+    const llm = await fake([{ content: '{"sum":5,"note":{}}' }])
+    const res = await withProfile(llm, { ...DEFAULT_MODEL_PROFILE, jsonSchemaStrict: true }).port.complete(optional)
+    expect(sent(llm)[0].response_format).toBeUndefined()
+    expect(sent(llm)[0].messages.at(-1).content).toContain('Reply with only a JSON object')
+    expect(res.message.content).toBe('{"sum":5,"note":{}}')
+  })
+
+  test('structured output together with tools is refused before any request', async () => {
+    const llm = await fake([{ content: '{"sum":5}' }])
+    const err = await withProfile(llm, DEFAULT_MODEL_PROFILE)
+      .port.complete({ ...outReq, tools: [orderGetTool] })
+      .catch((e: unknown) => e)
+    expect(err).toMatchObject({ message: 'output_with_tools_not_supported: sum' })
+    expect(llm.requests).toHaveLength(0)
+  })
+
+  test('a strict profile still validates the reply', async () => {
+    const llm = await fake([{ content: '{"sum":"five"}' }])
+    const err = await withProfile(llm, { ...DEFAULT_MODEL_PROFILE, jsonSchemaStrict: true }).port.complete(outReq).catch((e: unknown) => e)
+    expect(err).toBeInstanceOf(LlmError)
+    expect((err as LlmError).retryable).toBe(false)
+  })
+
+  test('retries with the bad reply and the issue, then sums usage', async () => {
+    const llm = await fake([
+      { content: 'nope', usage: { prompt_tokens: 10, completion_tokens: 1, cost: 0.5 } },
+      { content: '{"sum":"x"}', usage: { prompt_tokens: 10, completion_tokens: 2, cost: 0.5 } },
+      { content: '{"sum":5}', usage: { prompt_tokens: 10, completion_tokens: 3, cost: 0.5 } },
+    ])
+    const res = await withProfile(llm, DEFAULT_MODEL_PROFILE).port.complete(outReq)
+    const third = sent(llm)[2].messages
+    expect(third.at(-2)).toEqual({ role: 'assistant', content: '{"sum":"x"}' })
+    expect(third.at(-1).content).toMatch(/^That reply was not valid JSON for the schema: sum: .*Reply again with only the JSON object\.$/)
+    expect(res.usage).toEqual({ inputTokens: 30, outputTokens: 6, costUsd: 1.5 })
+  })
+
+  test('three bad replies throw output_invalid', async () => {
+    const llm = await fake([{ content: 'a' }, { content: 'b' }, { content: 'c' }])
+    const err = await withProfile(llm, DEFAULT_MODEL_PROFILE).port.complete(outReq).catch((e: unknown) => e)
+    expect(err).toBeInstanceOf(LlmError)
+    expect(err).toMatchObject({ message: 'output_invalid: sum', status: 422, retryable: false })
+    expect(llm.requests).toHaveLength(3)
+  })
+
+  test('computes cost from prices when the provider sends none', async () => {
+    const llm = await fake([{ content: 'ok', usage: { prompt_tokens: 1000, completion_tokens: 500 } }])
+    const res = await withProfile(llm, { ...DEFAULT_MODEL_PROFILE, priceInPerMTok: 2, priceOutPerMTok: 10 }).port.complete(req)
+    expect(res.usage.costUsd).toBeCloseTo((1000 * 2 + 500 * 10) / 1e6)
+  })
+
+  test('provider cost wins; no cost without both prices', async () => {
+    const llm = await fake([
+      { content: 'ok', usage: { prompt_tokens: 1000, completion_tokens: 500, cost: 0.42 } },
+      { content: 'ok', usage: { prompt_tokens: 1000, completion_tokens: 500 } },
+    ])
+    const port = withProfile(llm, { ...DEFAULT_MODEL_PROFILE, priceInPerMTok: 2 }).port
+    expect((await port.complete(req)).usage.costUsd).toBe(0.42)
+    expect((await port.complete(req)).usage).not.toHaveProperty('costUsd')
+  })
 })

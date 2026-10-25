@@ -4,7 +4,7 @@ import { signWebhook } from './sign'
 
 export const RETRY_DELAYS_S = [10, 30, 120, 600, 1800, 3600, 14400, 43200]
 
-export type WebhookEventType = 'run.completed' | 'run.failed' | 'approval.requested'
+export type WebhookEventType = 'run.completed' | 'run.failed' | 'approval.requested' | 'run.waiting_human'
 
 const LEASE_S = 60
 const SEND_TIMEOUT_MS = 10_000

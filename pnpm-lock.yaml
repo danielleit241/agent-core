@@ -11,9 +11,15 @@ importers:
       '@agent-core/core':
         specifier: workspace:*
         version: link:packages/core
+      '@agent-core/evals':
+        specifier: workspace:*
+        version: link:packages/evals
       '@agent-core/fake-llm':
         specifier: workspace:*
         version: link:mocks/fake-llm
+      '@agent-core/llm-cassette':
+        specifier: workspace:*
+        version: link:packages/adapters/llm-cassette
       '@agent-core/llm-openai':
         specifier: workspace:*
         version: link:packages/adapters/llm-openai
@@ -29,6 +35,9 @@ importers:
       '@agent-core/tools-mcp':
         specifier: workspace:*
         version: link:packages/adapters/tools-mcp
+      '@agent-core/tools-webhook':
+        specifier: workspace:*
+        version: link:packages/adapters/tools-webhook
       '@agent-core/webhooks':
         specifier: workspace:*
         version: link:packages/adapters/webhooks
@@ -65,6 +74,9 @@ importers:
       '@agent-core/tools-mcp':
         specifier: workspace:*
         version: link:../../packages/adapters/tools-mcp
+      '@agent-core/tools-webhook':
+        specifier: workspace:*
+        version: link:../../packages/adapters/tools-webhook
       '@agent-core/webhooks':
         specifier: workspace:*
         version: link:../../packages/adapters/webhooks
@@ -93,11 +105,20 @@ importers:
         specifier: ^4.0.0
         version: 4.6.7
 
+  packages/adapters/llm-cassette:
+    dependencies:
+      '@agent-core/core':
+        specifier: workspace:*
+        version: link:../../core
+
   packages/adapters/llm-openai:
     dependencies:
       '@agent-core/core':
         specifier: workspace:*
         version: link:../../core
+      zod:
+        specifier: ^4.6.7
+        version: 4.6.7
     devDependencies:
       '@agent-core/fake-llm':
         specifier: workspace:*
@@ -129,6 +150,15 @@ importers:
         specifier: workspace:*
         version: link:../../../mocks/shop
 
+  packages/adapters/tools-webhook:
+    dependencies:
+      '@agent-core/core':
+        specifier: workspace:*
+        version: link:../../core
+      '@agent-core/webhooks':
+        specifier: workspace:*
+        version: link:../webhooks
+
   packages/adapters/webhooks:
     dependencies:
       '@agent-core/core':
@@ -149,6 +179,30 @@ importers:
     dependencies:
       zod:
         specifier: ^4.0.0
+        version: 4.6.7
+
+  packages/evals:
+    dependencies:
+      '@agent-core/core':
+        specifier: workspace:*
+        version: link:../core
+      '@agent-core/llm-cassette':
+        specifier: workspace:*
+        version: link:../adapters/llm-cassette
+      '@agent-core/llm-openai':
+        specifier: workspace:*
+        version: link:../adapters/llm-openai
+      '@agent-core/service':
+        specifier: workspace:*
+        version: link:../../apps/service
+      '@agent-core/shop':
+        specifier: workspace:*
+        version: link:../../mocks/shop
+      '@agent-core/store-postgres':
+        specifier: workspace:*
+        version: link:../adapters/store-postgres
+      zod:
+        specifier: ^4.6.7
         version: 4.6.7
 
 packages:

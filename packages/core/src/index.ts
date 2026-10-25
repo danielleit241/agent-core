@@ -1,6 +1,7 @@
 export * from './types'
 export * from './ports'
 export * from './hash'
+export * from './request-hash'
 export * from './safety'
 export * from './rules'
 export * from './projection'

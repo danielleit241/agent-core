@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto'
 import type { FastifyInstance } from 'fastify'
 import { z } from 'zod'
 import { projectRun, verifyChain } from '@agent-core/core'
-import type { NewEvent, StoredEvent } from '@agent-core/core'
+import type { NewEvent, StoredEvent, WaitingReason } from '@agent-core/core'
 import { ConfigRepo, PgRunStore, StateConflictError, createRunWithEvent, getRun, getRunHead } from '@agent-core/store-postgres'
 import type { createPool } from '@agent-core/store-postgres'
 import { apiError, validationError } from '../errors'
@@ -14,9 +14,23 @@ const POLL_MS = 100
 const RunBody = z.object({
   agent: z.string().min(1),
   input: z.object({ text: z.string().min(1) }),
-  principal: z.object({ id: z.string(), roles: z.array(z.string()) }).optional(),
+  // Bounded: the principal goes into the LLM context.
+  principal: z.object({ id: z.string().max(200), roles: z.array(z.string().max(64)).max(20) }).optional(),
 })
-const ResolveBody = z.object({ action: z.enum(['approve', 'reject']) })
+const ACTIONS = ['approve', 'reject', 'outcome_happened', 'outcome_not_happened', 'cancel'] as const
+type Action = (typeof ACTIONS)[number]
+const ResolveBody = z.object({ action: z.enum(ACTIONS) })
+
+/** The actions a human may take for each waiting reason. A reason without an entry only allows `cancel`. */
+const ALLOWED: Partial<Record<WaitingReason, readonly Action[]>> = {
+  approval: ['approve', 'reject', 'cancel'],
+  unknown_outcome: ['outcome_happened', 'outcome_not_happened', 'cancel'],
+}
+const allowedFor = (reason: WaitingReason | null): readonly Action[] => (reason && ALLOWED[reason]) || ['cancel']
+
+const HAPPENED_TEXT = 'A human confirmed that this action happened. Its result is not available.'
+
+const notCancellable = (fix: string) => apiError('run_not_cancellable', 'The run cannot be cancelled in its current state.', fix, 409)
 
 const runNotFound = (id: string) =>
   apiError('run_not_found', `Run "${id}" does not exist.`, 'Check the run id returned by POST /v1/runs.', 404)
@@ -130,34 +144,94 @@ export function registerRunRoutes(app: FastifyInstance, deps: { pool: ReturnType
   app.post<{ Params: { id: string } }>('/v1/runs/:id/resolve', async (req, reply) => {
     const parsed = ResolveBody.safeParse(req.body)
     if (!parsed.success) throw validationError(parsed.error)
+    const { action } = parsed.data
     const runId = req.params.id
     const run = await getRun(pool, TENANT, runId)
     if (!run) throw runNotFound(runId)
-    const notWaiting = apiError(
-      'not_waiting_for_approval',
-      'The run is not waiting for an approval.',
-      'Only a run with status "waiting_human" and waiting_reason "approval" can be resolved.',
-      409,
-    )
-    if (run.status !== 'waiting_human' || run.waitingReason !== 'approval') throw notWaiting
+    // approve and reject keep their original error code for a run that is not waiting.
+    const notWaiting =
+      action === 'approve' || action === 'reject'
+        ? apiError(
+            'not_waiting_for_approval',
+            'The run is not waiting for an approval.',
+            'Only a run with status "waiting_human" and waiting_reason "approval" can be resolved.',
+            409,
+          )
+        : apiError(
+            'not_waiting_human',
+            'The run is not waiting for a human.',
+            'Only a run with status "waiting_human" can be resolved. Check GET /v1/runs/{id}.',
+            409,
+          )
+    if (run.status !== 'waiting_human') throw notWaiting
+    const allowed = allowedFor(run.waitingReason)
+    if (!allowed.includes(action)) {
+      throw apiError(
+        'action_not_allowed',
+        `The action "${action}" does not fit a run waiting for "${run.waitingReason}".`,
+        `Use one of: ${allowed.join(', ')}.`,
+        409,
+      )
+    }
     const proj = projectRun(await store.readEvents(runId), '')
-    const events: NewEvent[] = [
-      ...proj.awaitingApproval.map(
-        (toolCallId): NewEvent => ({
-          type: 'approval.resolved',
-          payload: { toolCallId, action: parsed.data.action },
-          labels: ['trusted'],
-        }),
-      ),
-      { type: 'run.state_changed', payload: { from: 'waiting_human', to: 'running' }, labels: [] },
-    ]
+    const stateTo = (to: 'running' | 'cancelled'): NewEvent => ({
+      type: 'run.state_changed',
+      payload: { from: 'waiting_human', to },
+      labels: [],
+    })
+    let events: NewEvent[]
+    let enqueue = true
+    if (action === 'cancel') {
+      events = [stateTo('cancelled')]
+      enqueue = false
+    } else if (action === 'approve' || action === 'reject') {
+      events = [
+        ...proj.awaitingApproval.map(
+          (toolCallId): NewEvent => ({ type: 'approval.resolved', payload: { toolCallId, action }, labels: ['trusted'] }),
+        ),
+        stateTo('running'),
+      ]
+    } else {
+      const toolCallId = proj.inFlight[0]
+      if (toolCallId === undefined) throw notWaiting
+      const happened = action === 'outcome_happened'
+      events = [
+        { type: 'outcome.settled', payload: { toolCallId, outcome: happened ? 'happened' : 'not_happened' }, labels: ['trusted'] },
+        ...(happened
+          ? [{ type: 'tool.responded', payload: { toolCallId, content: HAPPENED_TEXT, isError: false }, labels: ['trusted'] } satisfies NewEvent]
+          : []),
+        stateTo('running'),
+      ]
+    }
     try {
       // The expectation is checked under the row lock, so two concurrent resolves cannot both write.
-      await store.append(runId, events, { expect: { status: 'waiting_human', waitingReason: 'approval' }, enqueue: true })
+      await store.append(runId, events, { expect: { status: 'waiting_human', waitingReason: run.waitingReason ?? undefined }, enqueue })
     } catch (err) {
       if (err instanceof StateConflictError) throw notWaiting
       throw err
     }
-    return reply.code(202).send({ run_id: runId, status: 'queued' })
+    return reply.code(202).send({ run_id: runId, status: action === 'cancel' ? 'cancelled' : 'queued' })
+  })
+
+  app.post<{ Params: { id: string } }>('/v1/runs/:id/cancel', async (req, reply) => {
+    const runId = req.params.id
+    const run = await getRun(pool, TENANT, runId)
+    if (!run) throw runNotFound(runId)
+    if (run.status !== 'queued' && run.status !== 'waiting_human') {
+      throw notCancellable(
+        run.status === 'running' ? 'A running run can be cancelled from M2; wait for it to pause or end.' : 'The run has already ended.',
+      )
+    }
+    try {
+      await store.append(
+        runId,
+        [{ type: 'run.state_changed', payload: { from: run.status, to: 'cancelled' }, labels: [] }],
+        { expect: { status: run.status } },
+      )
+    } catch (err) {
+      if (err instanceof StateConflictError) throw notCancellable('The run changed state while cancelling. Check GET /v1/runs/{id} and retry.')
+      throw err
+    }
+    return reply.code(202).send({ run_id: runId, status: 'cancelled' })
   })
 }

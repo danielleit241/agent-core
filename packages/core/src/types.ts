@@ -16,6 +16,8 @@ export const MessageSchema = z.object({
   content: z.string(),
   toolCalls: z.array(ToolCallSchema).optional(),
   toolCallId: z.string().optional(),
+  /** Context item that changes between calls (for example the time). Sent to the LLM, never stored in events. */
+  volatile: z.boolean().optional(),
 })
 export type Message = z.infer<typeof MessageSchema>
 
@@ -27,14 +29,33 @@ export const ToolSafetySchema = z.object({
 })
 export type ToolSafety = z.infer<typeof ToolSafetySchema>
 
+export const SupportSchema = z.enum(['principal', 'idempotency-key', 'dry-run'])
+export type Support = z.infer<typeof SupportSchema>
+
 export const ToolDescriptorSchema = z.object({
   name: z.string(),
   description: z.string(),
   inputSchema: z.record(z.string(), z.unknown()),
   safety: ToolSafetySchema,
   connectionId: z.string(),
+  supports: z.array(SupportSchema).optional(),
+  /** True when the definition changed after an admin last reviewed it: the tool never runs without approval. */
+  changedSinceReview: z.boolean().optional(),
 })
 export type ToolDescriptor = z.infer<typeof ToolDescriptorSchema>
+
+export const ModelProfileSchema = z
+  .object({
+    jsonSchemaStrict: z.boolean(),
+    parallelTools: z.boolean(),
+    usageCost: z.boolean(),
+    priceInPerMTok: z.number().nonnegative().optional(),
+    priceOutPerMTok: z.number().nonnegative().optional(),
+  })
+  .strict()
+export type ModelProfile = z.infer<typeof ModelProfileSchema>
+
+export const DEFAULT_MODEL_PROFILE: ModelProfile = { jsonSchemaStrict: false, parallelTools: false, usageCost: false }
 
 export const ConditionSchema = z
   .object({
@@ -133,6 +154,10 @@ const payloadSchemas = {
     content: z.string(),
     isError: z.boolean(),
   }),
+  'outcome.settled': z.object({
+    toolCallId: z.string(),
+    outcome: z.enum(['happened', 'not_happened']),
+  }),
   'run.state_changed': z.object({
     from: RunStatusSchema,
     to: RunStatusSchema,
@@ -157,6 +182,7 @@ export const NewEventSchema = z.discriminatedUnion('type', [
   eventSchema('approval.resolved', payloadSchemas['approval.resolved']),
   eventSchema('tool.requested', payloadSchemas['tool.requested']),
   eventSchema('tool.responded', payloadSchemas['tool.responded']),
+  eventSchema('outcome.settled', payloadSchemas['outcome.settled']),
   eventSchema('run.state_changed', payloadSchemas['run.state_changed']),
   eventSchema('error.raised', payloadSchemas['error.raised']),
 ])

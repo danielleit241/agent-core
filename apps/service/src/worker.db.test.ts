@@ -158,9 +158,11 @@ test('two connections exposing the same tool name fail the run', async () => {
     inputSchema: {},
     safety: { effect: 'read' as const, idempotency: true, reachesOutside: false, outputLabel: 'trusted' as const },
     connectionId,
+    source: {},
+    confirmed: {},
   })
-  await config.putConnection({ id: 'c1', url: 'http://x', tools: [tool('c1')] })
-  await config.putConnection({ id: 'c2', url: 'http://y', tools: [tool('c2')] })
+  await config.putConnection({ id: 'c1', kind: 'mcp', url: 'http://x', tools: [tool('c1')] })
+  await config.putConnection({ id: 'c2', kind: 'mcp', url: 'http://y', tools: [tool('c2')] })
   const { version } = await config.putAgent({ ...agent, connections: ['c1', 'c2'] })
   await seedRun('r4', 'helper', version)
   const settled: Array<[string, RunStatus]> = []
@@ -249,8 +251,10 @@ test('a tool named like an Object.prototype member is not reported as a duplicat
     inputSchema: {},
     safety: { effect: 'read' as const, idempotency: true, reachesOutside: false, outputLabel: 'trusted' as const },
     connectionId: 'c1',
+    source: {},
+    confirmed: {},
   }
-  await config.putConnection({ id: 'c1', url: 'http://x', tools: [tool] })
+  await config.putConnection({ id: 'c1', kind: 'mcp', url: 'http://x', tools: [tool] })
   const { version } = await config.putAgent({ ...agent, connections: ['c1'] })
   await seedRun('r7', 'helper', version)
   const settled: Array<[string, RunStatus]> = []

@@ -6,12 +6,17 @@ import { checkAdminKey } from './auth'
 import { ApiError, apiError } from './errors'
 import { registerConfigRoutes } from './routes/config'
 import { registerHealthRoutes } from './routes/health'
+import { registerModelRoutes } from './routes/models'
+import type { ProbeResult } from './routes/models'
 import { registerRunRoutes } from './routes/runs'
 
 export type AppDeps = {
   pool: ReturnType<typeof createPool>
   adminKey: string
   discoverTools?: typeof discoverMcpTools
+  /** Alias to real model id. */
+  models?: Record<string, string>
+  probe?: (model: string) => Promise<ProbeResult>
 }
 
 export function buildApp(deps: AppDeps): FastifyInstance {
@@ -55,6 +60,7 @@ export function buildApp(deps: AppDeps): FastifyInstance {
       checkAdminKey(req.headers.authorization, deps.adminKey)
     })
     registerConfigRoutes(v1, { pool: deps.pool, discoverTools: deps.discoverTools ?? discoverMcpTools })
+    registerModelRoutes(v1, { pool: deps.pool, models: deps.models ?? {}, probe: deps.probe })
     registerRunRoutes(v1, { pool: deps.pool, closing: closing.signal })
   })
   return app

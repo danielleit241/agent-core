@@ -17,7 +17,7 @@ export function createRunSettledHandler(pool: Pool): (runId: string, status: Run
     let type: WebhookEventType | null = null
     if (status === 'completed') type = 'run.completed'
     else if (status === 'failed') type = 'run.failed'
-    else if (status === 'waiting_human' && view.waiting_reason === 'approval') type = 'approval.requested'
+    else if (status === 'waiting_human') type = view.waiting_reason === 'approval' ? 'approval.requested' : 'run.waiting_human'
     if (!type) return
     const head = await getRunHead(pool, TENANT, runId)
     if (head?.lastSeq == null) return

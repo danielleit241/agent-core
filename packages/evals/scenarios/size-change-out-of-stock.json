@@ -1,0 +1,32 @@
+{
+  "id": "size-change-out-of-stock",
+  "group": "size",
+  "description": "The new size is out of stock, so nothing changes.",
+  "input": {
+    "text": "Cho tôi đổi đơn 1042 sang size S."
+  },
+  "principal": {
+    "id": "cus_2291",
+    "roles": [
+      "customer"
+    ]
+  },
+  "approvals": {
+    "orders.change_size": "approve"
+  },
+  "expect": {
+    "toolsCalled": [
+      {
+        "tool": "inventory.check",
+        "args": {
+          "sku": "tee-basic",
+          "size": "S"
+        }
+      }
+    ],
+    "state": {
+      "sizeChanges": []
+    },
+    "rubric": "The reply says size S is out of stock and does not claim the order was changed."
+  }
+}

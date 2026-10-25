@@ -66,8 +66,9 @@ function ruleMatches(rule: Rule, tool: ToolDescriptor, args: Record<string, unkn
 }
 
 /**
- * Decides whether a tool call may run alone. M0 order: reads are allowed,
- * then the first matching allow rule, then approval. Never throws; it never returns `deny` yet.
+ * Decides whether a tool call may run alone. Order: a tool that changed since an admin reviewed it needs
+ * approval (allow rules were written for the old definition); reads are allowed; then the first matching
+ * allow rule; then approval. Never throws; it never returns `deny` yet.
  */
 export function decide(input: {
   tool: ToolDescriptor
@@ -75,6 +76,7 @@ export function decide(input: {
   agent: AgentDefinition
 }): RuleDecision {
   const { tool, args, agent } = input
+  if (tool.changedSinceReview === true) return { decision: 'require_approval', reason: 'tool_changed_since_review' }
   if (tool.safety.effect === 'read') return { decision: 'allow', reason: 'read' }
   const index = agent.allow.findIndex((rule) => ruleMatches(rule, tool, args))
   if (index >= 0) return { decision: 'allow', reason: `allow[${index}]` }

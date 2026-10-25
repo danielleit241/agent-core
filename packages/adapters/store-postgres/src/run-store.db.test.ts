@@ -8,6 +8,7 @@ import {
   PgRunStore,
   StateConflictError,
   assertTestDatabase,
+  assertTestPool,
   createPool,
   createRun,
   claim,
@@ -129,6 +130,20 @@ test('append with expect throws StateConflictError and writes nothing when the s
   expect((await getRun(pool, 'default', 'r9'))?.status).toBe('running')
 })
 
+test('a state change from a status the run is no longer in throws StateConflictError and writes nothing', async () => {
+  await createRun(pool, { tenantId: 'default', runId: 'r19', agentId: 'a', agentVersion: 1, input: { text: 'hi' } })
+  const store = new PgRunStore(pool, 'default')
+  // A worker read "queued", then the run was cancelled before the worker wrote its transition.
+  await store.append('r19', [ev.runCreated(), ev.stateChanged('queued', 'cancelled')])
+  const before = (await store.readEvents('r19')).length
+  await expect(store.append('r19', [ev.stateChanged('queued', 'running')])).rejects.toBeInstanceOf(StateConflictError)
+  await expect(
+    store.append('r19', [ev.llmRequested(), ev.stateChanged('cancelled', 'running'), ev.stateChanged('queued', 'failed')]),
+  ).rejects.toBeInstanceOf(StateConflictError)
+  expect((await store.readEvents('r19')).length).toBe(before)
+  expect((await getRun(pool, 'default', 'r19'))?.status).toBe('cancelled')
+})
+
 test('updating or deleting an event is rejected by the database', async () => {
   await createRun(pool, { tenantId: 'default', runId: 'r10', agentId: 'a', agentVersion: 1, input: { text: 'x' } })
   await new PgRunStore(pool, 'default').append('r10', [ev.llmRequested()])
@@ -209,6 +224,16 @@ test('append with enqueue puts the queue row in the same transaction', async () 
   expect(await queueRows('r17')).toBe(0)
   await store.append('r17', [ev.stateChanged('waiting_human', 'running')], { expect: { status: 'waiting_human' }, enqueue: true })
   expect(await queueRows('r17')).toBe(1)
+})
+
+test('assertTestPool checks the database the pool is connected to', async () => {
+  await expect(assertTestPool(pool)).resolves.toBeUndefined()
+  const other = createPool(url.replace(/agentcore_test(\?|$)/, 'postgres$1'))
+  try {
+    await expect(assertTestPool(other)).rejects.toThrow(/_test/)
+  } finally {
+    await other.end()
+  }
 })
 
 test('assertTestDatabase accepts *_test databases only', () => {

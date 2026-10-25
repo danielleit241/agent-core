@@ -140,3 +140,21 @@ describe('degenerate input fails closed', () => {
     expect(run({ k: { eq: new Date(0) } }, { k: new Date(0) })).toEqual(REQ)
   })
 })
+
+describe('a tool that changed since it was reviewed', () => {
+  const changed = { ...refund, changedSinceReview: true }
+
+  test('needs approval even when an allow rule matches', () => {
+    expect(decide({ tool: changed, args: { amount: 5 }, agent })).toEqual({ decision: 'require_approval', reason: 'tool_changed_since_review' })
+  })
+
+  test('needs approval even when it is a read', () => {
+    expect(decide({ tool: { ...toolWith('orders.get', 'read'), changedSinceReview: true }, args: {}, agent })).toMatchObject({
+      decision: 'require_approval',
+    })
+  })
+
+  test('changedSinceReview false changes nothing', () => {
+    expect(decide({ tool: { ...refund, changedSinceReview: false }, args: { amount: 5 }, agent })).toEqual(ALLOW0)
+  })
+})

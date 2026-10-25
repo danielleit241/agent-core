@@ -1,0 +1,37 @@
+{
+  "id": "size-change-in-stock",
+  "group": "size",
+  "description": "Change to a size that is in stock; a human approves.",
+  "input": {
+    "text": "Cho tôi đổi đơn 1042 sang size L."
+  },
+  "principal": {
+    "id": "cus_2291",
+    "roles": [
+      "customer"
+    ]
+  },
+  "approvals": {
+    "orders.change_size": "approve"
+  },
+  "expect": {
+    "toolsCalled": [
+      {
+        "tool": "inventory.check",
+        "args": {
+          "sku": "tee-basic",
+          "size": "L"
+        }
+      }
+    ],
+    "state": {
+      "sizeChanges": [
+        {
+          "orderId": "1042",
+          "from": "M",
+          "to": "L"
+        }
+      ]
+    }
+  }
+}
