@@ -120,11 +120,14 @@ async function handleToolCall(
 
   if (inFlight) {
     // The worker died after `tool.requested`. Reads and keyed writes are called again with the same key; other writes are never repeated.
-    if (tool === undefined || !isRetryable(tool)) {
+    const changed = tool !== undefined && isRetryable(tool) && tool.safety.effect === 'write' && tool.changedSinceReview === true
+    if (tool === undefined || !isRetryable(tool) || changed) {
       const why =
         tool === undefined
           ? 'The run stopped after the tool call was sent, and the tool is no longer known. It may have run.'
-          : 'The run stopped after the tool call was sent. It may have run.'
+          : changed
+            ? 'The run stopped after the tool call was sent, and the tool changed since review. It may have run.'
+            : 'The run stopped after the tool call was sent. It may have run.'
       await append(...unknownOutcome(why))
       return 'waiting_human'
     }
@@ -220,7 +223,7 @@ async function execute(
         await deps.store.append(runId, [
           {
             type: 'error.raised',
-            payload: { message: isNotSent(err) ? toolUnavailable(err) : failedAfterSend(err), retryable: true },
+            payload: { message: isNotSent(err) ? toolUnavailable(err) : failedAfterSend(err), retryable: attempt < maxAttempts },
             labels: [],
           },
         ])
@@ -280,10 +283,9 @@ async function llmStep(
     const { retryable, retryAfterMs } = (err ?? {}) as { retryable?: unknown; retryAfterMs?: unknown }
     const attempts = proj.llmRetry.attempts
     if (retryable === true && attempts < LLM_RETRY_WAITS_MS.length) {
-      const wait =
-        typeof retryAfterMs === 'number' && Number.isFinite(retryAfterMs) && retryAfterMs >= 0
-          ? retryAfterMs
-          : jitter(LLM_RETRY_WAITS_MS[attempts]!, deps.random ?? Math.random)
+      // The provider's hint can only lengthen the computed wait.
+      const hint = typeof retryAfterMs === 'number' && Number.isFinite(retryAfterMs) && retryAfterMs >= 0 ? retryAfterMs : 0
+      const wait = Math.max(hint, jitter(LLM_RETRY_WAITS_MS[attempts]!, deps.random ?? Math.random))
       const retryAt = new Date(now().getTime() + Math.min(wait, LLM_MAX_WAIT_MS)).toISOString()
       await store.append(runId, [
         { type: 'error.raised', payload: { message: errorMessage(err), retryable: true, retryAt }, labels: [] },

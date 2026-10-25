@@ -407,14 +407,15 @@ describe('durable LLM retry', () => {
     expect(events.at(-1)).toMatchObject({ type: 'run.state_changed', payload: { from: 'running', to: 'failed' } })
   })
 
-  test('Retry-After replaces the computed wait and is capped at 300 s', async () => {
+  test('Retry-After only lengthens the computed wait and is capped at 300 s', async () => {
     for (const [retryAfterMs, expected] of [
+      [1_000, 30_000],
       [90_000, 90_000],
       [3_600_000, 300_000],
     ] as const) {
       const llm = scriptedLlm([transient({ retryAfterMs })])
       const { store, tools } = await setup()
-      await advanceRun('r1', deps({ llm, store, tools, now: () => T0 }))
+      await advanceRun('r1', deps({ llm, store, tools, now: () => T0, random: () => 0.5 }))
       expect((await lastError(store)).retryAt).toBe(new Date(T0.getTime() + expected).toISOString())
     }
   })
@@ -777,6 +778,19 @@ test('a write left in flight by a stopped worker records why the outcome is unkn
   ])
 })
 
+test('a resumed keyed write of a tool changed since review is not called', async () => {
+  const { store, tools } = await setupWithEvents(logAfterToolRequested('payments.capture'))
+  const d = { ...capDeps({ llm: scriptedLlm([]), store, tools }) }
+  const changed = { ...d, toolsByName: { ...d.toolsByName, 'payments.capture': { ...d.toolsByName['payments.capture']!, changedSinceReview: true } } }
+  expect(await advanceRun('r1', changed)).toBe('waiting_human')
+  expect(tools.calls).toHaveLength(0)
+  const proj = projectRun(await store.readEvents('r1'), '')
+  expect(proj.waitingReason).toBe('unknown_outcome')
+  expect(raised(await store.readEvents('r1'))).toEqual([
+    { message: 'The run stopped after the tool call was sent, and the tool changed since review. It may have run.', retryable: false },
+  ])
+})
+
 test('an in-flight call to a tool that is gone records that the tool is no longer known', async () => {
   const { store, tools } = await setupWithEvents(logAfterToolRequested('orders.get'))
   await advanceRun('r1', { ...deps({ llm: scriptedLlm([]), store, tools }), toolsByName: {} })
@@ -875,7 +889,7 @@ test('a failing read is tried 3 times with the same key, then the model gets a t
   expect(await advanceRun('r1', deps({ llm, store, tools, sleeps }))).toBe('completed')
   expect(tools.calls.map((c) => c.idempotencyKey)).toEqual(['r1:call_1', 'r1:call_1', 'r1:call_1'])
   const events = await store.readEvents('r1')
-  expect(raised(events).map((p) => (p as { retryable: boolean }).retryable)).toEqual([true, true, true])
+  expect(raised(events).map((p) => (p as { retryable: boolean }).retryable)).toEqual([true, true, false])
   expect(llm.lastRequest().messages.at(-1)).toMatchObject({ role: 'tool', content: 'Tool unavailable.' })
   expect(sleeps).toEqual([500, 1000])
 })

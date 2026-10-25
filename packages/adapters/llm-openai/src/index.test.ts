@@ -374,7 +374,7 @@ test('a network error does not carry the cause text', async () => {
 })
 
 describe('Retry-After', () => {
-  const fetchWith = (status: number, headers: Record<string, string>) => {
+  const fetchWith = (status: number, headers: Record<string, string>, retryDelaysMs = [1, 1]) => {
     const calls = { n: 0 }
     const fetchFn = (async () => {
       calls.n++
@@ -385,7 +385,7 @@ describe('Retry-After', () => {
       apiKey: 'secret-key',
       models: { default: 'fake' },
       fetch: fetchFn,
-      retryDelaysMs: [1, 1],
+      retryDelaysMs,
     })
     return { calls, port }
   }
@@ -408,6 +408,14 @@ describe('Retry-After', () => {
     const err = await port.complete(req).catch((e: unknown) => e)
     expect(calls.n).toBe(1)
     expect(err).toMatchObject({ status: 429, retryable: true, retryAfterMs: 7000 })
+  })
+
+  test('a short Retry-After hint keeps the fast retries and the error carries it', async () => {
+    // The hint (50 ms) is shorter than every fast retry delay left, so they run.
+    const { calls, port } = fetchWith(429, { 'retry-after-ms': '50' }, [100, 100])
+    const err = await port.complete(req).catch((e: unknown) => e)
+    expect(calls.n).toBe(3)
+    expect(err).toMatchObject({ status: 429, retryable: true, retryAfterMs: 50 })
   })
 
   test('a 503 without Retry-After keeps the fast retries', async () => {

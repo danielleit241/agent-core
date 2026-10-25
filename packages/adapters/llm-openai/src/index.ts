@@ -145,10 +145,11 @@ export function createOpenAICompatible(opts: Opts): LLMPort {
       // Provider text can echo part of the key (for example on a 401), so only the status is kept.
       const message = `LLM provider returned HTTP ${res.status}`
       if (res.status === 429 || res.status >= 500) {
-        // A provider wait hint is longer than the fast retries; the caller schedules the wait.
+        // A hint longer than the fast retries still left is not waited out here; the caller schedules that wait.
         const retryAfterMs = parseRetryAfterMs(res.headers, Date.now())
-        if (retryAfterMs !== undefined) throw new LlmError(message, res.status, true, retryAfterMs)
-        last = new LlmError(message, res.status, true)
+        const fastLeft = delays.slice(attempt).reduce((a, b) => a + b, 0)
+        if (retryAfterMs !== undefined && retryAfterMs > fastLeft) throw new LlmError(message, res.status, true, retryAfterMs)
+        last = new LlmError(message, res.status, true, retryAfterMs)
         continue
       }
       throw new LlmError(message, res.status, false)

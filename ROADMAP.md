@@ -252,7 +252,7 @@ Each task has an ID, a short description and a "done when" line. Only the next m
 
 **Goal:** runs survive restarts, and tenants cannot see each other.
 
-- [x] **M2.1** Resume from the event log; full resume and retry table. *Done when:* killing a run mid-way never repeats a tool call; a write without an idempotency key goes to `unknown_outcome`.
+- [x] **M2.1** Resume from the event log; full resume and retry table. *Done when:* killing a run mid-way never repeats a completed tool call, and repeats an interrupted one only with the same idempotency key; a write without an idempotency key goes to `unknown_outcome`.
 - [ ] **M2.2** Full idempotency for inbound work and tool calls. *Done when:* a repeated `Idempotency-Key` returns the original run.
 - [ ] **M2.3** Fair queue per tenant; concurrency limits. *Done when:* one busy tenant does not block another.
 - [ ] **M2.4** Workflow runs (four step types, branching with fixed operators). *Done when:* a sample workflow runs, waits for approval and continues.

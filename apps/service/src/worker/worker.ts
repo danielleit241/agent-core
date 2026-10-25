@@ -148,7 +148,7 @@ async function processJob(deps: RunWorkerDeps, job: { runId: string; tenantId: s
         const now = Date.now()
         const retryAt = proj.llmRetry.retryAt === null ? Number.NaN : new Date(proj.llmRetry.retryAt).getTime()
         const dueAt = Number.isNaN(retryAt) ? now + RETRY_DELAY_MS : Math.max(retryAt, now + MIN_REQUEUE_DELAY_MS)
-        await enqueue(deps.pool, { runId, tenantId, availableAt: new Date(dueAt) })
+        await requeueIfHolder(deps.pool, runId, deps.workerId, new Date(dueAt))
         return
       }
       status = proj.status
