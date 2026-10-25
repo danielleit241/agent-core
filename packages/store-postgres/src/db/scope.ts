@@ -11,20 +11,28 @@ export class InvalidTenantError extends Error {
 
 type Role = 'agentcore_app' | 'agentcore_claim'
 
-/** Runs `fn` in a transaction as `role`. SET LOCAL and set_config(..., true) end at COMMIT or ROLLBACK, so a pooled connection keeps neither. */
+/**
+ * Runs `fn` in a transaction as `role`. Role and tenant are set with set_config(..., true), which ends at COMMIT or
+ * ROLLBACK, so a pooled connection keeps neither. The connection goes back to the pool unless ROLLBACK itself fails.
+ */
 async function inScope<T>(pool: pg.Pool, role: Role, tenantId: string | null, fn: (client: pg.PoolClient) => Promise<T>): Promise<T> {
   const client = await pool.connect()
   let release: Error | undefined
   try {
     await client.query('BEGIN')
-    await client.query(`SET LOCAL ROLE ${role}`) // role is a closed union, never user input
-    if (tenantId !== null) await client.query("SELECT set_config('app.tenant_id', $1, true)", [tenantId])
+    // One round trip. The role is a closed union, never user input; both values are parameters.
+    if (tenantId === null) await client.query("SELECT set_config('role', $1, true)", [role])
+    else await client.query("SELECT set_config('role', $1, true), set_config('app.tenant_id', $2, true)", [role, tenantId])
     const result = await fn(client)
     await client.query('COMMIT')
     return result
   } catch (err) {
-    await client.query('ROLLBACK').catch(() => {}) // must not mask the original error
-    release = err instanceof Error ? err : new Error(String(err))
+    try {
+      await client.query('ROLLBACK')
+    } catch (rollbackErr) {
+      // The connection state is unknown: make the pool drop it. The original error is still the one thrown.
+      release = rollbackErr instanceof Error ? rollbackErr : new Error(String(rollbackErr))
+    }
     throw err
   } finally {
     client.release(release)

@@ -162,3 +162,36 @@ test.each(["a'; DROP TABLE runs; --", 'A', 'a.b', 'a'.repeat(65), ''])('withTena
   } as unknown as pg.Pool
   await expect(withTenant(fake, id, async () => 1)).rejects.toBeInstanceOf(InvalidTenantError)
 })
+
+test('an ordinary error keeps the pooled connection; only a failed ROLLBACK drops it', async () => {
+  const single = new pg.Pool({ connectionString: runtimeTestUrl(url), max: 1 })
+  try {
+    const pidOf = () => withTenant(single, 'a', async (c) => (await c.query<{ pid: number }>('SELECT pg_backend_pid() AS pid')).rows[0]!.pid)
+    const before = await pidOf()
+    await expect(
+      withTenant(single, 'a', async () => {
+        throw new Error('boom')
+      }),
+    ).rejects.toThrow('boom')
+    expect(await pidOf()).toBe(before)
+  } finally {
+    await single.end()
+  }
+
+  const released: unknown[] = []
+  const fakePool = (rollbackFails: boolean) =>
+    ({
+      connect: async () => ({
+        query: async (sql: string) => {
+          if (sql === 'ROLLBACK' && rollbackFails) throw new Error('connection lost')
+          return { rows: [], rowCount: 0 }
+        },
+        release: (err?: unknown) => released.push(err),
+      }),
+    }) as unknown as pg.Pool
+  const fail = () => Promise.reject(new Error('domain error'))
+  await expect(withTenant(fakePool(false), 'a', fail)).rejects.toThrow('domain error')
+  await expect(withTenant(fakePool(true), 'a', fail)).rejects.toThrow('domain error')
+  expect(released[0]).toBeUndefined()
+  expect(released[1]).toBeInstanceOf(Error)
+})
