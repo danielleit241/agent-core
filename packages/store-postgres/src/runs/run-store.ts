@@ -10,6 +10,15 @@ export function assertTestDatabase(url: string): void {
   }
 }
 
+/** Login URL of the runtime user for tests: `TEST_RUNTIME_DATABASE_URL`, else the migrator URL with `agentcore_runtime` credentials. */
+export function runtimeTestUrl(migratorUrl: string): string {
+  if (process.env.TEST_RUNTIME_DATABASE_URL) return process.env.TEST_RUNTIME_DATABASE_URL
+  const u = new URL(migratorUrl)
+  u.username = 'agentcore_runtime'
+  u.password = 'agentcore_runtime'
+  return u.toString()
+}
+
 /** Checks the database the pool really reaches; a crafted URL can hide it from `assertTestDatabase`. */
 export async function assertTestPool(pool: pg.Pool): Promise<void> {
   const res = await pool.query<{ db: string }>('SELECT current_database() AS db')

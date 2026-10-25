@@ -161,11 +161,18 @@ test('a claimed delivery is leased and cannot be claimed again', async () => {
 test('a delivery whose webhook is missing for its tenant does not block the queue', async () => {
   const rx = await startReceiver([200])
   await putWebhook('w1', rx.url, ['run.completed'])
-  // orphan: the FK allows it because it only checks webhooks.id, but the tenant does not match
-  await pool.query(
-    `INSERT INTO webhook_deliveries (id, tenant_id, webhook_id, event_id, type, body, next_attempt_at)
-     VALUES ('whd_orphan', 'other', 'w1', 'evt_o', 'run.completed', '{}', now() - interval '1 hour')`,
-  )
+  // orphan: the composite FK makes it unreachable through normal writes, so skip FK checks on a dedicated client
+  const setup = await pool.connect()
+  try {
+    await setup.query('SET session_replication_role = replica')
+    await setup.query(
+      `INSERT INTO webhook_deliveries (id, tenant_id, webhook_id, event_id, type, body, next_attempt_at)
+       VALUES ('whd_orphan', 'other', 'w1', 'evt_o', 'run.completed', '{}', now() - interval '1 hour')`,
+    )
+    await setup.query('RESET session_replication_role')
+  } finally {
+    setup.release()
+  }
   await enqueueWebhookEvent(pool, 'default', 'run.completed', {})
   const w = startDeliveryWorker({ pool, pollMs: 10 })
   await waitFor(() => rx.received.length === 1)

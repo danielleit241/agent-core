@@ -22,7 +22,13 @@ async function withMigrationLock(pool: pg.Pool, fn: (client: pg.PoolClient) => P
   }
 }
 
-export async function runMigrations(pool: pg.Pool): Promise<void> {
+/** The login user named in a connection URL, decoded. */
+export function runtimeUserOf(url: string): string {
+  return decodeURIComponent(new URL(url).username)
+}
+
+/** `runtimeUser` is the login role the service connects as; it gets the two scope roles without inheriting them. */
+export async function runMigrations(pool: pg.Pool, opts: { runtimeUser?: string } = {}): Promise<void> {
   // The lock comes first: two migrators racing on CREATE TABLE IF NOT EXISTS can still fail.
   await withMigrationLock(pool, async (client) => {
     await client.query('CREATE TABLE IF NOT EXISTS schema_migrations (name text PRIMARY KEY)')
@@ -37,5 +43,9 @@ export async function runMigrations(pool: pg.Pool): Promise<void> {
         await client.query('INSERT INTO schema_migrations (name) VALUES ($1)', [name])
       }
     })
+  }
+  if (opts.runtimeUser) {
+    const quoted = await pool.query<{ ident: string }>("SELECT format('%I', $1::text) AS ident", [opts.runtimeUser])
+    await pool.query(`GRANT agentcore_app, agentcore_claim TO ${quoted.rows[0]?.ident} WITH INHERIT FALSE, SET TRUE`)
   }
 }
