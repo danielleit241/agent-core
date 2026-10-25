@@ -18,23 +18,54 @@ export async function enqueueWith(db: Pick<pg.Pool, 'query'>, job: Job): Promise
   )
 }
 
+export const DEFAULT_MAX_RUNS_PER_TENANT = 4
+
+/** Fixed key that serialises all claims, so the per-tenant limit holds when workers claim at once. */
+const CLAIM_LOCK_KEY = 7_240_001
+
+export type ClaimOptions = { lockTimeoutMs?: number; maxPerTenant?: number }
+
+/**
+ * Claims one due job from the tenant with the fewest running jobs, skipping tenants at `maxPerTenant`.
+ * A job is running while its lock is younger than `lockTimeoutMs`.
+ */
 export async function claim(
   pool: pg.Pool,
   workerId: string,
-  lockTimeoutMs = 300000,
+  opts: ClaimOptions = {},
 ): Promise<{ runId: string; tenantId: string } | null> {
-  const res = await pool.query<{ run_id: string; tenant_id: string }>(
-    `UPDATE queue SET locked_by = $1, locked_at = now()
-     WHERE run_id = (
-       SELECT run_id FROM queue
-       WHERE available_at <= now() AND (locked_at IS NULL OR locked_at < now() - make_interval(secs => $2 / 1000.0))
-       ORDER BY priority DESC, available_at
-       LIMIT 1 FOR UPDATE SKIP LOCKED)
-     RETURNING run_id, tenant_id`,
-    [workerId, lockTimeoutMs],
-  )
-  const row = res.rows[0]
-  return row ? { runId: row.run_id, tenantId: row.tenant_id } : null
+  const lockTimeoutMs = opts.lockTimeoutMs ?? 300000
+  const maxPerTenant = opts.maxPerTenant ?? DEFAULT_MAX_RUNS_PER_TENANT
+  const client = await pool.connect()
+  let failure: Error | undefined
+  try {
+    await client.query('BEGIN')
+    await client.query('SELECT pg_advisory_xact_lock($1)', [CLAIM_LOCK_KEY])
+    const res = await client.query<{ run_id: string; tenant_id: string }>(
+      `WITH running AS (
+         SELECT tenant_id, count(*) AS n FROM queue
+         WHERE locked_at IS NOT NULL AND locked_at >= now() - make_interval(secs => $2 / 1000.0)
+         GROUP BY tenant_id)
+       UPDATE queue SET locked_by = $1, locked_at = now()
+       WHERE run_id = (
+         SELECT q.run_id FROM queue q LEFT JOIN running r ON r.tenant_id = q.tenant_id
+         WHERE q.available_at <= now() AND (q.locked_at IS NULL OR q.locked_at < now() - make_interval(secs => $2 / 1000.0))
+           AND COALESCE(r.n, 0) < $3
+         ORDER BY COALESCE(r.n, 0), q.priority DESC, q.available_at
+         LIMIT 1 FOR UPDATE OF q SKIP LOCKED)
+       RETURNING run_id, tenant_id`,
+      [workerId, lockTimeoutMs, maxPerTenant],
+    )
+    await client.query('COMMIT')
+    const row = res.rows[0]
+    return row ? { runId: row.run_id, tenantId: row.tenant_id } : null
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {}) // must not mask the original error
+    failure = err instanceof Error ? err : new Error(String(err))
+    throw err
+  } finally {
+    client.release(failure)
+  }
 }
 
 export async function release(pool: pg.Pool, runId: string, workerId: string): Promise<void> {
