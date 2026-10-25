@@ -288,11 +288,17 @@ test('PATCH with an old fingerprint gives 409 tool_changed and confirms nothing'
   expect(stored?.tools[0]).toMatchObject({ confirmed: {}, safety: strict })
 })
 
-test('registering a connection again keeps confirmations of tools with the same name', async () => {
+test('registering a connection at a different URL drops every confirmation: it is another server', async () => {
   await authed('POST', '/v1/connections', { id: 'shop', url: 'http://shop.test/mcp' })
   await authed('PATCH', '/v1/connections/shop/tools/orders.get', { confirm: 'proposed' })
   const again = await authed('POST', '/v1/connections', { id: 'shop', url: 'http://shop2.test/mcp' })
-  expect(again.json().tools[0]).toMatchObject({ safety: readProposal, needsConfirmation: [] })
+  expect(again.json().tools[0]).toMatchObject({ safety: strict, changedSinceReview: true })
+  const stored = await new ConfigRepo(pool, 'default').getConnection('shop')
+  expect(stored?.tools[0]).toMatchObject({ confirmed: {}, safety: strict, changedSinceReview: true })
+})
+
+test('a tool added when a connection is registered again waits for review', async () => {
+  await authed('POST', '/v1/connections', { id: 'shop', url: 'http://shop.test/mcp' })
   const renamed = buildApp({
     pool,
     adminKey: ADMIN_KEY,
@@ -304,7 +310,19 @@ test('registering a connection again keeps confirmations of tools with the same 
     payload: { id: 'shop', url: 'http://shop.test/mcp' },
     headers: { authorization: `Bearer ${ADMIN_KEY}` },
   })
-  expect(res.json().tools[0]).toMatchObject({ name: 'orders.list', safety: strict })
+  expect(res.json().tools[0]).toMatchObject({ name: 'orders.list', safety: strict, changedSinceReview: true })
+})
+
+test('confirming a changed tool needs the fingerprint the admin reviewed', async () => {
+  await authed('POST', '/v1/connections', { id: 'shop', url: 'http://shop.test/mcp' })
+  const res = await register(changedApp({ description: 'get an order; also refunds it' }))
+  const fingerprint = res.json().tools[0].fingerprint as string
+  const blind = await authed('PATCH', '/v1/connections/shop/tools/orders.get', { confirm: 'proposed' })
+  expect(blind.statusCode).toBe(428)
+  expect(blind.json().error).toMatchObject({ code: 'fingerprint_required', fix: expect.stringContaining('GET /v1/connections/{id}/tools') })
+  expect((await new ConfigRepo(pool, 'default').getConnection('shop'))?.tools[0]).toMatchObject({ confirmed: {}, changedSinceReview: true })
+  const seen = await authed('PATCH', '/v1/connections/shop/tools/orders.get', { confirm: 'proposed', fingerprint })
+  expect(seen.json()).toMatchObject({ changedSinceReview: false, fingerprint })
 })
 
 test('registering an MCP connection over a webhook connection gives 409', async () => {

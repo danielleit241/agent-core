@@ -3,7 +3,7 @@ import type { FastifyInstance } from 'fastify'
 import { z } from 'zod'
 import { AgentDefinitionSchema, SupportSchema, ToolSafetySchema, resolveSafety, toolFingerprint } from '@agent-core/core'
 import type { ToolSafety } from '@agent-core/core'
-import { ConfigRepo } from '@agent-core/store-postgres'
+import { ConfigRepo, NO_REVIEW } from '@agent-core/store-postgres'
 import type { LoadedTool, StoredTool, createPool } from '@agent-core/store-postgres'
 import type { discoverMcpTools } from '@agent-core/tools-mcp'
 import { apiError, validationError } from '../errors'
@@ -120,17 +120,20 @@ export function registerConfigRoutes(
     }
     const saved = await config.upsertConnection(id, (existing) => {
       if (existing && existing.kind !== 'mcp') throw kindConflict(id, existing.kind, 'mcp')
-      // Re-registration keeps the confirmations and the reviewed fingerprint of tools with the same name, so a
-      // tool whose definition changed reads back as changed. A new tool is reviewed now: the response shows it.
+      // Re-registration at the same URL keeps the confirmations and the reviewed fingerprint of tools with the
+      // same name, so a tool whose definition changed reads back as changed. A tool that is new to an existing
+      // connection, or any tool at a new URL (another server), waits for review. A first registration is
+      // reviewed now: the response shows every tool.
+      const sameServer = existing !== null && existing.url === url
       const tools: StoredTool[] = found.map(({ tool, source }) => {
-        const before = existing?.tools.find((t) => t.name === tool.name)
+        const before = sameServer ? existing.tools.find((t) => t.name === tool.name) : undefined
         const confirmed = before?.confirmed ?? {}
         return {
           ...tool,
           safety: resolveSafety(source, confirmed).safety,
           source,
           confirmed,
-          reviewedFor: before?.reviewedFor ?? toolFingerprint({ ...tool, source }),
+          reviewedFor: before?.reviewedFor ?? (existing ? NO_REVIEW : toolFingerprint({ ...tool, source })),
         }
       })
       return { kind: 'mcp', url, tools }
@@ -152,6 +155,14 @@ export function registerConfigRoutes(
     if (!parsed.success) throw validationError(parsed.error)
     const { confirm, fingerprint, ...values } = parsed.data
     const updated = await config.updateTool(req.params.id, req.params.tool, (tool) => {
+      if (fingerprint === undefined && tool.changedSinceReview) {
+        throw apiError(
+          'fingerprint_required',
+          `Tool "${tool.name}" changed since it was last reviewed. Nothing was confirmed.`,
+          'Review the tool with GET /v1/connections/{id}/tools, then send its fingerprint with the confirmation.',
+          428,
+        )
+      }
       if (fingerprint !== undefined && fingerprint !== tool.fingerprint) {
         throw apiError(
           'tool_changed',

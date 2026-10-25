@@ -37,6 +37,8 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions exist
 - LLM errors in the event log name only the HTTP status; provider text, which can echo part of the API key, is no longer stored.
 - `pnpm eval --mode record` keeps the recordings of scenarios that did not run or ended in an error, and `--write-baseline` no longer stores an error as `fail`.
 - Eval graders and the rubric transcript count a tool call that the rule gate or a human blocked.
+- Registering an MCP connection again at a different URL drops every confirmation, and a tool that is new to an existing connection waits for review, so an `allow` rule does not cover it before an admin has seen it.
+- Confirming a tool that shows `changedSinceReview` requires the reviewed `fingerprint` (`428 fingerprint_required` without it).
 
 ### Changed
 

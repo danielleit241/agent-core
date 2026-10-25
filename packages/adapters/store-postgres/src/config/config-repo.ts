@@ -20,8 +20,8 @@ type ConnectionDraft = Omit<ConnectionRow, 'id' | 'secret'> & { secret?: string 
 
 export type Webhook = { id: string; url: string; secret: string; events: string[] }
 
-/** Fingerprint that no definition has: a confirmation from before fingerprints existed matches nothing. */
-const NO_REVIEW = 'none'
+/** Fingerprint that no definition has: a tool marked with it reads as changed until an admin confirms it. */
+export const NO_REVIEW = 'none'
 
 /**
  * The stored `safety` is only a copy: what a tool runs with is always recomputed from its source and
