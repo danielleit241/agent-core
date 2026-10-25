@@ -1,6 +1,6 @@
 import pg from 'pg'
 import { afterAll, beforeAll, beforeEach, expect, test } from 'vitest'
-import { STRICT_SAFETY, toolFingerprint } from '@agent-core/core'
+import { STRICT_SAFETY, SecretDecryptError, createSecretBox, toolFingerprint } from '@agent-core/core'
 import type { AgentDefinition } from '@agent-core/core'
 import type { Connection, StoredTool } from '../../src/config/config-repo'
 import { ConfigRepo, assertTestDatabase, runtimeTestUrl, createPool, runMigrations } from '../../src'
@@ -9,6 +9,7 @@ const url = process.env.TEST_DATABASE_URL ?? 'postgres://agentcore:agentcore@loc
 let migrator: pg.Pool
 let pool: pg.Pool
 let repo: ConfigRepo
+const box = createSecretBox(Buffer.alloc(32, 7))
 
 const definition = {
   name: 'orders.get',
@@ -41,7 +42,7 @@ beforeAll(() => {
 beforeEach(async () => {
   await migrator.query('DROP SCHEMA public CASCADE; CREATE SCHEMA public')
   await runMigrations(migrator, { runtimeUser: 'agentcore_runtime' })
-  repo = new ConfigRepo(pool, 'default')
+  repo = new ConfigRepo(pool, 'default', box)
 })
 afterAll(async () => {
   await pool.end()
@@ -181,4 +182,47 @@ test('updateTool writes nothing when change throws', async () => {
     }),
   ).rejects.toThrow('refused')
   expect((await repo.getConnection('shop'))!.tools[0]!.confirmed).toEqual({ effect: 'read' })
+})
+
+test('the stored secret column does not contain the plain secret', async () => {
+  await repo.putConnection({ id: 'hook', kind: 'webhook', url: 'http://h/x', secret: 'plain-conn-secret', tools: [] })
+  await repo.upsertConnection('hook2', () => ({ kind: 'webhook', url: 'http://h/y', secret: 'plain-upsert-secret', tools: [] }))
+  await repo.putWebhook({ id: 'w1', url: 'http://h/x', secret: 'plain-hook-secret', events: ['run.completed'] })
+  const rows = [
+    ...(await migrator.query<{ secret: string }>('SELECT secret FROM connections')).rows,
+    ...(await migrator.query<{ secret: string }>('SELECT secret FROM webhooks')).rows,
+  ]
+  expect(rows).toHaveLength(3)
+  for (const r of rows) {
+    expect(r.secret).toMatch(/^v1:/)
+    expect(r.secret).not.toContain('plain-')
+  }
+})
+
+test('a null connection secret stays null', async () => {
+  await repo.putConnection({ id: 'shop', kind: 'mcp', url: 'http://a/mcp', tools: [] })
+  const row = await migrator.query<{ secret: string | null }>("SELECT secret FROM connections WHERE id = 'shop'")
+  expect(row.rows[0]!.secret).toBeNull()
+})
+
+test('getConnection and listWebhooks return the plain secret', async () => {
+  await repo.putConnection({ id: 'hook', kind: 'webhook', url: 'http://h/x', secret: 's3cret', tools: [] })
+  await repo.putWebhook({ id: 'w1', url: 'http://h/x', secret: 'whsec', events: ['run.completed'] })
+  expect((await repo.getConnection('hook'))!.secret).toBe('s3cret')
+  expect((await repo.listWebhooks())[0]!.secret).toBe('whsec')
+})
+
+test('a secret copied to another row cannot be opened', async () => {
+  await repo.putConnection({ id: 'x', kind: 'webhook', url: 'http://h/x', secret: 's3cret', tools: [] })
+  await repo.putConnection({ id: 'y', kind: 'webhook', url: 'http://h/y', secret: 'other', tools: [] })
+  await migrator.query("UPDATE connections SET secret = (SELECT secret FROM connections WHERE id = 'x') WHERE id = 'y'")
+  await expect(repo.getConnection('y')).rejects.toBeInstanceOf(SecretDecryptError)
+})
+
+test('another master key cannot open the secret', async () => {
+  await repo.putConnection({ id: 'x', kind: 'webhook', url: 'http://h/x', secret: 's3cret', tools: [] })
+  await repo.putWebhook({ id: 'w1', url: 'http://h/x', secret: 'whsec', events: [] })
+  const other = new ConfigRepo(pool, 'default', createSecretBox(Buffer.alloc(32, 8)))
+  await expect(other.getConnection('x')).rejects.toBeInstanceOf(SecretDecryptError)
+  await expect(other.listWebhooks()).rejects.toBeInstanceOf(SecretDecryptError)
 })

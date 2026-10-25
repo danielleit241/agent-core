@@ -1,30 +1,25 @@
 import { hostname } from 'node:os'
-import { DEFAULT_MODEL_PROFILE } from '@agent-core/core'
+import { DEFAULT_MODEL_PROFILE, createSecretBox } from '@agent-core/core'
 import { createOpenAICompatible, probeModel } from '@agent-core/llm'
-import { ModelProfileRepo, createPool, runMigrations } from '@agent-core/store-postgres'
+import { ModelProfileRepo, createPool, runMigrations, runtimeUserOf } from '@agent-core/store-postgres'
+import { readServiceConfig } from './config'
 import { createServiceStack } from './stack'
 
 async function main(): Promise<void> {
-  const env = process.env
-  const missing = ['DATABASE_URL', 'AGENT_CORE_ADMIN_KEY', 'LLM_BASE_URL', 'LLM_MODEL_DEFAULT'].filter((k) => !env[k])
-  if (missing.length > 0) {
-    console.error(`agent-core: missing required environment variable(s): ${missing.join(', ')}`)
+  const config = readServiceConfig(process.env)
+  if (!config.ok) {
+    console.error(`agent-core: ${config.error}`)
     process.exit(1)
   }
-  const port = Number(env.PORT ?? 7300)
-  if (!Number.isInteger(port) || port < 1 || port > 65535) {
-    console.error('agent-core: PORT must be an integer from 1 to 65535')
-    process.exit(1)
+  const { port, llmBaseUrl: baseUrl, llmApiKey: apiKey, models } = config
+  const migrator = createPool(config.migratorUrl)
+  try {
+    await runMigrations(migrator, { runtimeUser: runtimeUserOf(config.databaseUrl) })
+  } finally {
+    await migrator.end()
   }
-  const pool = createPool(env.DATABASE_URL!)
-  await runMigrations(pool)
+  const pool = createPool(config.databaseUrl)
 
-  const baseUrl = env.LLM_BASE_URL!
-  const apiKey = env.LLM_API_KEY ?? ''
-  const models: Record<string, string> = {
-    default: env.LLM_MODEL_DEFAULT!,
-    ...(env.LLM_MODEL_SMART ? { smart: env.LLM_MODEL_SMART } : {}),
-  }
   const profiles = new ModelProfileRepo(pool)
   const llm = createOpenAICompatible({
     baseUrl,
@@ -41,7 +36,8 @@ async function main(): Promise<void> {
   })
   const stack = createServiceStack({
     pool,
-    adminKey: env.AGENT_CORE_ADMIN_KEY!,
+    adminKey: config.adminKey,
+    secrets: createSecretBox(config.masterKey),
     llm,
     models,
     probe: (model) => probeModel({ baseUrl, apiKey, model }),

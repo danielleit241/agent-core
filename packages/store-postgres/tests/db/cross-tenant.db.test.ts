@@ -1,5 +1,6 @@
 import pg from 'pg'
 import { afterAll, beforeAll, beforeEach, expect, test } from 'vitest'
+import { createSecretBox } from '@agent-core/core'
 import type { NewEvent } from '@agent-core/core'
 import {
   ConfigRepo,
@@ -14,6 +15,7 @@ import {
 } from '../../src'
 
 const url = process.env.TEST_DATABASE_URL ?? 'postgres://agentcore:agentcore@localhost:5433/agentcore_test'
+const box = createSecretBox(Buffer.alloc(32, 7))
 let migrator: pg.Pool
 let runtime: pg.Pool
 
@@ -35,16 +37,16 @@ const connection = (url: string) => ({ id: 'shop', kind: 'mcp' as const, url, to
 const created = (): NewEvent => ({ type: 'run.created', payload: { agentId: 'ag', input: { text: 'hi' } }, labels: ['trusted'] })
 
 test('ConfigRepo of b does not see the connection shop of a', async () => {
-  await new ConfigRepo(runtime, 'a').putConnection(connection('http://a/mcp'))
-  expect(await new ConfigRepo(runtime, 'b').getConnection('shop')).toBeNull()
-  expect((await new ConfigRepo(runtime, 'a').getConnection('shop'))?.url).toBe('http://a/mcp')
+  await new ConfigRepo(runtime, 'a', box).putConnection(connection('http://a/mcp'))
+  expect(await new ConfigRepo(runtime, 'b', box).getConnection('shop')).toBeNull()
+  expect((await new ConfigRepo(runtime, 'a', box).getConnection('shop'))?.url).toBe('http://a/mcp')
 })
 
 test('two tenants can each own connection shop with different urls', async () => {
-  await new ConfigRepo(runtime, 'a').putConnection(connection('http://a/mcp'))
-  await new ConfigRepo(runtime, 'b').putConnection(connection('http://b/mcp'))
-  expect((await new ConfigRepo(runtime, 'a').getConnection('shop'))?.url).toBe('http://a/mcp')
-  expect((await new ConfigRepo(runtime, 'b').getConnection('shop'))?.url).toBe('http://b/mcp')
+  await new ConfigRepo(runtime, 'a', box).putConnection(connection('http://a/mcp'))
+  await new ConfigRepo(runtime, 'b', box).putConnection(connection('http://b/mcp'))
+  expect((await new ConfigRepo(runtime, 'a', box).getConnection('shop'))?.url).toBe('http://a/mcp')
+  expect((await new ConfigRepo(runtime, 'b', box).getConnection('shop'))?.url).toBe('http://b/mcp')
 })
 
 test('getRun and readEvents of b return null and [] for a run of a', async () => {

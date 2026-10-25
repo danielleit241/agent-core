@@ -3,7 +3,9 @@ import { afterAll, beforeAll, beforeEach, expect, test } from 'vitest'
 import type { NewEvent } from '@agent-core/core'
 import { ConfigRepo, PgRunStore, assertTestDatabase, createPool, createRun, runMigrations } from '@agent-core/store-postgres'
 import { buildApp } from '../../src/http/app'
+import { createSecretBox } from '@agent-core/core'
 
+const box = createSecretBox(Buffer.alloc(32, 7))
 const url = process.env.TEST_DATABASE_URL ?? 'postgres://agentcore:agentcore@localhost:5433/agentcore_test'
 const ADMIN_KEY = 'test-admin-key'
 let pool: ReturnType<typeof createPool>
@@ -16,7 +18,7 @@ beforeAll(() => {
 beforeEach(async () => {
   await pool.query('DROP SCHEMA public CASCADE; CREATE SCHEMA public')
   await runMigrations(pool)
-  app = buildApp({ pool, adminKey: ADMIN_KEY })
+  app = buildApp({ secrets: box, pool, adminKey: ADMIN_KEY })
 })
 afterAll(async () => {
   await pool.end()
@@ -35,7 +37,7 @@ function send(method: 'POST' | 'PATCH', path: string, payload: unknown, key?: st
 }
 
 const count = async (table: string) => Number((await pool.query(`SELECT count(*) FROM ${table}`)).rows[0].count)
-const seedAgent = () => new ConfigRepo(pool, 'default').putAgent({ ...agentBody, autonomy: 'supervised', model: 'default' })
+const seedAgent = () => new ConfigRepo(pool, 'default', box).putAgent({ ...agentBody, autonomy: 'supervised', model: 'default' })
 
 async function waitingRun(runId = 'r-wait'): Promise<string> {
   const { version } = await seedAgent()

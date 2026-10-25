@@ -2,7 +2,7 @@ import { randomBytes, randomUUID } from 'node:crypto'
 import type { FastifyInstance } from 'fastify'
 import { z } from 'zod'
 import { AgentDefinitionSchema, SupportSchema, ToolSafetySchema, resolveSafety, toolFingerprint } from '@agent-core/core'
-import type { ToolSafety } from '@agent-core/core'
+import type { SecretBox, ToolSafety } from '@agent-core/core'
 import { ConfigRepo, NO_REVIEW } from '@agent-core/store-postgres'
 import type { LoadedTool, StoredTool, createPool } from '@agent-core/store-postgres'
 import type { discoverMcpTools } from '@agent-core/tools'
@@ -68,9 +68,9 @@ const toView = (t: LoadedTool): ToolView => ({
 
 export function registerConfigRoutes(
   app: FastifyInstance,
-  deps: { pool: ReturnType<typeof createPool>; discoverTools: typeof discoverMcpTools },
+  deps: { pool: ReturnType<typeof createPool>; secrets: SecretBox; discoverTools: typeof discoverMcpTools },
 ): void {
-  const config = new ConfigRepo(deps.pool, TENANT)
+  const config = new ConfigRepo(deps.pool, TENANT, deps.secrets)
   const kindConflict = (id: string, kind: string, wanted: string) =>
     apiError('connection_kind_conflict', `Connection "${id}" exists with kind "${kind}".`, `Use a different id for the ${wanted} connection.`, 409)
 

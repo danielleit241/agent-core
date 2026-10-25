@@ -7,7 +7,9 @@ import { buildApp } from '../../src/http/app'
 import { checkChain } from '../../src/http/routes/runs'
 import { createRunSettledHandler } from '../../src/runs/settled'
 import { startRunWorker } from '../../src/worker/worker'
+import { createSecretBox } from '@agent-core/core'
 
+const box = createSecretBox(Buffer.alloc(32, 7))
 const url = process.env.TEST_DATABASE_URL ?? 'postgres://agentcore:agentcore@localhost:5433/agentcore_test'
 const ADMIN_KEY = 'test-admin-key'
 let pool: ReturnType<typeof createPool>
@@ -36,7 +38,7 @@ beforeAll(() => {
 beforeEach(async () => {
   await pool.query('DROP SCHEMA public CASCADE; CREATE SCHEMA public')
   await runMigrations(pool)
-  app = buildApp({ pool, adminKey: ADMIN_KEY, discoverTools })
+  app = buildApp({ secrets: box, pool, adminKey: ADMIN_KEY, discoverTools })
 })
 afterAll(async () => {
   await pool.end()
@@ -54,7 +56,7 @@ function authed(method: 'GET' | 'POST' | 'PATCH', path: string, payload?: unknow
   })
 }
 
-const seedAgent = () => new ConfigRepo(pool, 'default').putAgent({ ...agentBody, autonomy: 'supervised', model: 'default' })
+const seedAgent = () => new ConfigRepo(pool, 'default', box).putAgent({ ...agentBody, autonomy: 'supervised', model: 'default' })
 
 async function runWaitingForApproval(runId = 'r-wait'): Promise<string> {
   const { version } = await seedAgent()
@@ -144,7 +146,7 @@ test('healthz needs no key', async () => {
 
 test('healthz reports 503 when the database is down', async () => {
   const dead = createPool('postgres://agentcore:agentcore@localhost:1/none')
-  const res = await buildApp({ pool: dead, adminKey: ADMIN_KEY }).inject({ method: 'GET', url: '/healthz' })
+  const res = await buildApp({ secrets: box, pool: dead, adminKey: ADMIN_KEY }).inject({ method: 'GET', url: '/healthz' })
   await dead.end()
   expect(res.statusCode).toBe(503)
   expect(res.json()).toEqual({ status: 'degraded', db: 'error' })
@@ -174,11 +176,11 @@ test('creating a connection stores the discovered tools and proposes their safet
       { name: 'orders.get', safety: strict, proposed: readProposal, needsConfirmation: ['effect', 'reachesOutside', 'outputLabel'], ...fresh },
     ],
   })
-  const stored = await new ConfigRepo(pool, 'default').getConnection('shop')
+  const stored = await new ConfigRepo(pool, 'default', box).getConnection('shop')
   expect(stored?.tools[0]).toMatchObject({ connectionId: 'shop', source: readSource, confirmed: {} })
   // an existing id is overwritten
   expect((await authed('POST', '/v1/connections', { id: 'shop', url: 'http://shop2.test/mcp' })).statusCode).toBe(201)
-  expect((await new ConfigRepo(pool, 'default').getConnection('shop'))?.url).toBe('http://shop2.test/mcp')
+  expect((await new ConfigRepo(pool, 'default', box).getConnection('shop'))?.url).toBe('http://shop2.test/mcp')
 })
 
 test('GET tools lists the views; an unknown connection gives 404', async () => {
@@ -198,7 +200,7 @@ test('PATCH confirms the whole proposal', async () => {
   const res = await authed('PATCH', '/v1/connections/shop/tools/orders.get', { confirm: 'proposed' })
   expect(res.statusCode).toBe(200)
   expect(res.json()).toEqual({ name: 'orders.get', safety: readProposal, proposed: readProposal, needsConfirmation: [], ...fresh })
-  const stored = await new ConfigRepo(pool, 'default').getConnection('shop')
+  const stored = await new ConfigRepo(pool, 'default', box).getConnection('shop')
   expect(stored?.tools[0]).toMatchObject({ safety: readProposal, confirmed: readProposal, reviewedFor: readFingerprint })
 })
 
@@ -231,7 +233,7 @@ test('PATCH errors: unknown tool or connection 404, empty or unknown body 400', 
     expect(bad.statusCode).toBe(400)
     expect(bad.json().error.code).toBe('invalid_request')
   }
-  const stored = await new ConfigRepo(pool, 'default').getConnection('shop')
+  const stored = await new ConfigRepo(pool, 'default', box).getConnection('shop')
   expect(stored?.tools[0]?.confirmed).toEqual({})
 })
 
@@ -246,6 +248,7 @@ test('a PATCH error names the fields to send', async () => {
 /** An app whose MCP server now describes `orders.get` differently. */
 const changedApp = (change: Partial<ToolDescriptor>) =>
   buildApp({
+    secrets: box,
     pool,
     adminKey: ADMIN_KEY,
     discoverTools: async (id: string) => (await discoverTools(id)).map((d) => ({ ...d, tool: { ...d.tool, ...change } })),
@@ -264,7 +267,7 @@ test('a tool whose definition changed loses its confirmation and runs strict unt
   expect(res.json().tools[0].description).toBe('get an order; also refunds it')
   expect(newFingerprint).not.toBe(readFingerprint)
   // What the worker loads runs strict too.
-  expect((await new ConfigRepo(pool, 'default').getConnection('shop'))?.tools[0]?.safety).toEqual(strict)
+  expect((await new ConfigRepo(pool, 'default', box).getConnection('shop'))?.tools[0]?.safety).toEqual(strict)
 
   // Confirming one key does not bring back the keys confirmed for the old definition.
   const one = await authed('PATCH', '/v1/connections/shop/tools/orders.get', { effect: 'read', fingerprint: newFingerprint })
@@ -284,7 +287,7 @@ test('PATCH with an old fingerprint gives 409 tool_changed and confirms nothing'
   const res = await authed('PATCH', '/v1/connections/shop/tools/orders.get', { confirm: 'proposed', fingerprint: readFingerprint })
   expect(res.statusCode).toBe(409)
   expect(res.json().error).toMatchObject({ code: 'tool_changed', fix: expect.stringContaining('GET /v1/connections/{id}/tools') })
-  const stored = await new ConfigRepo(pool, 'default').getConnection('shop')
+  const stored = await new ConfigRepo(pool, 'default', box).getConnection('shop')
   expect(stored?.tools[0]).toMatchObject({ confirmed: {}, safety: strict })
 })
 
@@ -293,13 +296,14 @@ test('registering a connection at a different URL drops every confirmation: it i
   await authed('PATCH', '/v1/connections/shop/tools/orders.get', { confirm: 'proposed' })
   const again = await authed('POST', '/v1/connections', { id: 'shop', url: 'http://shop2.test/mcp' })
   expect(again.json().tools[0]).toMatchObject({ safety: strict, changedSinceReview: true })
-  const stored = await new ConfigRepo(pool, 'default').getConnection('shop')
+  const stored = await new ConfigRepo(pool, 'default', box).getConnection('shop')
   expect(stored?.tools[0]).toMatchObject({ confirmed: {}, safety: strict, changedSinceReview: true })
 })
 
 test('a tool added when a connection is registered again waits for review', async () => {
   await authed('POST', '/v1/connections', { id: 'shop', url: 'http://shop.test/mcp' })
   const renamed = buildApp({
+    secrets: box,
     pool,
     adminKey: ADMIN_KEY,
     discoverTools: async (id: string) => (await discoverTools(id)).map((d) => ({ ...d, tool: { ...d.tool, name: 'orders.list' } })),
@@ -320,21 +324,22 @@ test('confirming a changed tool needs the fingerprint the admin reviewed', async
   const blind = await authed('PATCH', '/v1/connections/shop/tools/orders.get', { confirm: 'proposed' })
   expect(blind.statusCode).toBe(428)
   expect(blind.json().error).toMatchObject({ code: 'fingerprint_required', fix: expect.stringContaining('GET /v1/connections/{id}/tools') })
-  expect((await new ConfigRepo(pool, 'default').getConnection('shop'))?.tools[0]).toMatchObject({ confirmed: {}, changedSinceReview: true })
+  expect((await new ConfigRepo(pool, 'default', box).getConnection('shop'))?.tools[0]).toMatchObject({ confirmed: {}, changedSinceReview: true })
   const seen = await authed('PATCH', '/v1/connections/shop/tools/orders.get', { confirm: 'proposed', fingerprint })
   expect(seen.json()).toMatchObject({ changedSinceReview: false, fingerprint })
 })
 
 test('registering an MCP connection over a webhook connection gives 409', async () => {
-  await new ConfigRepo(pool, 'default').putConnection({ id: 'hook', kind: 'webhook', url: 'http://h/x', secret: 's', tools: [] })
+  await new ConfigRepo(pool, 'default', box).putConnection({ id: 'hook', kind: 'webhook', url: 'http://h/x', secret: 's', tools: [] })
   const res = await authed('POST', '/v1/connections', { id: 'hook', url: 'http://shop.test/mcp' })
   expect(res.statusCode).toBe(409)
   expect(res.json().error).toMatchObject({ code: 'connection_kind_conflict', fix: expect.any(String) })
-  expect((await new ConfigRepo(pool, 'default').getConnection('hook'))?.kind).toBe('webhook')
+  expect((await new ConfigRepo(pool, 'default', box).getConnection('hook'))?.kind).toBe('webhook')
 })
 
 test('an unreachable connection gives 422 and a non-http url gives 400', async () => {
   const failing = buildApp({
+    secrets: box,
     pool,
     adminKey: ADMIN_KEY,
     discoverTools: async () => {
@@ -377,7 +382,7 @@ test('webhooks: returns a hex secret once and validates events', async () => {
   const { id, secret } = res.json()
   expect(id).toMatch(/^wh_/)
   expect(secret).toMatch(/^[0-9a-f]{64}$/)
-  expect(await new ConfigRepo(pool, 'default').listWebhooks()).toEqual([
+  expect(await new ConfigRepo(pool, 'default', box).listWebhooks()).toEqual([
     { id, url: 'https://hook.test/in', secret, events: ['run.completed'] },
   ])
   expect((await authed('POST', '/v1/webhooks', { url: 'https://hook.test/in', events: [] })).statusCode).toBe(400)
@@ -446,6 +451,7 @@ test('wait returns the settled run when a worker finishes it', async () => {
     }),
   }
   const worker = startRunWorker({
+    secrets: box,
     pool,
     llm,
     tools: { call: async () => ({ content: '', isError: false }) },
@@ -525,7 +531,7 @@ test('resolve on a run that is not waiting gives 409', async () => {
 })
 
 test('the settled handler enqueues exactly one delivery per subscribed webhook', async () => {
-  const config = new ConfigRepo(pool, 'default')
+  const config = new ConfigRepo(pool, 'default', box)
   await config.putWebhook({ id: 'w1', url: 'https://a.test', secret: 's1', events: ['approval.requested', 'run.completed'] })
   await config.putWebhook({ id: 'w2', url: 'https://b.test', secret: 's2', events: ['approval.requested'] })
   await config.putWebhook({ id: 'w3', url: 'https://c.test', secret: 's3', events: ['run.completed'] })
@@ -610,6 +616,7 @@ test('connection responses never contain url credentials', async () => {
   expect(ok.statusCode).toBe(201)
   expect(ok.body).not.toContain('pass')
   const failing = buildApp({
+    secrets: box,
     pool,
     adminKey: ADMIN_KEY,
     discoverTools: async () => {
@@ -629,7 +636,7 @@ test('connection responses never contain url credentials', async () => {
 test('webhook events are deduplicated', async () => {
   const res = await authed('POST', '/v1/webhooks', { url: 'https://h.test/in', events: ['run.failed', 'run.failed'] })
   expect(res.statusCode).toBe(201)
-  expect((await new ConfigRepo(pool, 'default').listWebhooks())[0]?.events).toEqual(['run.failed'])
+  expect((await new ConfigRepo(pool, 'default', box).listWebhooks())[0]?.events).toEqual(['run.failed'])
 })
 
 test('POST /v1/runs labels run.created as untrusted caller input', async () => {
@@ -660,7 +667,7 @@ test('a run without events reports a valid chain; deleting all events does not',
 })
 
 test('settling the same run state twice queues one delivery per webhook', async () => {
-  await new ConfigRepo(pool, 'default').putWebhook({ id: 'w1', url: 'https://a.test', secret: 's1', events: ['approval.requested'] })
+  await new ConfigRepo(pool, 'default', box).putWebhook({ id: 'w1', url: 'https://a.test', secret: 's1', events: ['approval.requested'] })
   const runId = await runWaitingForApproval()
   const settled = createRunSettledHandler(pool)
   await settled(runId, 'waiting_human')
@@ -705,7 +712,7 @@ test('registering a webhook connection stores confirmed tools and returns the se
   expect(secret).toMatch(/^[0-9a-f]{64}$/)
   expect(rest).toMatchObject({ id: 'loyalty', kind: 'webhook' })
   expect(rest.tools[0]).toMatchObject({ name: 'loyalty.points_add', safety: webhookTool.safety, needsConfirmation: [] })
-  const stored = await new ConfigRepo(pool, 'default').getConnection('loyalty')
+  const stored = await new ConfigRepo(pool, 'default', box).getConnection('loyalty')
   expect(stored).toMatchObject({ kind: 'webhook', url: webhookBody.url, secret })
   expect(stored?.tools[0]).toMatchObject({
     connectionId: 'loyalty',
@@ -719,7 +726,7 @@ test('registering a webhook connection stores confirmed tools and returns the se
   const again = await authed('POST', '/v1/connections', { ...webhookBody, url: 'http://loyalty2.test/tools' })
   expect(again.statusCode).toBe(201)
   expect(again.json()).not.toHaveProperty('secret')
-  expect(await new ConfigRepo(pool, 'default').getConnection('loyalty')).toMatchObject({ url: 'http://loyalty2.test/tools', secret })
+  expect(await new ConfigRepo(pool, 'default', box).getConnection('loyalty')).toMatchObject({ url: 'http://loyalty2.test/tools', secret })
 })
 
 test('registering a webhook connection over an MCP connection gives 409', async () => {
@@ -727,7 +734,7 @@ test('registering a webhook connection over an MCP connection gives 409', async 
   const res = await authed('POST', '/v1/connections', { ...webhookBody, id: 'shop' })
   expect(res.statusCode).toBe(409)
   expect(res.json().error).toMatchObject({ code: 'connection_kind_conflict', fix: expect.any(String) })
-  expect((await new ConfigRepo(pool, 'default').getConnection('shop'))?.kind).toBe('mcp')
+  expect((await new ConfigRepo(pool, 'default', box).getConnection('shop'))?.kind).toBe('mcp')
 })
 
 test('webhook connection validation gives 400', async () => {
@@ -745,7 +752,7 @@ test('webhook connection validation gives 400', async () => {
     const res = await authed('POST', '/v1/connections', body)
     expect(res.statusCode, JSON.stringify(body).slice(0, 80)).toBe(400)
   }
-  expect(await new ConfigRepo(pool, 'default').getConnection('loyalty')).toBeNull()
+  expect(await new ConfigRepo(pool, 'default', box).getConnection('loyalty')).toBeNull()
 })
 
 test('GET run shows the pending outcome of an unknown_outcome wait', async () => {
@@ -910,7 +917,7 @@ test('two concurrent cancels: exactly one 202 and one 409', async () => {
 })
 
 test('the settled handler queues run.waiting_human for non-approval waits only', async () => {
-  const config = new ConfigRepo(pool, 'default')
+  const config = new ConfigRepo(pool, 'default', box)
   await config.putWebhook({ id: 'w1', url: 'https://a.test', secret: 's1', events: ['run.waiting_human'] })
   await config.putWebhook({ id: 'w2', url: 'https://b.test', secret: 's2', events: ['approval.requested'] })
   const settled = createRunSettledHandler(pool)
@@ -975,7 +982,7 @@ test('a cancel that lands while a worker starts the run wins, and the worker wri
   const cancel = authed('POST', '/v1/runs/r-race/cancel')
   await until(1)
   // The worker reads the run as queued, then waits to write queued -> running.
-  const worker = startRunWorker({ pool, llm, tools: { call: async () => ({ content: '', isError: false }) }, workerId: 'w-race', pollMs: 10 })
+  const worker = startRunWorker({ secrets: box, pool, llm, tools: { call: async () => ({ content: '', isError: false }) }, workerId: 'w-race', pollMs: 10 })
   await until(2)
   await holder.query('COMMIT')
   holder.release()
@@ -997,7 +1004,7 @@ test('a cancel that lands while a worker starts the run wins, and the worker wri
 test('an allow rule does not cover a tool whose definition changed: the worker waits for approval', async () => {
   await authed('POST', '/v1/connections', { id: 'shop', url: 'http://shop.test/mcp' })
   // An allow rule written for the definition the admin saw at registration.
-  const { version } = await new ConfigRepo(pool, 'default').putAgent({
+  const { version } = await new ConfigRepo(pool, 'default', box).putAgent({
     ...agentBody,
     connections: ['shop'],
     allow: [{ tool: 'orders.get' }],
@@ -1018,7 +1025,7 @@ test('an allow rule does not cover a tool whose definition changed: the worker w
     }),
   }
   let toolCalls = 0
-  const worker = startRunWorker({ pool, llm, tools: { call: async () => (toolCalls++, { content: '', isError: false }) }, workerId: 'w-ch', pollMs: 10 })
+  const worker = startRunWorker({ secrets: box, pool, llm, tools: { call: async () => (toolCalls++, { content: '', isError: false }) }, workerId: 'w-ch', pollMs: 10 })
   for (let i = 0; i < 300 && (await authed('GET', '/v1/runs/r-changed')).json().status !== 'waiting_human'; i++) {
     await new Promise((r) => setTimeout(r, 10))
   }

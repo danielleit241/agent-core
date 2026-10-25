@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto'
 import type { FastifyInstance } from 'fastify'
 import { z } from 'zod'
 import { projectRun, verifyChain } from '@agent-core/core'
-import type { NewEvent, StoredEvent, WaitingReason } from '@agent-core/core'
+import type { NewEvent, SecretBox, StoredEvent, WaitingReason } from '@agent-core/core'
 import { ConfigRepo, PgRunStore, StateConflictError, createRunWithEvent, getRun, getRunHead } from '@agent-core/store-postgres'
 import type { createPool } from '@agent-core/store-postgres'
 import { apiError, validationError } from '../errors'
@@ -66,9 +66,9 @@ export function checkChain(
   return { valid: true }
 }
 
-export function registerRunRoutes(app: FastifyInstance, deps: { pool: ReturnType<typeof createPool>; closing: AbortSignal }): void {
+export function registerRunRoutes(app: FastifyInstance, deps: { pool: ReturnType<typeof createPool>; secrets: SecretBox; closing: AbortSignal }): void {
   const { pool } = deps
-  const config = new ConfigRepo(pool, TENANT)
+  const config = new ConfigRepo(pool, TENANT, deps.secrets)
   const store = new PgRunStore(pool, TENANT)
 
   /** Polls until the run settles, the time runs out, the client disconnects or the app closes. */

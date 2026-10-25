@@ -1,8 +1,9 @@
 import { createServer } from 'node:http'
 import type { AddressInfo } from 'node:net'
+import { createSecretBox } from '@agent-core/core'
 import { createServiceStack } from '@agent-core/service'
 import { createOpenAICompatible } from '@agent-core/llm'
-import { assertTestDatabase, assertTestPool, createPool, runMigrations } from '@agent-core/store-postgres'
+import { assertTestDatabase, assertTestPool, createPool, runMigrations, runtimeTestUrl } from '@agent-core/store-postgres'
 import { startFakeLlm } from '@agent-core/fake-llm'
 import type { FakeTurn } from '@agent-core/fake-llm'
 import { startShop } from '@agent-core/shop'
@@ -30,10 +31,12 @@ export type StackOpts = {
 
 export async function startStack(script: FakeTurn[], opts: StackOpts = {}): Promise<Stack> {
   assertTestDatabase(DATABASE_URL) // the reset below drops every table
-  const pool = createPool(DATABASE_URL)
-  await assertTestPool(pool)
-  await pool.query('DROP SCHEMA public CASCADE; CREATE SCHEMA public')
-  await runMigrations(pool)
+  const migrator = createPool(DATABASE_URL)
+  await assertTestPool(migrator)
+  await migrator.query('DROP SCHEMA public CASCADE; CREATE SCHEMA public')
+  await runMigrations(migrator, { runtimeUser: 'agentcore_runtime' })
+  await migrator.end()
+  const pool = createPool(runtimeTestUrl(DATABASE_URL))
 
   const shop = await startShop()
   const fakeLlm = opts.realLlm ? undefined : await startFakeLlm(script)
@@ -57,6 +60,7 @@ export async function startStack(script: FakeTurn[], opts: StackOpts = {}): Prom
   const stack = createServiceStack({
     pool,
     adminKey: ADMIN_KEY,
+    secrets: createSecretBox(Buffer.alloc(32, 7)),
     llm,
     workerId: 'e2e-worker',
     runPollMs: 20,

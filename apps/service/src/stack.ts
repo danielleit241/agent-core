@@ -1,7 +1,8 @@
 import { ConfigRepo, withClaim, withTenant } from '@agent-core/store-postgres'
 import type { createPool } from '@agent-core/store-postgres'
 import { startDeliveryWorker } from '@agent-core/webhooks'
-import type { LLMPort } from '@agent-core/core'
+import { secretAad } from '@agent-core/core'
+import type { LLMPort, SecretBox } from '@agent-core/core'
 import { buildApp } from './http/app'
 import type { ProbeResult } from './http/routes/models'
 import { createRunSettledHandler } from './runs/settled'
@@ -11,6 +12,7 @@ import { startRunWorker } from './worker/worker'
 export type ServiceStackDeps = {
   pool: ReturnType<typeof createPool>
   adminKey: string
+  secrets: SecretBox
   llm: LLMPort
   /** Alias to real model id. */
   models?: Record<string, string>
@@ -24,11 +26,12 @@ export type ServiceStackDeps = {
 /** Wires the app, the tool router, the run worker and the delivery worker. Does not own the pool. */
 export function createServiceStack(deps: ServiceStackDeps) {
   const { pool } = deps
-  const config = new ConfigRepo(pool, 'default')
+  const config = new ConfigRepo(pool, 'default', deps.secrets)
   const tools = createToolRouter(config)
-  const app = buildApp({ pool, adminKey: deps.adminKey, models: deps.models, probe: deps.probe })
+  const app = buildApp({ pool, adminKey: deps.adminKey, secrets: deps.secrets, models: deps.models, probe: deps.probe })
   const runWorker = startRunWorker({
     pool,
+    secrets: deps.secrets,
     llm: deps.llm,
     tools,
     workerId: deps.workerId,
@@ -37,7 +40,7 @@ export function createServiceStack(deps: ServiceStackDeps) {
   })
   const deliveryWorker = startDeliveryWorker({
     scope: { claim: (fn) => withClaim(pool, fn), tenant: (t, fn) => withTenant(pool, t, fn) },
-    openSecret: (_tenantId, _webhookId, sealed) => sealed,
+    openSecret: (tenantId, webhookId, sealed) => deps.secrets.open(sealed, secretAad(tenantId, 'webhooks', webhookId)),
     pollMs: deps.deliveryPollMs,
     delaysS: deps.deliveryDelaysS,
   })

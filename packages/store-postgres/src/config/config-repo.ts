@@ -1,7 +1,7 @@
 import type pg from 'pg'
-import { resolveSafety, toolFingerprint } from '@agent-core/core'
+import { resolveSafety, secretAad, toolFingerprint } from '@agent-core/core'
 import { withTenant } from '../db/scope'
-import type { AgentDefinition, SafetySource, ToolDescriptor, ToolSafety } from '@agent-core/core'
+import type { AgentDefinition, SafetySource, SecretBox, ToolDescriptor, ToolSafety } from '@agent-core/core'
 
 /**
  * A tool as stored: the descriptor, what the tool declared, and what an admin confirmed.
@@ -67,7 +67,18 @@ export class ConfigRepo {
   constructor(
     private readonly pool: pg.Pool,
     private readonly tenantId: string,
+    private readonly secrets: SecretBox,
   ) {}
+
+  private sealConnection(id: string, secret: string | null): string | null {
+    return secret === null ? null : this.secrets.seal(secret, secretAad(this.tenantId, 'connections', id))
+  }
+
+  /** Opens the stored secret of a connection row, then normalises it. */
+  private readConnection(row: ConnectionRow): Connection {
+    const secret = row.secret === null ? null : this.secrets.open(row.secret, secretAad(this.tenantId, 'connections', row.id))
+    return normalise({ ...row, secret })
+  }
 
   private scoped<T>(fn: (client: pg.PoolClient) => Promise<T>): Promise<T> {
     return withTenant(this.pool, this.tenantId, fn)
@@ -78,7 +89,7 @@ export class ConfigRepo {
       client.query(
         `INSERT INTO connections (tenant_id, id, kind, url, secret, tools) VALUES ($1, $2, $3, $4, $5, $6)
          ON CONFLICT (tenant_id, id) DO UPDATE SET kind = EXCLUDED.kind, url = EXCLUDED.url, secret = EXCLUDED.secret, tools = EXCLUDED.tools`,
-        [this.tenantId, c.id, c.kind, c.url, c.secret ?? null, toRow(c.tools)],
+        [this.tenantId, c.id, c.kind, c.url, this.sealConnection(c.id, c.secret ?? null), toRow(c.tools)],
       ),
     )
   }
@@ -88,7 +99,7 @@ export class ConfigRepo {
       client.query('SELECT id, kind, url, secret, tools FROM connections WHERE tenant_id = $1 AND id = $2', [this.tenantId, id]),
     )
     const row = res.rows[0]
-    return row ? normalise(row) : null
+    return row ? this.readConnection(row) : null
   }
 
   /**
@@ -106,12 +117,12 @@ export class ConfigRepo {
         this.tenantId,
         id,
       ])
-      const next = await build(res.rows[0] ? normalise(res.rows[0]) : null)
+      const next = await build(res.rows[0] ? this.readConnection(res.rows[0]) : null)
       const secret = next.secret ?? null
       await client.query(
         `INSERT INTO connections (tenant_id, id, kind, url, secret, tools) VALUES ($1, $2, $3, $4, $5, $6)
          ON CONFLICT (tenant_id, id) DO UPDATE SET kind = EXCLUDED.kind, url = EXCLUDED.url, secret = EXCLUDED.secret, tools = EXCLUDED.tools`,
-        [this.tenantId, id, next.kind, next.url, secret, toRow(next.tools)],
+        [this.tenantId, id, next.kind, next.url, this.sealConnection(id, secret), toRow(next.tools)],
       )
       return normalise({ id, kind: next.kind, url: next.url, secret, tools: next.tools })
     })
@@ -128,7 +139,7 @@ export class ConfigRepo {
         this.tenantId,
         id,
       ])
-      const conn = res.rows[0] ? normalise(res.rows[0]) : null
+      const conn = res.rows[0] ? this.readConnection(res.rows[0]) : null
       const tool = conn?.tools.find((t) => t.name === name)
       if (!conn || !tool) return null
       const updated = change(tool)
@@ -163,7 +174,7 @@ export class ConfigRepo {
         this.tenantId,
         w.id,
         w.url,
-        w.secret,
+        this.secrets.seal(w.secret, secretAad(this.tenantId, 'webhooks', w.id)),
         w.events,
       ]),
     )
@@ -173,6 +184,6 @@ export class ConfigRepo {
     const res = await this.scoped((client) =>
       client.query('SELECT id, url, secret, events FROM webhooks WHERE tenant_id = $1 ORDER BY id', [this.tenantId]),
     )
-    return res.rows
+    return res.rows.map((r) => ({ ...r, secret: this.secrets.open(r.secret, secretAad(this.tenantId, 'webhooks', r.id)) }))
   }
 }

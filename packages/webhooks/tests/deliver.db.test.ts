@@ -31,6 +31,8 @@ const scope: DeliveryScope = {
   claim: (fn) => withClaim(pool, fn),
   tenant: (t, fn) => withTenant(pool, t, fn),
 }
+// The worker's openSecret is under test here; the repo stores secrets as given.
+const plainBox = { seal: (plain: string): string => plain, open: (sealed: string): string => sealed }
 const openSecret = (_tenantId: string, _webhookId: string, sealed: string): string => sealed
 const enqueue = (type: WebhookEventType, data: object, eventId?: string): Promise<void> =>
   withTenant(pool, 'default', (db) => enqueueWebhookEvent(db, 'default', type, data, eventId))
@@ -57,7 +59,7 @@ async function startReceiver(statuses: number[]): Promise<{ url: string; receive
 }
 
 const putWebhook = (id: string, u: string, events: string[]): Promise<void> =>
-  new ConfigRepo(pool, 'default').putWebhook({ id, url: u, secret: 'whsec_test', events })
+  new ConfigRepo(pool, 'default', plainBox).putWebhook({ id, url: u, secret: 'whsec_test', events })
 
 async function waitFor(cond: () => boolean | Promise<boolean>): Promise<void> {
   for (let i = 0; i < 200; i++) {
@@ -235,6 +237,26 @@ test('delivery is signed with the opened secret', async () => {
   expect(verifyWebhook(r.body, String(r.headers['x-agentcore-signature']), 'plain', now)).toBe(true)
   expect(verifyWebhook(r.body, String(r.headers['x-agentcore-signature']), 'whsec_test', now)).toBe(false)
   expect(seen[0]).toEqual(['default', 'w1', 'whsec_test'])
+})
+
+test('a secret that cannot be decrypted counts as a failed attempt and sends nothing', async () => {
+  const rx = await startReceiver([200])
+  await putWebhook('w1', rx.url, ['run.completed'])
+  await enqueue('run.completed', {})
+  const w = startDeliveryWorker({
+    scope,
+    openSecret: () => {
+      throw new Error('boom whsec_test')
+    },
+    pollMs: 10,
+    delaysS: [3600],
+  })
+  await waitFor(async () => (await deliveries())[0]?.attempts === 1)
+  await w.stop()
+  const d = (await deliveries())[0]!
+  expect(d.status).toBe('pending')
+  expect(d.last_error).toBe('secret could not be decrypted')
+  expect(rx.received.length).toBe(0)
 })
 
 test('enqueueWebhookEvent with the same eventId creates one delivery per webhook', async () => {

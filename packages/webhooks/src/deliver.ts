@@ -9,6 +9,7 @@ export type WebhookEventType = 'run.completed' | 'run.failed' | 'approval.reques
 const LEASE_S = 60
 const SEND_TIMEOUT_MS = 10_000
 const MAX_ERROR_LEN = 500
+const DECRYPT_ERROR = 'secret could not be decrypted'
 
 export type Queryable = Pick<Pool, 'query'>
 
@@ -137,7 +138,13 @@ export function startDeliveryWorker(deps: DeliveryWorkerDeps): { stop(): Promise
     const { id, tenant_id: tenantId } = claimed
     const d = await scope.tenant(tenantId, load(id))
     if (!d) return true
-    const error = await send({ ...d, secret: openSecret(tenantId, d.webhook_id, d.secret) })
+    let secret: string | undefined
+    try {
+      secret = openSecret(tenantId, d.webhook_id, d.secret)
+    } catch {
+      // Never put the secret or the ciphertext in the error.
+    }
+    const error = secret === undefined ? DECRYPT_ERROR : await send({ ...d, secret })
     await scope.tenant(tenantId, async (db) => {
       if (error === null) {
         await db.query(`UPDATE webhook_deliveries SET status = 'delivered', attempts = attempts + 1, last_error = NULL WHERE id = $1 AND status = 'pending'`, [

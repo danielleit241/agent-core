@@ -1,5 +1,5 @@
 import { advanceRun, projectRun } from '@agent-core/core'
-import type { AgentDefinition, LLMPort, RunStatus, ToolDescriptor, ToolInvoker } from '@agent-core/core'
+import type { AgentDefinition, LLMPort, RunStatus, SecretBox, ToolDescriptor, ToolInvoker } from '@agent-core/core'
 import {
   ConfigRepo,
   LockLostError,
@@ -19,6 +19,7 @@ export type RunContext = { agent: AgentDefinition; agentVersion: number; toolsBy
 
 export type RunWorkerDeps = {
   pool: Pool
+  secrets: SecretBox
   llm: LLMPort
   tools: ToolInvoker
   workerId: string
@@ -41,10 +42,10 @@ export class ConfigError extends Error {}
 
 const errorMessage = (err: unknown): string => (err instanceof Error ? err.message : String(err))
 
-async function loadContext(pool: Pool, runId: string, tenantId: string): Promise<RunContext> {
+async function loadContext(pool: Pool, secrets: SecretBox, runId: string, tenantId: string): Promise<RunContext> {
   const run = await getRun(pool, tenantId, runId)
   if (!run) throw new ConfigError(`run not found: ${runId}`)
-  const config = new ConfigRepo(pool, tenantId)
+  const config = new ConfigRepo(pool, tenantId, secrets)
   const agent = await config.getAgent(run.agentId)
   if (!agent) throw new ConfigError(`agent not found: ${run.agentId}`)
   // No prototype: a tool named `toString` must not collide with inherited members.
@@ -98,7 +99,7 @@ async function processJob(deps: RunWorkerDeps, job: { runId: string; tenantId: s
   try {
     let ctx: RunContext
     try {
-      ctx = await (deps.loadContext ?? ((r, t) => loadContext(deps.pool, r, t)))(runId, tenantId)
+      ctx = await (deps.loadContext ?? ((r, t) => loadContext(deps.pool, deps.secrets, r, t)))(runId, tenantId)
     } catch (err) {
       if (!(err instanceof ConfigError)) {
         // Transient: put the job back, unlocked, and retry later. The run is not failed.

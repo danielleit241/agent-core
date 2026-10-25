@@ -1,6 +1,7 @@
 import Fastify from 'fastify'
 import type { FastifyInstance } from 'fastify'
 import { discoverMcpTools } from '@agent-core/tools'
+import type { SecretBox } from '@agent-core/core'
 import type { createPool } from '@agent-core/store-postgres'
 import { checkAdminKey } from './auth'
 import { ApiError, apiError } from './errors'
@@ -14,6 +15,7 @@ import { registerRunRoutes } from './routes/runs'
 export type AppDeps = {
   pool: ReturnType<typeof createPool>
   adminKey: string
+  secrets: SecretBox
   discoverTools?: typeof discoverMcpTools
   /** Alias to real model id. */
   models?: Record<string, string>
@@ -61,9 +63,9 @@ export function buildApp(deps: AppDeps): FastifyInstance {
       checkAdminKey(req.headers.authorization, deps.adminKey)
     })
     registerIdempotency(v1, { pool: deps.pool })
-    registerConfigRoutes(v1, { pool: deps.pool, discoverTools: deps.discoverTools ?? discoverMcpTools })
+    registerConfigRoutes(v1, { pool: deps.pool, secrets: deps.secrets, discoverTools: deps.discoverTools ?? discoverMcpTools })
     registerModelRoutes(v1, { pool: deps.pool, models: deps.models ?? {}, probe: deps.probe })
-    registerRunRoutes(v1, { pool: deps.pool, closing: closing.signal })
+    registerRunRoutes(v1, { pool: deps.pool, secrets: deps.secrets, closing: closing.signal })
   })
   return app
 }
