@@ -1,4 +1,4 @@
-# @agent-core/tools-webhook
+# Webhook tools
 
 Calls a team's webhook tool over HTTP. This is part of the tool gate.
 
