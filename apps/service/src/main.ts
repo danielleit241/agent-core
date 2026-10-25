@@ -1,6 +1,6 @@
 import { hostname } from 'node:os'
 import { DEFAULT_MODEL_PROFILE } from '@agent-core/core'
-import { createOpenAICompatible, probeModel } from '@agent-core/llm-openai'
+import { createOpenAICompatible, probeModel } from '@agent-core/llm'
 import { ModelProfileRepo, createPool, runMigrations } from '@agent-core/store-postgres'
 import { createServiceStack } from './stack'
 

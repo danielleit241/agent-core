@@ -1,5 +1,5 @@
 {
-  "name": "@agent-core/llm-openai",
+  "name": "@agent-core/llm",
   "version": "0.0.0",
   "private": true,
   "type": "module",

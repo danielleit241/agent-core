@@ -4,6 +4,7 @@ import { fileURLToPath } from 'node:url'
 import { parseArgs } from 'node:util'
 import type { LLMPort } from '@agent-core/core'
 import {
+  createOpenAICompatible,
   emptyCassette,
   loadCassette,
   recordingLlm,
@@ -11,8 +12,7 @@ import {
   replayingLlm,
   saveCassette,
   taggedCassette,
-} from '@agent-core/llm-cassette'
-import { createOpenAICompatible } from '@agent-core/llm-openai'
+} from '@agent-core/llm'
 import { gradeDeterministic } from '../grading/graders'
 import { formatReport } from './report'
 import { gradeRubric } from '../grading/rubric'

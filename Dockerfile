@@ -9,8 +9,7 @@ WORKDIR /app
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 COPY packages/core/package.json packages/core/
 COPY packages/protocol/package.json packages/protocol/
-COPY packages/llm-cassette/package.json packages/llm-cassette/
-COPY packages/llm-openai/package.json packages/llm-openai/
+COPY packages/llm/package.json packages/llm/
 COPY packages/store-postgres/package.json packages/store-postgres/
 COPY packages/tools-mcp/package.json packages/tools-mcp/
 COPY packages/tools-webhook/package.json packages/tools-webhook/

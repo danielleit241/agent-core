@@ -17,12 +17,9 @@ importers:
       '@agent-core/fake-llm':
         specifier: workspace:*
         version: link:mocks/fake-llm
-      '@agent-core/llm-cassette':
+      '@agent-core/llm':
         specifier: workspace:*
-        version: link:packages/llm-cassette
-      '@agent-core/llm-openai':
-        specifier: workspace:*
-        version: link:packages/llm-openai
+        version: link:packages/llm
       '@agent-core/protocol':
         specifier: workspace:*
         version: link:packages/protocol
@@ -65,12 +62,9 @@ importers:
       '@agent-core/core':
         specifier: workspace:*
         version: link:../../packages/core
-      '@agent-core/llm-cassette':
+      '@agent-core/llm':
         specifier: workspace:*
-        version: link:../../packages/llm-cassette
-      '@agent-core/llm-openai':
-        specifier: workspace:*
-        version: link:../../packages/llm-openai
+        version: link:../../packages/llm
       '@agent-core/service':
         specifier: workspace:*
         version: link:../service
@@ -89,9 +83,9 @@ importers:
       '@agent-core/core':
         specifier: workspace:*
         version: link:../../packages/core
-      '@agent-core/llm-openai':
+      '@agent-core/llm':
         specifier: workspace:*
-        version: link:../../packages/llm-openai
+        version: link:../../packages/llm
       '@agent-core/store-postgres':
         specifier: workspace:*
         version: link:../../packages/store-postgres
@@ -135,13 +129,7 @@ importers:
         specifier: ^4.0.0
         version: 4.6.7
 
-  packages/llm-cassette:
-    dependencies:
-      '@agent-core/core':
-        specifier: workspace:*
-        version: link:../core
-
-  packages/llm-openai:
+  packages/llm:
     dependencies:
       '@agent-core/core':
         specifier: workspace:*
