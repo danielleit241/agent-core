@@ -1,4 +1,4 @@
-import { ConfigRepo, withClaim, withTenant } from '@agent-core/store-postgres'
+import { withClaim, withTenant } from '@agent-core/store-postgres'
 import type { createPool } from '@agent-core/store-postgres'
 import { startDeliveryWorker } from '@agent-core/webhooks'
 import { secretAad } from '@agent-core/core'
@@ -6,7 +6,7 @@ import type { LLMPort, SecretBox } from '@agent-core/core'
 import { buildApp } from './http/app'
 import type { ProbeResult } from './http/routes/models'
 import { createRunSettledHandler } from './runs/settled'
-import { createToolRouter } from './tools/router'
+import { createToolRouters } from './tools/router'
 import { startRunWorker } from './worker/worker'
 
 export type ServiceStackDeps = {
@@ -26,14 +26,13 @@ export type ServiceStackDeps = {
 /** Wires the app, the tool router, the run worker and the delivery worker. Does not own the pool. */
 export function createServiceStack(deps: ServiceStackDeps) {
   const { pool } = deps
-  const config = new ConfigRepo(pool, 'default', deps.secrets)
-  const tools = createToolRouter(config)
+  const tools = createToolRouters(pool, deps.secrets)
   const app = buildApp({ pool, adminKey: deps.adminKey, secrets: deps.secrets, models: deps.models, probe: deps.probe })
   const runWorker = startRunWorker({
     pool,
     secrets: deps.secrets,
     llm: deps.llm,
-    tools,
+    tools: tools.forTenant,
     workerId: deps.workerId,
     pollMs: deps.runPollMs,
     onRunSettled: createRunSettledHandler(pool),

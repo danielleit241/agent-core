@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, beforeEach, expect, test } from 'vitest'
 import type { AgentDefinition, LLMPort, RunStatus, ToolInvoker } from '@agent-core/core'
-import { ConfigRepo, PgRunStore, assertTestDatabase, createPool, createRun, enqueue, getRun, runMigrations } from '@agent-core/store-postgres'
+import { ConfigRepo, PgRunStore, assertTestDatabase, createPool, createRun, createTenant, enqueue, getRun, runMigrations } from '@agent-core/store-postgres'
 import { startRunWorker } from '../../src/worker/worker'
 import type { RunWorkerDeps } from '../../src/worker/worker'
 import { createSecretBox } from '@agent-core/core'
@@ -28,11 +28,12 @@ const llm: LLMPort = {
     stopReason: 'end',
   }),
 }
-const tools: ToolInvoker = {
+const noTools: ToolInvoker = {
   call: async () => {
     throw new Error('no tools expected')
   },
 }
+const tools = (): ToolInvoker => noTools
 const agent: AgentDefinition = {
   id: 'helper',
   instructions: 'help',
@@ -68,7 +69,7 @@ test('a queued run is claimed, completed and released', async () => {
     tools,
     workerId: 'w1',
     pollMs: 20,
-    onRunSettled: async (id, status) => {
+    onRunSettled: async (id, _tenantId, status) => {
       settled.push([id, status])
     },
   })
@@ -89,7 +90,7 @@ test('a run whose agent is missing fails with error.raised and is released', asy
     tools,
     workerId: 'w1',
     pollMs: 20,
-    onRunSettled: async (id, status) => {
+    onRunSettled: async (id, _tenantId, status) => {
       settled.push([id, status])
     },
   })
@@ -123,7 +124,7 @@ test('a failure on a completed run appends nothing and reports the real status',
     tools,
     workerId: 'w1',
     pollMs: 20,
-    onRunSettled: async (id, status) => {
+    onRunSettled: async (id, _tenantId, status) => {
       settled.push([id, status])
     },
   })
@@ -179,7 +180,7 @@ test('two connections exposing the same tool name fail the run', async () => {
     tools,
     workerId: 'w1',
     pollMs: 20,
-    onRunSettled: async (id, status) => {
+    onRunSettled: async (id, _tenantId, status) => {
       settled.push([id, status])
     },
   })
@@ -274,7 +275,7 @@ test('a tool named like an Object.prototype member is not reported as a duplicat
     tools,
     workerId: 'w1',
     pollMs: 20,
-    onRunSettled: async (id, status) => {
+    onRunSettled: async (id, _tenantId, status) => {
       settled.push([id, status])
     },
   })
@@ -508,11 +509,11 @@ test('a run resumed after tool.requested calls a keyed write again with the same
     secrets: box,
     pool,
     llm,
-    tools: recorder,
+    tools: () => recorder,
     workerId: 'w1',
     pollMs: 20,
     loadContext: async () => ({ agent, agentVersion: version, toolsByName: { pay: writeTool(true) } }),
-    onRunSettled: async (id, status) => {
+    onRunSettled: async (id, _tenantId, status) => {
       settled.push([id, status])
     },
   })
@@ -532,11 +533,11 @@ test('a run resumed after tool.requested for an unkeyed write waits for a human'
     secrets: box,
     pool,
     llm,
-    tools: recorder,
+    tools: () => recorder,
     workerId: 'w1',
     pollMs: 20,
     loadContext: async () => ({ agent, agentVersion: version, toolsByName: { pay: writeTool(false) } }),
-    onRunSettled: async (id, status) => {
+    onRunSettled: async (id, _tenantId, status) => {
       settled.push([id, status])
     },
   })
@@ -546,4 +547,74 @@ test('a run resumed after tool.requested for an unkeyed write waits for a human'
   expect(settled).toEqual([['r13', 'waiting_human']])
   const row = await pool.query('SELECT status, waiting_reason FROM runs WHERE id = $1', ['r13'])
   expect(row.rows).toEqual([{ status: 'waiting_human', waiting_reason: 'unknown_outcome' }])
+})
+
+async function seedTenantRun(tenantId: string, runId: string, versionNo: number): Promise<void> {
+  await createRun(pool, { tenantId, runId, agentId: 'helper', agentVersion: versionNo, input: { text: 'hi' } })
+  await new PgRunStore(pool, tenantId).append(runId, [
+    { type: 'run.created', payload: { agentId: 'helper', input: { text: 'hi' } }, labels: ['trusted'] },
+  ])
+  await enqueue(pool, { runId, tenantId })
+}
+
+test("a run of b whose agent names a connection that only a has fails with connection not found and never calls a's tool", async () => {
+  await createTenant(pool, 'a')
+  await createTenant(pool, 'b')
+  const tool = {
+    name: 'shop.get',
+    description: 'd',
+    inputSchema: {},
+    safety: { effect: 'read' as const, idempotency: true, reachesOutside: false, outputLabel: 'trusted' as const },
+    connectionId: 'shop',
+    source: {},
+    confirmed: {},
+  }
+  await new ConfigRepo(pool, 'a', box).putConnection({ id: 'shop', kind: 'mcp', url: 'http://x', tools: [tool] })
+  const { version } = await new ConfigRepo(pool, 'b', box).putAgent({ ...agent, connections: ['shop'] })
+  await seedTenantRun('b', 'rb1', version)
+  const asked: string[] = []
+  const recorder = recordingTools()
+  const settled: Array<[string, string, RunStatus]> = []
+  const worker = startRunWorker({
+    secrets: box,
+    pool,
+    llm,
+    tools: (tenantId) => {
+      asked.push(tenantId)
+      return recorder
+    },
+    workerId: 'w1',
+    pollMs: 20,
+    onRunSettled: async (id, tenantId, status) => {
+      settled.push([id, tenantId, status])
+    },
+  })
+  await waitFor(() => settled.length === 1)
+  await worker.stop()
+  expect(settled).toEqual([['rb1', 'b', 'failed']])
+  const events = await new PgRunStore(pool, 'b').readEvents('rb1')
+  expect(events.find((e) => e.type === 'error.raised')?.payload).toMatchObject({ message: 'connection not found: shop' })
+  expect(asked.filter((t) => t !== 'b')).toEqual([])
+  expect(recorder.keys).toEqual([])
+})
+
+test("onRunSettled receives the run's tenant", async () => {
+  await createTenant(pool, 'a')
+  const { version } = await new ConfigRepo(pool, 'a', box).putAgent(agent)
+  await seedTenantRun('a', 'ra1', version)
+  const settled: Array<[string, string, RunStatus]> = []
+  const worker = startRunWorker({
+    secrets: box,
+    pool,
+    llm,
+    tools,
+    workerId: 'w1',
+    pollMs: 20,
+    onRunSettled: async (id, tenantId, status) => {
+      settled.push([id, tenantId, status])
+    },
+  })
+  await waitFor(() => settled.length === 1)
+  await worker.stop()
+  expect(settled).toEqual([['ra1', 'a', 'completed']])
 })

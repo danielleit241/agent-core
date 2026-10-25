@@ -457,7 +457,7 @@ test('wait returns the settled run when a worker finishes it', async () => {
     secrets: box,
     pool,
     llm,
-    tools: { call: async () => ({ content: '', isError: false }) },
+    tools: () => ({ call: async () => ({ content: '', isError: false }) }),
     workerId: 'w1',
     pollMs: 20,
   })
@@ -541,7 +541,7 @@ test('the settled handler enqueues exactly one delivery per subscribed webhook',
   const runId = await runWaitingForApproval()
   const settled = createRunSettledHandler(pool)
 
-  await settled(runId, 'waiting_human')
+  await settled(runId, 'default', 'waiting_human')
   const rows = await migrator.query<{ webhook_id: string; type: string; body: string }>(
     'SELECT webhook_id, type, body FROM webhook_deliveries ORDER BY webhook_id',
   )
@@ -562,7 +562,7 @@ test('the settled handler enqueues exactly one delivery per subscribed webhook',
   })
 
   // other statuses and non-approval waits queue nothing
-  await settled(runId, 'running')
+  await settled(runId, 'default', 'running')
   expect((await migrator.query('SELECT 1 FROM webhook_deliveries')).rowCount).toBe(2)
 })
 
@@ -673,8 +673,8 @@ test('settling the same run state twice queues one delivery per webhook', async 
   await new ConfigRepo(pool, 'default', box).putWebhook({ id: 'w1', url: 'https://a.test', secret: 's1', events: ['approval.requested'] })
   const runId = await runWaitingForApproval()
   const settled = createRunSettledHandler(pool)
-  await settled(runId, 'waiting_human')
-  await settled(runId, 'waiting_human')
+  await settled(runId, 'default', 'waiting_human')
+  await settled(runId, 'default', 'waiting_human')
   const rows = await migrator.query<{ event_id: string }>('SELECT event_id FROM webhook_deliveries')
   expect(rows.rows.map((r) => r.event_id)).toEqual([`evt_${runId}_6_approval.requested`])
 })
@@ -925,11 +925,11 @@ test('the settled handler queues run.waiting_human for non-approval waits only',
   await config.putWebhook({ id: 'w2', url: 'https://b.test', secret: 's2', events: ['approval.requested'] })
   const settled = createRunSettledHandler(pool)
 
-  await settled(await runWaitingForApproval(), 'waiting_human')
+  await settled(await runWaitingForApproval(), 'default', 'waiting_human')
   expect((await migrator.query("SELECT 1 FROM webhook_deliveries WHERE type = 'run.waiting_human'")).rowCount).toBe(0)
 
   const runId = await runWaitingForOutcome()
-  await settled(runId, 'waiting_human')
+  await settled(runId, 'default', 'waiting_human')
   const rows = await migrator.query<{ webhook_id: string; type: string; body: string }>(
     "SELECT webhook_id, type, body FROM webhook_deliveries WHERE type = 'run.waiting_human'",
   )
@@ -987,7 +987,7 @@ test('a cancel that lands while a worker starts the run wins, and the worker wri
   const cancel = authed('POST', '/v1/runs/r-race/cancel')
   await until(1)
   // The worker reads the run as queued, then waits to write queued -> running.
-  const worker = startRunWorker({ secrets: box, pool, llm, tools: { call: async () => ({ content: '', isError: false }) }, workerId: 'w-race', pollMs: 10 })
+  const worker = startRunWorker({ secrets: box, pool, llm, tools: () => ({ call: async () => ({ content: '', isError: false }) }), workerId: 'w-race', pollMs: 10 })
   await until(2)
   await holder.query('COMMIT')
   holder.release()
@@ -1030,7 +1030,7 @@ test('an allow rule does not cover a tool whose definition changed: the worker w
     }),
   }
   let toolCalls = 0
-  const worker = startRunWorker({ secrets: box, pool, llm, tools: { call: async () => (toolCalls++, { content: '', isError: false }) }, workerId: 'w-ch', pollMs: 10 })
+  const worker = startRunWorker({ secrets: box, pool, llm, tools: () => ({ call: async () => (toolCalls++, { content: '', isError: false }) }), workerId: 'w-ch', pollMs: 10 })
   for (let i = 0; i < 300 && (await authed('GET', '/v1/runs/r-changed')).json().status !== 'waiting_human'; i++) {
     await new Promise((r) => setTimeout(r, 10))
   }

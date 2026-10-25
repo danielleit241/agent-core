@@ -21,7 +21,8 @@ export type RunWorkerDeps = {
   pool: Pool
   secrets: SecretBox
   llm: LLMPort
-  tools: ToolInvoker
+  /** Gives the invoker for one tenant's tools. */
+  tools: (tenantId: string) => ToolInvoker
   workerId: string
   pollMs?: number
   /** Running jobs allowed per tenant; defaults to `DEFAULT_MAX_RUNS_PER_TENANT`. */
@@ -30,7 +31,7 @@ export type RunWorkerDeps = {
   heartbeatMs?: number
   /** Replaces the default loader; used by tests to simulate load errors. */
   loadContext?: (runId: string, tenantId: string) => Promise<RunContext>
-  onRunSettled?: (runId: string, status: RunStatus) => Promise<void>
+  onRunSettled?: (runId: string, tenantId: string, status: RunStatus) => Promise<void>
 }
 
 const RETRY_DELAY_MS = 5000
@@ -116,7 +117,7 @@ async function processJob(deps: RunWorkerDeps, job: { runId: string; tenantId: s
     status = await advanceRun(runId, {
       store: new PgRunStore(deps.pool, tenantId, { lockedBy: deps.workerId }),
       llm: deps.llm,
-      tools: deps.tools,
+      tools: deps.tools(tenantId),
       ...ctx,
       signal: ctl.abort.signal,
     })
@@ -163,7 +164,7 @@ async function processJob(deps: RunWorkerDeps, job: { runId: string; tenantId: s
   // Settle before release: when settling fails the row stays locked, the lock expires and the job
   // runs again. The settle step is idempotent, so the repeat is safe.
   try {
-    await deps.onRunSettled?.(runId, status)
+    await deps.onRunSettled?.(runId, tenantId, status)
   } catch (err) {
     console.error(`worker: onRunSettled failed for run ${runId}; the job will be retried`, err)
     return

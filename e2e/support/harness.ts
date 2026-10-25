@@ -17,6 +17,9 @@ export type Stack = {
   // JSON bodies are asserted ad hoc by tests, so `body` stays loosely typed.
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   api(method: string, path: string, body?: unknown, timeoutMs?: number): Promise<{ status: number; body: any }>
+  /** Like `api`, but with the given API key instead of the admin key. */
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  apiAs(key: string, method: string, path: string, body?: unknown): Promise<{ status: number; body: any }>
   shop: Awaited<ReturnType<typeof startShop>>
   receiver: { url: string; received: Received[] }
   close(): Promise<void>
@@ -70,20 +73,23 @@ export async function startStack(script: FakeTurn[], opts: StackOpts = {}): Prom
   await stack.app.listen({ port: 0, host: '127.0.0.1' })
   const baseUrl = `http://127.0.0.1:${(stack.app.server.address() as AddressInfo).port}`
 
+  async function request(key: string, method: string, path: string, body?: unknown, timeoutMs?: number) {
+    const res = await fetch(baseUrl + path, {
+      method,
+      headers: {
+        Authorization: `Bearer ${key}`,
+        ...(body === undefined ? {} : { 'Content-Type': 'application/json' }),
+      },
+      body: body === undefined ? undefined : JSON.stringify(body),
+      ...(timeoutMs === undefined ? {} : { signal: AbortSignal.timeout(timeoutMs) }),
+    })
+    const text = await res.text()
+    return { status: res.status, body: text === '' ? undefined : JSON.parse(text) }
+  }
+
   return {
-    async api(method, path, body, timeoutMs) {
-      const res = await fetch(baseUrl + path, {
-        method,
-        headers: {
-          Authorization: `Bearer ${ADMIN_KEY}`,
-          ...(body === undefined ? {} : { 'Content-Type': 'application/json' }),
-        },
-        body: body === undefined ? undefined : JSON.stringify(body),
-        ...(timeoutMs === undefined ? {} : { signal: AbortSignal.timeout(timeoutMs) }),
-      })
-      const text = await res.text()
-      return { status: res.status, body: text === '' ? undefined : JSON.parse(text) }
-    },
+    api: (method, path, body, timeoutMs) => request(ADMIN_KEY, method, path, body, timeoutMs),
+    apiAs: (key, method, path, body) => request(key, method, path, body),
     shop,
     receiver: { url: receiverUrl, received },
     async close() {
