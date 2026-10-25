@@ -20,6 +20,7 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions exist
 - Model profiles: `GET /v1/models`, `POST /v1/models/check`, `PATCH /v1/models/{alias}`, `pnpm models:check`. Structured output is validated and retried when a model has no strict JSON schema.
 - Tool fingerprints: each tool remembers the definition an admin last reviewed. When it changes, the tool shows `changedSinceReview`, its confirmations no longer count, and every call waits for approval, even when an `allow` rule matches, until it is confirmed again. `PATCH` accepts the reviewed `fingerprint` and answers `409 tool_changed` when the tool changed since.
 - A run that waits on an unknown outcome records why (`error.raised`, for example `HTTP 503`); `pending_outcome.reason` shows it.
+- Every write endpoint accepts `Idempotency-Key`; a key reused with a different request gets 422 `idempotency_key_reused`.
 
 ### Fixed
 

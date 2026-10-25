@@ -7,6 +7,7 @@ import { ConfigRepo, PgRunStore, StateConflictError, createRunWithEvent, getRun,
 import type { createPool } from '@agent-core/store-postgres'
 import { apiError, validationError } from '../errors'
 import { getRunView } from '../../runs/views'
+import { keyReused, readIdempotencyKey, requestHash } from '../idempotency'
 
 const TENANT = 'default'
 const POLL_MS = 100
@@ -83,6 +84,7 @@ export function registerRunRoutes(app: FastifyInstance, deps: { pool: ReturnType
 
   app.post<{ Querystring: { wait?: string } }>('/v1/runs', async (req, reply) => {
     const wait = parseWait(req.query.wait)
+    const key = readIdempotencyKey(req)
     const parsed = RunBody.safeParse(req.body)
     if (!parsed.success) throw validationError(parsed.error)
     const body = parsed.data
@@ -95,14 +97,14 @@ export function registerRunRoutes(app: FastifyInstance, deps: { pool: ReturnType
         422,
       )
     }
-    const key = req.headers['idempotency-key']
     // One transaction: the run row, run.created and the queue row appear together or not at all.
     const created = await createRunWithEvent(pool, {
       tenantId: TENANT,
       runId: `run_${randomUUID()}`,
       agentId: body.agent,
       agentVersion: agent.version,
-      idempotencyKey: typeof key === 'string' && key !== '' ? key : undefined,
+      idempotencyKey: key,
+      requestHash: key === undefined ? undefined : requestHash(req),
       created: {
         type: 'run.created',
         payload: {
@@ -113,7 +115,11 @@ export function registerRunRoutes(app: FastifyInstance, deps: { pool: ReturnType
         labels: ['untrusted'], // the caller's text is untrusted input
       },
     })
-    if (!created.created) void reply.header('Idempotent-Replayed', 'true')
+    if (!created.created) {
+      // A row from before the hash existed has none and matches any request.
+      if (created.requestHash !== null && created.requestHash !== requestHash(req)) throw keyReused()
+      void reply.header('Idempotent-Replayed', 'true')
+    }
     if (wait !== undefined) {
       let gone = false
       reply.raw.on('close', () => {
@@ -141,7 +147,7 @@ export function registerRunRoutes(app: FastifyInstance, deps: { pool: ReturnType
     return { events, chain: chain.valid ? { valid: true } : { valid: false, broken_at_seq: chain.brokenAtSeq } }
   })
 
-  app.post<{ Params: { id: string } }>('/v1/runs/:id/resolve', async (req, reply) => {
+  app.post<{ Params: { id: string } }>('/v1/runs/:id/resolve', { config: { idempotent: true } }, async (req, reply) => {
     const parsed = ResolveBody.safeParse(req.body)
     if (!parsed.success) throw validationError(parsed.error)
     const { action } = parsed.data
@@ -215,7 +221,7 @@ export function registerRunRoutes(app: FastifyInstance, deps: { pool: ReturnType
     return reply.code(202).send({ run_id: runId, status: action === 'cancel' ? 'cancelled' : 'queued' })
   })
 
-  app.post<{ Params: { id: string } }>('/v1/runs/:id/cancel', async (req, reply) => {
+  app.post<{ Params: { id: string } }>('/v1/runs/:id/cancel', { config: { idempotent: true } }, async (req, reply) => {
     const runId = req.params.id
     const run = await getRun(pool, TENANT, runId)
     if (!run) throw runNotFound(runId)
