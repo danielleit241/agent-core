@@ -41,10 +41,14 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions exist
 - Confirming a tool that shows `changedSinceReview` requires the reviewed `fingerprint` (`428 fingerprint_required` without it).
 - A tool that shows `changedSinceReview` is hidden from the model until it is confirmed again, so an unreviewed description never reaches the LLM context. A call made before the change still waits for approval.
 - A tool output longer than 48,000 characters is cut in the middle before it is stored and sent to the model, so one large answer cannot fill the LLM context of every later request.
+- A resolve built from a stale read of the run log answers `409` instead of attaching the decision to an earlier tool call.
+- A write tool that accepts an idempotency key and was interrupted by a crash is called again with the same key, instead of waiting on an unknown outcome.
 
 ### Changed
 
 - Confirmations stored before tool fingerprints existed no longer count: those tools run strict, behind approval, until confirmed again.
+- The runner, not the tool adapters, retries tool calls: reads and writes with an idempotency key get up to 3 attempts with the same key, and each failed attempt is logged as `error.raised`. A keyed write that still fails after it was sent waits on an unknown outcome.
+- A transient LLM error (network, timeout, 429, 5xx) no longer fails the run. The run stays `running` and is retried after 30, 60, 120, 240 and 300 seconds (±20%), or after the provider's `Retry-After` (at most 5 minutes); the sixth failure in a row fails it. `error.raised` gains `retryAt`.
 
 ### Upgrade notes
 
