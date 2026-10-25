@@ -5,7 +5,7 @@ import { AgentDefinitionSchema, SupportSchema, ToolSafetySchema, resolveSafety, 
 import type { ToolSafety } from '@agent-core/core'
 import { ConfigRepo, NO_REVIEW } from '@agent-core/store-postgres'
 import type { LoadedTool, StoredTool, createPool } from '@agent-core/store-postgres'
-import type { discoverMcpTools } from '@agent-core/tools-mcp'
+import type { discoverMcpTools } from '@agent-core/tools'
 import { apiError, validationError } from '../errors'
 
 const TENANT = 'default'

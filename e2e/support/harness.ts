@@ -1,7 +1,7 @@
 import { createServer } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import { createServiceStack } from '@agent-core/service'
-import { createOpenAICompatible } from '@agent-core/llm-openai'
+import { createOpenAICompatible } from '@agent-core/llm'
 import { assertTestDatabase, assertTestPool, createPool, runMigrations } from '@agent-core/store-postgres'
 import { startFakeLlm } from '@agent-core/fake-llm'
 import type { FakeTurn } from '@agent-core/fake-llm'

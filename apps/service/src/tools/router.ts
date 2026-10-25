@@ -1,7 +1,6 @@
 import type { ToolInvoker } from '@agent-core/core'
 import type { ConfigRepo } from '@agent-core/store-postgres'
-import { createMcpInvoker, ToolInvocationError } from '@agent-core/tools-mcp'
-import { createWebhookInvoker } from '@agent-core/tools-webhook'
+import { createMcpInvoker, createWebhookInvoker, ToolInvocationError } from '@agent-core/tools'
 
 /** Sends each call to the MCP or the webhook invoker, by the kind of the tool's connection. */
 export function createToolRouter(config: ConfigRepo): ToolInvoker & { close(): Promise<void> } {

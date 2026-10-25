@@ -1,4 +1,4 @@
-import { readdirSync, readFileSync } from 'node:fs'
+import { existsSync, readdirSync, readFileSync } from 'node:fs'
 import { dirname, join, relative, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -54,8 +54,27 @@ test('library packages never depend on apps or mocks at runtime, nor on apps in 
   expect(violations).toEqual([])
 })
 
+test('packages are one level deep', () => {
+  const nested = packages.filter((m) => posix(relative(ROOT, m.dir)).split('/').length !== 2)
+  expect(nested.map((m) => m.file)).toEqual([])
+})
+
+test('no test files under src/', () => {
+  // Walk only each package's src/, so node_modules is never read.
+  const misplaced = ['packages', 'apps', 'mocks'].flatMap((top) =>
+    readdirSync(join(ROOT, top)).flatMap((pkg) => {
+      const src = join(ROOT, top, pkg, 'src')
+      if (!existsSync(src)) return []
+      return readdirSync(src, { recursive: true, encoding: 'utf8' })
+        .filter((f) => f.endsWith('.test.ts'))
+        .map((f) => `${top}/${pkg}/src/${posix(f)}`)
+    }),
+  )
+  expect(misplaced).toEqual([])
+})
+
 test('adapters depend at runtime only on core and protocol among workspace packages', () => {
-  const adapters = packages.filter((m) => posix(relative(ROOT, m.dir)).startsWith('packages/adapters/'))
+  const adapters = packages.filter((m) => m.name !== '@agent-core/core' && m.name !== '@agent-core/protocol')
   expect(adapters.length).toBeGreaterThan(0)
   const violations: string[] = []
   for (const m of adapters) {

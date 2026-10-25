@@ -8,10 +8,9 @@
   },
   "dependencies": {
     "@agent-core/core": "workspace:*",
-    "@agent-core/llm-openai": "workspace:*",
+    "@agent-core/llm": "workspace:*",
     "@agent-core/store-postgres": "workspace:*",
-    "@agent-core/tools-mcp": "workspace:*",
-    "@agent-core/tools-webhook": "workspace:*",
+    "@agent-core/tools": "workspace:*",
     "@agent-core/webhooks": "workspace:*",
     "fastify": "^5.0.0",
     "pg": "^8.23.1",

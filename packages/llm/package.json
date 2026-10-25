@@ -1,0 +1,17 @@
+{
+  "name": "@agent-core/llm",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./cassette": "./src/providers/cassette/index.ts"
+  },
+  "dependencies": {
+    "@agent-core/core": "workspace:*",
+    "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "@agent-core/fake-llm": "workspace:*"
+  }
+}

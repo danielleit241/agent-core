@@ -1,6 +1,6 @@
 import Fastify from 'fastify'
 import type { FastifyInstance } from 'fastify'
-import { discoverMcpTools } from '@agent-core/tools-mcp'
+import { discoverMcpTools } from '@agent-core/tools'
 import type { createPool } from '@agent-core/store-postgres'
 import { checkAdminKey } from './auth'
 import { ApiError, apiError } from './errors'
