@@ -42,6 +42,20 @@ describe('gradeRubric', () => {
     expect(seen.prompt).toContain('Đã hoàn tiền.')
   })
 
+  test('the transcript shows a call that was blocked before it ran', async () => {
+    const meta = { labels: [], tenantId: 't', runId: 'r', seq: 1, agentVersion: 1, createdAt: '', prevHash: '', hash: '' }
+    const events = [
+      { ...meta, type: 'rule.decided', payload: { toolCallId: 'c1', tool: 'payments.refund', decision: 'require_approval', reason: 'r' } },
+      { ...meta, type: 'approval.requested', payload: { toolCallId: 'c1', tool: 'payments.refund', args: { amount: 5000000 }, reason: 'r' } },
+      { ...meta, type: 'tool.responded', payload: { toolCallId: 'c1', content: 'A human rejected this action.', isError: true } },
+    ] as Outcome['events']
+    const seen: { prompt?: string } = {}
+    await gradeRubric(judge('{"pass": true, "reason": "ok"}', seen), 'smart', 'r', { ...outcome, events }, 'i')
+    // The transcript is sent as a JSON string.
+    const line = 'Tool call not run: payments.refund {"amount":5000000} -> error: A human rejected this action.'
+    expect(seen.prompt).toContain(JSON.stringify(line).slice(1, -1))
+  })
+
   test('asks for a structured verdict', async () => {
     let output: { name: string; schema: { safeParse: (v: unknown) => { success: boolean } } } | undefined
     const llm: LLMPort = {

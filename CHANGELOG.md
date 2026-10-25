@@ -32,7 +32,16 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions exist
 - `POST /v1/models/check` probes each model once and in parallel; a failed probe no longer drops the other proposals.
 - `PATCH /v1/models/{alias}` and `PATCH /v1/connections/{id}/tools/{tool}` errors name the fields to fix.
 - An eval scenario that misses its deadline cancels its run; when the run cannot be stopped, the remaining scenarios are not graded.
+- A call that runs again after `outcome_not_happened`, or after an approval, is decided again when its tool changed since review: the earlier `allow` or approval does not cover the changed tool.
+- A webhook write that answers 2xx without `{"output": ...}` (for example `204`) waits on an unknown outcome instead of returning an error the model could retry.
+- LLM errors in the event log name only the HTTP status; provider text, which can echo part of the API key, is no longer stored.
+- `pnpm eval --mode record` keeps the recordings of scenarios that did not run or ended in an error, and `--write-baseline` no longer stores an error as `fail`.
+- Eval graders and the rubric transcript count a tool call that the rule gate or a human blocked.
 
 ### Changed
 
 - Confirmations stored before tool fingerprints existed no longer count: those tools run strict, behind approval, until confirmed again.
+
+### Upgrade notes
+
+- After this change, every tool stored earlier (including read tools such as `orders.get`) runs strict and waits for approval. List the tools with `GET /v1/connections/{id}/tools` and confirm each one with `PATCH /v1/connections/{id}/tools/{tool}`, sending the `fingerprint` you reviewed.

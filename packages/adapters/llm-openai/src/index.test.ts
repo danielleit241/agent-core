@@ -358,3 +358,17 @@ describe('model profiles and structured output', () => {
     expect((await port.complete(req)).usage).not.toHaveProperty('costUsd')
   })
 })
+
+test('an error names the HTTP status only: provider text can echo credentials and would reach the event log', async () => {
+  const llm = await fake([{ status: 401 }])
+  const err = await portFor(llm).complete(req).catch((e: unknown) => e)
+  expect((err as Error).message).toBe('LLM provider returned HTTP 401')
+})
+
+test('a network error does not carry the cause text', async () => {
+  const llm = await startFakeLlm([])
+  const port = portFor(llm, { retryDelaysMs: [1] })
+  await llm.close()
+  const err = await port.complete(req).catch((e: unknown) => e)
+  expect((err as Error).message).toBe('LLM request failed: network error')
+})

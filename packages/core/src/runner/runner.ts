@@ -114,7 +114,9 @@ async function handleToolCall(
 
   let decision = proj.ruleDecisions.get(call.id)
   let reason = proj.ruleReasons.get(call.id) ?? ''
-  if (decision === undefined) {
+  // A decision or approval made before the tool changed does not cover the changed tool.
+  const stale = tool.changedSinceReview === true && reason !== 'tool_changed_since_review'
+  if (decision === undefined || stale) {
     const d = decide({ tool, args: call.arguments, agent: deps.agent })
     decision = d.decision
     reason = d.reason
@@ -128,10 +130,10 @@ async function handleToolCall(
     await append(toolError(call.id, `This action is not allowed: ${reason}`))
     return 'continue'
   }
-  if (decision === 'require_approval' && !proj.approvals.has(call.id)) {
+  if (decision === 'require_approval' && (stale || !proj.approvals.has(call.id))) {
     // Also the crash-safe path: the decision was logged but the approval request was not.
     const events: NewEvent[] = []
-    if (!proj.awaitingApproval.includes(call.id)) {
+    if (stale || !proj.awaitingApproval.includes(call.id)) {
       events.push({
         type: 'approval.requested',
         payload: { toolCallId: call.id, tool: call.name, args: call.arguments, reason },

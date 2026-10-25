@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest'
-import { combineRuns, compareBaseline, parseCliArgs } from './cli'
+import { combineRuns, compareBaseline, finishedIds, mergeBaseline, parseCliArgs } from './cli'
 import type { Result } from '../scenario'
 
 const result = (id: string, verdict: Result['verdict']): Result => ({ id, group: 'g', verdict, failures: [] })
@@ -98,5 +98,21 @@ describe('combineRuns', () => {
   test('a single run is returned as is', () => {
     const one = run('fail', ['f'])
     expect(combineRuns([one])).toBe(one)
+  })
+})
+
+describe('finishedIds', () => {
+  test('keeps only scenarios that were graded: an error or a skipped scenario keeps its old recording', () => {
+    expect(finishedIds([result('a', 'pass'), result('b', 'fail'), result('c', 'error')])).toEqual(['a', 'b'])
+  })
+})
+
+describe('mergeBaseline', () => {
+  test('an error does not overwrite the baseline, and skipped scenarios keep theirs', () => {
+    expect(mergeBaseline({ a: 'pass', b: 'pass', c: 'pass' }, [result('a', 'error'), result('b', 'fail')])).toEqual({
+      a: 'pass',
+      b: 'fail',
+      c: 'pass',
+    })
   })
 })

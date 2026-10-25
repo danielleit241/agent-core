@@ -104,15 +104,27 @@ test('a string output is returned as is, other output is JSON', async () => {
   expect(await inv.call(tool({ name: 'obj' }), {}, ctx)).toEqual({ content: '{"n":1}', isError: false })
 })
 
-test('a 2xx body without output is an invalid response', async () => {
+test('a 2xx body without output is an invalid response for a read', async () => {
   const invalid = { content: 'Tool returned an invalid response.', isError: true }
   const bodies: unknown[] = [{ result: 1 }, 'text', null]
   let i = 0
   const { url } = await start((_q, res) => json(res, 200, bodies[i++]))
   const inv = invoker(url)
-  for (let n = 0; n < bodies.length; n++) expect(await inv.call(writeTool(), {}, ctx)).toEqual(invalid)
+  for (let n = 0; n < bodies.length; n++) expect(await inv.call(tool(), {}, ctx)).toEqual(invalid)
   const raw = await start((_q, res) => res.end('not json'))
-  expect(await invoker(raw.url).call(writeTool(), {}, ctx)).toEqual(invalid)
+  expect(await invoker(raw.url).call(tool(), {}, ctx)).toEqual(invalid)
+})
+
+test('a 2xx without output for a write is a failure after sending: the write may have run', async () => {
+  const { url } = await start((req, res) => {
+    if (req.url?.endsWith('empty')) return res.writeHead(204).end()
+    json(res, 200, { ok: true })
+  })
+  const inv = invoker(url)
+  for (const name of ['empty', 'ok']) {
+    const err = await inv.call(writeTool({ name }), {}, ctx).catch((e: unknown) => e)
+    expect(err).toMatchObject({ code: 'tool_call_failed', notSent: false, detail: 'invalid response' })
+  }
 })
 
 test('a 4xx gives an error result with the tool message, capped at 2000 chars', async () => {

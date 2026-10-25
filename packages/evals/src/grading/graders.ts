@@ -19,8 +19,10 @@ export function gradeDeterministic(s: Scenario, o: Outcome): string[] {
       failures.push(`toolsCalled: ${want.tool}${args} was not called`)
     }
   }
+  // A call stopped by the rule gate or a human still counts: the agent tried it.
+  const decided = o.events.flatMap((e) => (e.type === 'rule.decided' ? [e.payload.tool] : []))
   for (const tool of expect.toolsNotCalled ?? []) {
-    if (requested.some((r) => r.tool === tool)) failures.push(`toolsNotCalled: ${tool} was called`)
+    if (requested.some((r) => r.tool === tool) || decided.includes(tool)) failures.push(`toolsNotCalled: ${tool} was called`)
   }
 
   const { state } = expect

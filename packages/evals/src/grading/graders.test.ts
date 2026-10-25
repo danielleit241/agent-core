@@ -55,6 +55,13 @@ describe('gradeDeterministic', () => {
     ])
   })
 
+  test('toolsNotCalled counts a call that was blocked before it ran', () => {
+    const blocked = { ...toolEvent('x', {}), type: 'rule.decided', payload: { toolCallId: 'c2', tool: 'payments.refund', decision: 'require_approval', reason: 'r' } } as StoredEvent
+    expect(gradeDeterministic(scenario({ toolsNotCalled: ['payments.refund'] }), outcome({ events: [blocked] }))).toEqual([
+      'toolsNotCalled: payments.refund was called',
+    ])
+  })
+
   test('state.refunds is an exact match', () => {
     const want = (refunds: object[]) => scenario({ state: { refunds } })
     expect(gradeDeterministic(want([{ orderId: '1042', amount: 1200000 }]), outcome())).toEqual([])

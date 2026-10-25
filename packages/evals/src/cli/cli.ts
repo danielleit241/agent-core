@@ -101,6 +101,18 @@ export function compareBaseline(baseline: Baseline, results: Result[]): string[]
   return results.filter((r) => baseline[r.id] === 'pass' && r.verdict !== 'pass').map((r) => r.id)
 }
 
+/** Scenarios that ran to a verdict. An error says nothing about the agent, so its old recording and baseline stay. */
+export function finishedIds(results: Result[]): string[] {
+  return results.filter((r) => r.verdict !== 'error').map((r) => r.id)
+}
+
+/** Merged, so a filtered run does not drop the scenarios it skipped. */
+export function mergeBaseline(baseline: Baseline, results: Result[]): Baseline {
+  const next: Baseline = { ...baseline }
+  for (const r of results) if (r.verdict !== 'error') next[r.id] = r.verdict
+  return next
+}
+
 async function loadScenarios(args: CliArgs): Promise<Scenario[]> {
   const files = (await readdir(SCENARIO_DIR)).filter((f) => f.endsWith('.json'))
   const all: Scenario[] = []
@@ -239,9 +251,9 @@ async function main(): Promise<number> {
     }
   } finally {
     // Save before closing, so a failure while closing cannot lose a paid recording.
-    // Scenarios that did not run keep their entries.
+    // Scenarios that did not run, or ended in an error, keep their entries.
     if (args.mode === 'record' && llmErrors === 0) {
-      await saveCassette(CASSETTE_PATH, replaceTagged(stored, fresh, scenarios.map((s) => s.id)))
+      await saveCassette(CASSETTE_PATH, replaceTagged(stored, fresh, finishedIds(results)))
     }
     await stack.close()
   }
@@ -257,10 +269,7 @@ async function main(): Promise<number> {
   const untracked = args.writeBaseline ? [] : results.filter((r) => !(r.id in baseline) && r.verdict !== 'pass')
   for (const r of untracked) console.error(`UNTRACKED: ${r.id} does not pass and is not in baseline.json`)
   if (args.writeBaseline) {
-    // Merge, so a filtered run does not drop the scenarios it skipped.
-    const next: Baseline = { ...baseline }
-    for (const r of results) next[r.id] = r.verdict === 'pass' ? 'pass' : 'fail'
-    await writeFile(BASELINE_PATH, `${JSON.stringify(next, null, 2)}\n`)
+    await writeFile(BASELINE_PATH, `${JSON.stringify(mergeBaseline(baseline, results), null, 2)}\n`)
   }
   return results.some((r) => r.verdict === 'error') || regressions.length > 0 || untracked.length > 0 ? 1 : 0
 }

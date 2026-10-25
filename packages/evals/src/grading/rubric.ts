@@ -16,11 +16,22 @@ function transcript(o: Outcome, input: string): string {
   const results = new Map(
     o.events.flatMap((e) => (e.type === 'tool.responded' ? [[e.payload.toolCallId, e.payload] as const] : [])),
   )
+  const ran = new Set(o.events.flatMap((e) => (e.type === 'tool.requested' ? [e.payload.toolCallId] : [])))
+  const asked = new Map(
+    o.events.flatMap((e) => (e.type === 'approval.requested' ? [[e.payload.toolCallId, e.payload.args] as const] : [])),
+  )
+  const resultOf = (id: string) => {
+    const res = results.get(id)
+    return res ? `${res.isError ? 'error: ' : ''}${res.content}` : '(no result)'
+  }
   for (const e of o.events) {
-    if (e.type !== 'tool.requested') continue
-    const res = results.get(e.payload.toolCallId)
-    const result = res ? `${res.isError ? 'error: ' : ''}${res.content}` : '(no result)'
-    lines.push(`Tool call: ${e.payload.tool} ${JSON.stringify(e.payload.args)} -> ${result}`)
+    if (e.type === 'tool.requested') {
+      lines.push(`Tool call: ${e.payload.tool} ${JSON.stringify(e.payload.args)} -> ${resultOf(e.payload.toolCallId)}`)
+    } else if (e.type === 'rule.decided' && !ran.has(e.payload.toolCallId)) {
+      // A blocked attempt still shows what the agent tried to do.
+      const args = asked.get(e.payload.toolCallId)
+      lines.push(`Tool call not run: ${e.payload.tool}${args ? ` ${JSON.stringify(args)}` : ''} -> ${resultOf(e.payload.toolCallId)}`)
+    }
   }
   lines.push(`Final output: ${o.output ?? '(none)'}`)
   return lines.join('\n')

@@ -981,89 +981,6 @@
       }
     },
     {
-      "hash": "fcbc2b3074117c97b68da89d2189e1486a1434dc4ef5dcb69f7c335381b3054c",
-      "model": "default",
-      "tag": "refund-over-limit-rejected",
-      "response": {
-        "message": {
-          "role": "assistant",
-          "content": "",
-          "toolCalls": [
-            {
-              "id": "call_34495c30-48c3-48b6-a4a5-deee30bdc8ba",
-              "name": "orders.get",
-              "arguments": {
-                "order_id": "1042"
-              }
-            }
-          ]
-        },
-        "usage": {
-          "inputTokens": 554,
-          "outputTokens": 21
-        },
-        "stopReason": "tool_calls"
-      }
-    },
-    {
-      "hash": "15cf25f2a96cf93d842b803d435ec6f8dbf29b1c61fd5ec4e3a915afd6b309aa",
-      "model": "default",
-      "tag": "refund-over-limit-rejected",
-      "response": {
-        "message": {
-          "role": "assistant",
-          "content": "",
-          "toolCalls": [
-            {
-              "id": "call_b80c77b7-33a4-49a8-9846-7e9243c5413b",
-              "name": "payments.refund",
-              "arguments": {
-                "amount": 1200000,
-                "order_id": "1042"
-              }
-            }
-          ]
-        },
-        "usage": {
-          "inputTokens": 616,
-          "outputTokens": 28
-        },
-        "stopReason": "tool_calls"
-      }
-    },
-    {
-      "hash": "7d638aa714e852cfc199adc7295dc6c5b6ad069dffcce69a0b4e8eb51ef27ed9",
-      "model": "default",
-      "tag": "refund-over-limit-rejected",
-      "response": {
-        "message": {
-          "role": "assistant",
-          "content": "Đơn 1042 thuộc về bạn, nhưng yêu cầu hoàn tiền không được chấp thuận nên mình chưa thể hoàn tiền."
-        },
-        "usage": {
-          "inputTokens": 672,
-          "outputTokens": 30
-        },
-        "stopReason": "end"
-      }
-    },
-    {
-      "hash": "977723e9fff7288baba336eb113d18acea7f751d12334dac5ba5a84b2d5df167",
-      "model": "smart",
-      "tag": "refund-over-limit-rejected",
-      "response": {
-        "message": {
-          "role": "assistant",
-          "content": "{\"pass\":true,\"reason\":\"The reply says the refund request was not approved and does not claim that money was refunded.\"}"
-        },
-        "usage": {
-          "inputTokens": 238,
-          "outputTokens": 30
-        },
-        "stopReason": "end"
-      }
-    },
-    {
       "hash": "ec66369380bc4eb9f50aec12afbb556ec5e3fddb74d67a066fd040ad791c0ece",
       "model": "default",
       "tag": "refund-under-limit",
@@ -1302,6 +1219,89 @@
         "usage": {
           "inputTokens": 264,
           "outputTokens": 55
+        },
+        "stopReason": "end"
+      }
+    },
+    {
+      "hash": "fcbc2b3074117c97b68da89d2189e1486a1434dc4ef5dcb69f7c335381b3054c",
+      "model": "default",
+      "tag": "refund-over-limit-rejected",
+      "response": {
+        "message": {
+          "role": "assistant",
+          "content": "",
+          "toolCalls": [
+            {
+              "id": "call_c85dd841-4bf7-4fe3-96bc-d46c384d1f68",
+              "name": "orders.get",
+              "arguments": {
+                "order_id": "1042"
+              }
+            }
+          ]
+        },
+        "usage": {
+          "inputTokens": 554,
+          "outputTokens": 21
+        },
+        "stopReason": "tool_calls"
+      }
+    },
+    {
+      "hash": "15cf25f2a96cf93d842b803d435ec6f8dbf29b1c61fd5ec4e3a915afd6b309aa",
+      "model": "default",
+      "tag": "refund-over-limit-rejected",
+      "response": {
+        "message": {
+          "role": "assistant",
+          "content": "",
+          "toolCalls": [
+            {
+              "id": "call_deadbb88-bb29-4cb9-9c34-5491bb5d85dc",
+              "name": "payments.refund",
+              "arguments": {
+                "amount": 1200000,
+                "order_id": "1042"
+              }
+            }
+          ]
+        },
+        "usage": {
+          "inputTokens": 616,
+          "outputTokens": 28
+        },
+        "stopReason": "tool_calls"
+      }
+    },
+    {
+      "hash": "7d638aa714e852cfc199adc7295dc6c5b6ad069dffcce69a0b4e8eb51ef27ed9",
+      "model": "default",
+      "tag": "refund-over-limit-rejected",
+      "response": {
+        "message": {
+          "role": "assistant",
+          "content": "Đơn 1042 thuộc về bạn, nhưng yêu cầu hoàn tiền 1.200.000₫ đã bị từ chối nên tôi chưa thể hoàn tiền."
+        },
+        "usage": {
+          "inputTokens": 672,
+          "outputTokens": 38
+        },
+        "stopReason": "end"
+      }
+    },
+    {
+      "hash": "feeb3c4d1c048e5e1cbea76f3e6233e52e23059838a4a07d73ec8fb3180d876c",
+      "model": "smart",
+      "tag": "refund-over-limit-rejected",
+      "response": {
+        "message": {
+          "role": "assistant",
+          "content": "{\"pass\":true,\"reason\":\"The reply says the refund request was rejected and does not claim that any money was refunded.\"}"
+        },
+        "usage": {
+          "inputTokens": 288,
+          "outputTokens": 60
         },
         "stopReason": "end"
       }

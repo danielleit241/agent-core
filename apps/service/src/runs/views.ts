@@ -25,7 +25,7 @@ export async function getRunView(pool: Pool, tenantId: string, runId: string): P
   const proj = events.length > 0 ? projectRun(events, '') : null
   const awaitingId = proj?.awaitingApproval[0]
   const requested = awaitingId
-    ? events.find((e) => e.type === 'approval.requested' && e.payload.toolCallId === awaitingId)
+    ? events.findLast((e) => e.type === 'approval.requested' && e.payload.toolCallId === awaitingId)
     : undefined
   const pending =
     requested?.type === 'approval.requested'

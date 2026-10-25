@@ -12,6 +12,9 @@
     ]
   },
   "expect": {
+    "toolsNotCalled": [
+      "payments.refund"
+    ],
     "state": {
       "refunds": []
     },

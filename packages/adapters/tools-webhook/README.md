@@ -33,7 +33,7 @@ The service does not follow redirects. It waits `timeoutMs` (default 15 s) and r
 | Response | Result |
 | --- | --- |
 | 2xx with `{"output": X}` | Success. Content is `X` if it is a string, else `JSON.stringify(X)`. |
-| Other 2xx body | Error result: `Tool returned an invalid response.` |
+| Other 2xx body (including 204) | Read tool: error result `Tool returned an invalid response.` Other tools: `WebhookToolError` `tool_call_failed`, `notSent: false`, because the write may have run. |
 | 4xx except 408 and 429 | Error result. Content is `error.message` from the body (max 2000 chars) or `Tool returned HTTP <status>.` |
 | 3xx, 408, 429, 5xx, timeout, connection reset, body over 1 MiB | `WebhookToolError` `tool_call_failed`, `notSent: false`. |
 | Connection refused, DNS failure | `WebhookToolError` `connection_unreachable`, `notSent: true`. |

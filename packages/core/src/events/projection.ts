@@ -72,6 +72,9 @@ export function projectRun(events: StoredEvent[], instructions: string): RunProj
         approvals.set(e.payload.toolCallId, e.payload.action)
         break
       case 'rule.decided':
+        // A new decision replaces the earlier one, and any approval given for it.
+        approvals.delete(e.payload.toolCallId)
+        approvalRequested.delete(e.payload.toolCallId)
         ruleDecisions.set(e.payload.toolCallId, e.payload.decision)
         ruleReasons.set(e.payload.toolCallId, e.payload.reason)
         break

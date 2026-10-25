@@ -94,11 +94,6 @@ function parseArguments(raw: unknown): { arguments: Record<string, unknown>; arg
   return { arguments: parsed as Record<string, unknown> }
 }
 
-function providerMessage(body: unknown): string | undefined {
-  const msg = (body as { error?: { message?: unknown } } | null | undefined)?.error?.message
-  return typeof msg === 'string' ? msg : undefined
-}
-
 type WireResponse = {
   choices?: {
     message?: {
@@ -127,14 +122,15 @@ export function createOpenAICompatible(opts: Opts): LLMPort {
           body: JSON.stringify(body),
           signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
         })
-      } catch (e) {
-        last = new LlmError(`LLM request failed: ${e instanceof Error ? e.message : String(e)}`, 0, true)
+      } catch {
+        // The cause text can carry the URL; errors reach the event log, so only fixed text is kept.
+        last = new LlmError('LLM request failed: network error', 0, true)
         continue
       }
       const json: unknown = await res.json().catch(() => undefined)
       if (res.ok) return (json ?? {}) as WireResponse
-      const detail = providerMessage(json)
-      const message = `LLM provider returned HTTP ${res.status}${detail ? `: ${detail}` : ''}`
+      // Provider text can echo part of the key (for example on a 401), so only the status is kept.
+      const message = `LLM provider returned HTTP ${res.status}`
       if (res.status === 429 || res.status >= 500) {
         last = new LlmError(message, res.status, true)
         continue

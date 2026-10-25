@@ -656,3 +656,49 @@ test('an in-flight call to a tool that is gone records that the tool is no longe
     { message: 'The run stopped after the tool call was sent, and the tool is no longer known. It may have run.', retryable: false },
   ])
 })
+
+const settledNotHappened = (): NewEvent => ({
+  type: 'outcome.settled',
+  payload: { toolCallId: 'call_1', outcome: 'not_happened' },
+  labels: ['trusted'],
+})
+const changedTools = () => ({ ...TOOLS, 'payments.refund': { ...TOOLS['payments.refund']!, changedSinceReview: true } })
+
+test('a call re-run after not_happened decides again when the tool changed since review', async () => {
+  const { store, tools } = await setupWithEvents([
+    ...logAfterToolRequested('payments.refund'),
+    stateChanged('running', 'waiting_human', 'unknown_outcome'),
+    settledNotHappened(),
+    stateChanged('waiting_human', 'queued'),
+  ])
+  const d = { ...deps({ llm: scriptedLlm([]), store, tools }), toolsByName: changedTools() }
+  expect(await advanceRun('r1', d)).toBe('waiting_human')
+  expect(tools.calls).toHaveLength(0)
+  const events = await store.readEvents('r1')
+  expect(events.filter((e) => e.type === 'rule.decided').at(-1)!.payload).toMatchObject({
+    decision: 'require_approval',
+    reason: 'tool_changed_since_review',
+  })
+  expect(projectRun(events, '').waitingReason).toBe('approval')
+})
+
+test('an approval given before the tool changed does not cover the changed tool', async () => {
+  const { store, tools } = await setupWithEvents([
+    ...logAfterLlmWithCall('payments.refund', { order_id: '1042', amount: 100 }),
+    ruleLogged('payments.refund', 'require_approval', 'write_requires_approval'),
+    { type: 'approval.requested', payload: { toolCallId: 'call_1', tool: 'payments.refund', args: {}, reason: 'x' }, labels: [] },
+    stateChanged('running', 'waiting_human', 'approval'),
+    resolved('call_1', 'approve'),
+    stateChanged('waiting_human', 'queued'),
+  ])
+  const d = { ...deps({ llm: scriptedLlm([]), store, tools }), toolsByName: changedTools() }
+  expect(await advanceRun('r1', d)).toBe('waiting_human')
+  expect(tools.calls).toHaveLength(0)
+  const events = await store.readEvents('r1')
+  expect(events.filter((e) => e.type === 'approval.requested')).toHaveLength(2)
+  expect(projectRun(events, '').awaitingApproval).toEqual(['call_1'])
+
+  await store.append('r1', [resolved('call_1', 'approve'), stateChanged('waiting_human', 'queued')])
+  expect(await advanceRun('r1', { ...d, llm: scriptedLlm([say('ok')]) })).toBe('completed')
+  expect(tools.calls).toHaveLength(1)
+})

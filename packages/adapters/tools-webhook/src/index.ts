@@ -124,7 +124,11 @@ export function createWebhookInvoker(
 
     if (status >= 200 && status < 300) {
       const parsed = parseJson(text)
-      if (!isObject(parsed) || !('output' in parsed)) return { content: 'Tool returned an invalid response.', isError: true }
+      if (!isObject(parsed) || !('output' in parsed)) {
+        // A 2xx means the call was accepted: a write may have run, so its outcome is unknown.
+        if (tool.safety.effect !== 'read') throw failed(id, 'invalid response')
+        return { content: 'Tool returned an invalid response.', isError: true }
+      }
       const out = parsed.output
       return { content: typeof out === 'string' ? out : (JSON.stringify(out) ?? 'null'), isError: false }
     }
