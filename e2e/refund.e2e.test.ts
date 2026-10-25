@@ -1,5 +1,5 @@
 import { afterEach, expect, test } from 'vitest'
-import { verifyWebhook } from '@agent-core/webhooks'
+import { verifyWebhook } from '@agent-core/protocol'
 import type { FakeTurn } from '@agent-core/fake-llm'
 import { startStack } from './support/harness'
 import type { Stack } from './support/harness'

@@ -703,6 +703,14 @@ test('an approval given before the tool changed does not cover the changed tool'
   expect(tools.calls).toHaveLength(1)
 })
 
+test('a tool changed since review is hidden from the model until an owner reviews it', async () => {
+  const llm = scriptedLlm([say('ok')])
+  const { store, tools } = await setup()
+  const d = { ...deps({ llm, store, tools }), toolsByName: changedTools() }
+  expect(await advanceRun('r1', d)).toBe('completed')
+  expect(llm.requests[0]!.tools.map((t) => t.name)).toEqual(['orders.get'])
+})
+
 test('a long tool output is cut in the middle before it reaches the event log and the model', async () => {
   const llm = scriptedLlm([callTool('orders.get', { order_id: '1042' }), say('ok')])
   const { store } = await setup()

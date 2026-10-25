@@ -1,8 +1,5 @@
 import type { ToolDescriptor, ToolInvoker } from '@agent-core/core'
-import { signWebhook } from '@agent-core/webhooks'
-import { signPrincipalJwt } from './jwt'
-
-export { signPrincipalJwt, verifyPrincipalJwt } from './jwt'
+import { signPrincipalJwt, signWebhook } from '@agent-core/protocol'
 
 export class WebhookToolError extends Error {
   constructor(

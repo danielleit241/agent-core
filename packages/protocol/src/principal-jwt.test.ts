@@ -1,6 +1,6 @@
 import { createHmac } from 'node:crypto'
 import { expect, test } from 'vitest'
-import { signPrincipalJwt, verifyPrincipalJwt } from './jwt'
+import { signPrincipalJwt, verifyPrincipalJwt } from './principal-jwt'
 
 const NOW = 1761290000
 const opts = { secret: 's3cret', audience: 'shop', nowSec: NOW }

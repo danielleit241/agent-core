@@ -4,7 +4,7 @@ import type { AddressInfo } from 'node:net'
 import { afterAll, beforeAll, beforeEach, expect, test } from 'vitest'
 import { ConfigRepo, assertTestDatabase, createPool, runMigrations } from '@agent-core/store-postgres'
 import { CLAIM_SQL, enqueueWebhookEvent, startDeliveryWorker } from './deliver'
-import { verifyWebhook } from './sign'
+import { verifyWebhook } from '@agent-core/protocol'
 
 const url = process.env.TEST_DATABASE_URL ?? 'postgres://agentcore:agentcore@localhost:5433/agentcore_test'
 let pool: ReturnType<typeof createPool>

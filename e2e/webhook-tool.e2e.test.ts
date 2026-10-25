@@ -1,8 +1,7 @@
 import { createServer } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import { afterEach, expect, test } from 'vitest'
-import { verifyPrincipalJwt } from '@agent-core/tools-webhook'
-import { verifyWebhook } from '@agent-core/webhooks'
+import { verifyPrincipalJwt, verifyWebhook } from '@agent-core/protocol'
 import { startStack } from './support/harness'
 import type { Stack } from './support/harness'
 

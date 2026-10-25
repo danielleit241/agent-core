@@ -8,6 +8,6 @@
   },
   "dependencies": {
     "@agent-core/core": "workspace:*",
-    "@agent-core/webhooks": "workspace:*"
+    "@agent-core/protocol": "workspace:*"
   }
 }
