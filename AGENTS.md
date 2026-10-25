@@ -6,7 +6,7 @@ Basic context for anyone, person or coding agent, changing agent-core.
 
 agent-core is an agent service. Teams connect systems through three gates (in: Control API; tool: MCP, OpenAPI, webhook tools; out: signed webhooks). The service runs the harness: agent loop, tool calls, rules, approval, event log.
 
-Status: in development. Current milestone: M0 (see `ROADMAP.md`). Until M0.1 lands, the commands below do not exist yet.
+Status: in development. Current milestone: M1 (see `ROADMAP.md`).
 
 ## Where to look
 
@@ -20,6 +20,8 @@ pnpm lint && pnpm typecheck  # before every commit
 pnpm test                    # unit tests
 pnpm test:db                 # tests that need Postgres (*.db.test.ts)
 pnpm e2e                     # end-to-end; must always stay green
+pnpm eval                    # eval scenarios replayed from the cassette; no LLM calls
+pnpm models:check            # probe the configured models (needs a running service and LLM_*)
 ```
 
 ## Rules
