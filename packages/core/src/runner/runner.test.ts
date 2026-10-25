@@ -702,3 +702,28 @@ test('an approval given before the tool changed does not cover the changed tool'
   expect(await advanceRun('r1', { ...d, llm: scriptedLlm([say('ok')]) })).toBe('completed')
   expect(tools.calls).toHaveLength(1)
 })
+
+test('a long tool output is cut in the middle before it reaches the event log and the model', async () => {
+  const llm = scriptedLlm([callTool('orders.get', { order_id: '1042' }), say('ok')])
+  const { store } = await setup()
+  const big = 'H' + 'x'.repeat(100_000) + 'T'
+  const tools: ToolInvoker = { call: async () => ({ content: big, isError: false }) }
+  expect(await advanceRun('r1', deps({ llm, store, tools }))).toBe('completed')
+  const responded = (await store.readEvents('r1')).find((e) => e.type === 'tool.responded')!
+  const content = (responded.payload as { content: string }).content
+  expect(content.length).toBeLessThanOrEqual(48_100)
+  expect(content.startsWith('Hxxx')).toBe(true)
+  expect(content.endsWith('xxxT')).toBe(true)
+  expect(content).toContain('characters cut')
+  expect(llm.requests[1]!.messages.some((m) => m.content === content)).toBe(true)
+})
+
+test('cutting a long tool output never splits a surrogate pair', async () => {
+  const llm = scriptedLlm([callTool('orders.get', { order_id: '1042' }), say('ok')])
+  const { store } = await setup()
+  const tools: ToolInvoker = { call: async () => ({ content: 'a' + '😀'.repeat(50_000) + 'b', isError: false }) }
+  expect(await advanceRun('r1', deps({ llm, store, tools }))).toBe('completed')
+  const responded = (await store.readEvents('r1')).find((e) => e.type === 'tool.responded')!
+  // encodeURIComponent throws on a lone surrogate.
+  expect(() => encodeURIComponent((responded.payload as { content: string }).content)).not.toThrow()
+})

@@ -39,6 +39,7 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions exist
 - Eval graders and the rubric transcript count a tool call that the rule gate or a human blocked.
 - Registering an MCP connection again at a different URL drops every confirmation, and a tool that is new to an existing connection waits for review, so an `allow` rule does not cover it before an admin has seen it.
 - Confirming a tool that shows `changedSinceReview` requires the reviewed `fingerprint` (`428 fingerprint_required` without it).
+- A tool output longer than 48,000 characters is cut in the middle before it is stored and sent to the model, so one large answer cannot fill the LLM context of every later request.
 
 ### Changed
 
