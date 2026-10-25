@@ -256,8 +256,8 @@ Each task has an ID, a short description and a "done when" line. Only the next m
 **Goal:** runs survive restarts, tenants cannot see each other, and every run stays within its limits without overloading a team's systems.
 
 - [x] **M2.1** Resume from the event log; full resume and retry table. *Done when:* killing a run mid-way never repeats a completed tool call, and repeats an interrupted one only with the same idempotency key; a write without an idempotency key goes to `unknown_outcome`.
-- [ ] **M2.2** Full idempotency for inbound work and tool calls. *Done when:* a repeated `Idempotency-Key` returns the original run.
-- [ ] **M2.3** Fair queue per tenant; concurrency limits. *Done when:* one busy tenant does not block another.
+- [x] **M2.2** Full idempotency for inbound work and tool calls. *Done when:* a repeated `Idempotency-Key` returns the original run.
+- [x] **M2.3** Fair queue per tenant; concurrency limits. *Done when:* one busy tenant does not block another.
 - [ ] **M2.4** Workflow runs (four step types, branching with fixed operators). *Done when:* a sample workflow runs, waits for approval and continues.
 - [ ] **M2.5** Follow-ups and the `sleeping` state. *Done when:* a follow-up wakes on time, including after a restart.
 - [ ] **M2.6** Tenants, row-level security with `FORCE`, three database roles, two-tenant tests; encrypted secrets. *Done when:* invariant B6 passes.
@@ -265,7 +265,7 @@ Each task has an ID, a short description and a "done when" line. Only the next m
 - [ ] **M2.11** Run input. One path carries everything a human sends to a run: `cancel`, also while the run is `running` or waits for an LLM retry; a message that steers a running run; the answer to `agent_core.ask_human`; and the existing approval and outcome actions. The runner reads new input before each step. *Done when:* a running run is cancelled before its next step, and a steering message reaches the next LLM request.
 - [ ] **M2.12** Connection protection: a rate limit and a concurrency limit per connection, shared by all runs and workers, and a circuit breaker that opens after repeated failures. A run that hits a limit or an open breaker waits with a `retryAt`; it does not fail. *Done when:* 50 parallel runs never exceed a connection's limits, and an open breaker sends no call until it half-opens.
 - [ ] **M2.13** Loop detection (was M9.4). The same tool with the same arguments called N times, or K LLM turns that add no new tool result, is a breach of the `loop` limit. *Done when:* a looping scenario moves to `waiting_human` with reason `limit`, and the event names `loop`.
-- [ ] **M2.14** Stop reasons. An answer that the provider filters or refuses never counts as `completed`. *Done when:* a `content_filter` response fails the run with reason `filtered`.
+- [x] **M2.14** Stop reasons. An answer that the provider filters or refuses never counts as `completed`. *Done when:* a `content_filter` response fails the run with reason `filtered`.
 
 ### M2b — Runs out of the box
 
