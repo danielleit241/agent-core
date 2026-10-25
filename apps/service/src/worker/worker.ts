@@ -23,6 +23,8 @@ export type RunWorkerDeps = {
   tools: ToolInvoker
   workerId: string
   pollMs?: number
+  /** Running jobs allowed per tenant; defaults to `DEFAULT_MAX_RUNS_PER_TENANT`. */
+  maxRunsPerTenant?: number
   /** Must stay well below the 300000 ms lock timeout used by `claim`. */
   heartbeatMs?: number
   /** Replaces the default loader; used by tests to simulate load errors. */
@@ -181,7 +183,7 @@ export function startRunWorker(deps: RunWorkerDeps): { stop(): Promise<void> } {
     while (!stopping) {
       let job: { runId: string; tenantId: string } | null = null
       try {
-        job = await claim(deps.pool, deps.workerId)
+        job = await claim(deps.pool, deps.workerId, { maxPerTenant: deps.maxRunsPerTenant })
       } catch (err) {
         console.error('worker: claim failed', err)
       }
