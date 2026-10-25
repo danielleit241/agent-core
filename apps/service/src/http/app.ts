@@ -2,8 +2,9 @@ import Fastify from 'fastify'
 import type { FastifyInstance } from 'fastify'
 import { discoverMcpTools } from '@agent-core/tools'
 import type { SecretBox } from '@agent-core/core'
+import { resolveApiKey } from '@agent-core/store-postgres'
 import type { createPool } from '@agent-core/store-postgres'
-import { checkAdminKey } from './auth'
+import { authenticate } from './auth'
 import { ApiError, apiError } from './errors'
 import { registerIdempotency } from './idempotency'
 import { registerConfigRoutes } from './routes/config'
@@ -11,6 +12,7 @@ import { registerHealthRoutes } from './routes/health'
 import { registerModelRoutes } from './routes/models'
 import type { ProbeResult } from './routes/models'
 import { registerRunRoutes } from './routes/runs'
+import { registerTenantRoutes } from './routes/tenants'
 
 export type AppDeps = {
   pool: ReturnType<typeof createPool>
@@ -59,11 +61,13 @@ export function buildApp(deps: AppDeps): FastifyInstance {
   registerHealthRoutes(app, deps.pool)
   // The auth hook is bound to this plugin's routes, not to the URL text, so path encoding cannot bypass it.
   void app.register(async (v1) => {
+    v1.decorateRequest('auth')
     v1.addHook('onRequest', async (req) => {
-      checkAdminKey(req.headers.authorization, deps.adminKey)
+      req.auth = await authenticate(req.headers.authorization, deps.adminKey, (key) => resolveApiKey(deps.pool, key))
     })
     registerIdempotency(v1, { pool: deps.pool })
     registerConfigRoutes(v1, { pool: deps.pool, secrets: deps.secrets, discoverTools: deps.discoverTools ?? discoverMcpTools })
+    registerTenantRoutes(v1, { pool: deps.pool })
     registerModelRoutes(v1, { pool: deps.pool, models: deps.models ?? {}, probe: deps.probe })
     registerRunRoutes(v1, { pool: deps.pool, secrets: deps.secrets, closing: closing.signal })
   })

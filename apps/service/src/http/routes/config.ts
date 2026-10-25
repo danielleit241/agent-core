@@ -1,5 +1,5 @@
 import { randomBytes, randomUUID } from 'node:crypto'
-import type { FastifyInstance } from 'fastify'
+import type { FastifyInstance, FastifyRequest } from 'fastify'
 import { z } from 'zod'
 import { AgentDefinitionSchema, SupportSchema, ToolSafetySchema, resolveSafety, toolFingerprint } from '@agent-core/core'
 import type { SecretBox, ToolSafety } from '@agent-core/core'
@@ -8,7 +8,6 @@ import type { LoadedTool, StoredTool, createPool } from '@agent-core/store-postg
 import type { discoverMcpTools } from '@agent-core/tools'
 import { apiError, validationError } from '../errors'
 
-const TENANT = 'default'
 const WEBHOOK_EVENTS = ['run.completed', 'run.failed', 'approval.requested', 'run.waiting_human'] as const
 
 const httpUrl = z.url().refine((u) => /^https?:\/\//i.test(u), { message: 'must be an http(s) URL' })
@@ -70,11 +69,12 @@ export function registerConfigRoutes(
   app: FastifyInstance,
   deps: { pool: ReturnType<typeof createPool>; secrets: SecretBox; discoverTools: typeof discoverMcpTools },
 ): void {
-  const config = new ConfigRepo(deps.pool, TENANT, deps.secrets)
+  const configFor = (req: FastifyRequest) => new ConfigRepo(deps.pool, req.auth.tenantId, deps.secrets)
   const kindConflict = (id: string, kind: string, wanted: string) =>
     apiError('connection_kind_conflict', `Connection "${id}" exists with kind "${kind}".`, `Use a different id for the ${wanted} connection.`, 409)
 
   app.post('/v1/connections', { config: { idempotent: true } }, async (req, reply) => {
+    const config = configFor(req)
     if ((req.body as { kind?: unknown } | null | undefined)?.kind === 'webhook') {
       const wh = WebhookConnectionBody.safeParse(req.body)
       if (!wh.success) throw validationError(wh.error)
@@ -145,12 +145,14 @@ export function registerConfigRoutes(
     apiError('connection_not_found', `Connection "${id}" does not exist.`, 'Create the connection with POST /v1/connections first.', 404)
 
   app.get<{ Params: { id: string } }>('/v1/connections/:id/tools', async (req) => {
+    const config = configFor(req)
     const conn = await config.getConnection(req.params.id)
     if (!conn) throw notFound(req.params.id)
     return { tools: conn.tools.map(toView) }
   })
 
   app.patch<{ Params: { id: string; tool: string } }>('/v1/connections/:id/tools/:tool', { config: { idempotent: true } }, async (req) => {
+    const config = configFor(req)
     const parsed = ConfirmBody.safeParse(req.body)
     if (!parsed.success) throw validationError(parsed.error)
     const { confirm, fingerprint, ...values } = parsed.data
@@ -188,6 +190,7 @@ export function registerConfigRoutes(
   })
 
   app.post('/v1/agents', { config: { idempotent: true } }, async (req, reply) => {
+    const config = configFor(req)
     const autonomy = (req.body as { autonomy?: unknown } | null | undefined)?.autonomy
     if (autonomy !== undefined && autonomy !== 'supervised') {
       throw apiError(
@@ -214,6 +217,7 @@ export function registerConfigRoutes(
   })
 
   app.post('/v1/webhooks', { config: { idempotent: true } }, async (req, reply) => {
+    const config = configFor(req)
     const parsed = WebhookBody.safeParse(req.body)
     if (!parsed.success) throw validationError(parsed.error)
     const id = `wh_${randomUUID()}`

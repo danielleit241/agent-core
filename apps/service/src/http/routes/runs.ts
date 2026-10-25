@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import type { FastifyInstance } from 'fastify'
+import type { FastifyInstance, FastifyRequest } from 'fastify'
 import { z } from 'zod'
 import { projectRun, verifyChain } from '@agent-core/core'
 import type { NewEvent, SecretBox, StoredEvent, WaitingReason } from '@agent-core/core'
@@ -9,7 +9,6 @@ import { apiError, validationError } from '../errors'
 import { getRunView } from '../../runs/views'
 import { keyReused, readIdempotencyKey, requestHash } from '../idempotency'
 
-const TENANT = 'default'
 const POLL_MS = 100
 
 const RunBody = z.object({
@@ -68,14 +67,14 @@ export function checkChain(
 
 export function registerRunRoutes(app: FastifyInstance, deps: { pool: ReturnType<typeof createPool>; secrets: SecretBox; closing: AbortSignal }): void {
   const { pool } = deps
-  const config = new ConfigRepo(pool, TENANT, deps.secrets)
-  const store = new PgRunStore(pool, TENANT)
+  const configFor = (req: FastifyRequest) => new ConfigRepo(pool, req.auth.tenantId, deps.secrets)
+  const storeFor = (req: FastifyRequest) => new PgRunStore(pool, req.auth.tenantId)
 
   /** Polls until the run settles, the time runs out, the client disconnects or the app closes. */
-  async function waitForSettle(runId: string, seconds: number, clientGone: () => boolean): Promise<void> {
+  async function waitForSettle(tenantId: string, runId: string, seconds: number, clientGone: () => boolean): Promise<void> {
     const deadline = Date.now() + seconds * 1000
     for (;;) {
-      const run = await getRun(pool, TENANT, runId)
+      const run = await getRun(pool, tenantId, runId)
       if (!run || (run.status !== 'queued' && run.status !== 'running') || Date.now() >= deadline) return
       if (clientGone() || deps.closing.aborted) return
       await new Promise((r) => setTimeout(r, POLL_MS))
@@ -83,6 +82,8 @@ export function registerRunRoutes(app: FastifyInstance, deps: { pool: ReturnType
   }
 
   app.post<{ Querystring: { wait?: string } }>('/v1/runs', async (req, reply) => {
+    const { tenantId } = req.auth
+    const config = configFor(req)
     const wait = parseWait(req.query.wait)
     const key = readIdempotencyKey(req)
     const parsed = RunBody.safeParse(req.body)
@@ -99,7 +100,7 @@ export function registerRunRoutes(app: FastifyInstance, deps: { pool: ReturnType
     }
     // One transaction: the run row, run.created and the queue row appear together or not at all.
     const created = await createRunWithEvent(pool, {
-      tenantId: TENANT,
+      tenantId,
       runId: `run_${randomUUID()}`,
       agentId: body.agent,
       agentVersion: agent.version,
@@ -125,24 +126,25 @@ export function registerRunRoutes(app: FastifyInstance, deps: { pool: ReturnType
       reply.raw.on('close', () => {
         gone = true
       })
-      await waitForSettle(created.id, wait, () => gone)
-      return reply.code(200).send(await getRunView(pool, TENANT, created.id))
+      await waitForSettle(tenantId, created.id, wait, () => gone)
+      return reply.code(200).send(await getRunView(pool, tenantId, created.id))
     }
-    const run = await getRun(pool, TENANT, created.id)
+    const run = await getRun(pool, tenantId, created.id)
     return reply.code(202).send({ run_id: created.id, status: run?.status ?? 'queued' })
   })
 
   app.get<{ Params: { id: string } }>('/v1/runs/:id', async (req) => {
-    const view = await getRunView(pool, TENANT, req.params.id)
+    const view = await getRunView(pool, req.auth.tenantId, req.params.id)
     if (!view) throw runNotFound(req.params.id)
     return view
   })
 
   app.get<{ Params: { id: string } }>('/v1/runs/:id/events', async (req) => {
-    if (!(await getRun(pool, TENANT, req.params.id))) throw runNotFound(req.params.id)
+    const { tenantId } = req.auth
+    if (!(await getRun(pool, tenantId, req.params.id))) throw runNotFound(req.params.id)
     // Head first: a run that is active appends between the two reads, and checkChain ignores those events.
-    const head = await getRunHead(pool, TENANT, req.params.id)
-    const events = await store.readEvents(req.params.id)
+    const head = await getRunHead(pool, tenantId, req.params.id)
+    const events = await storeFor(req).readEvents(req.params.id)
     const chain = checkChain(events, head)
     return { events, chain: chain.valid ? { valid: true } : { valid: false, broken_at_seq: chain.brokenAtSeq } }
   })
@@ -152,7 +154,8 @@ export function registerRunRoutes(app: FastifyInstance, deps: { pool: ReturnType
     if (!parsed.success) throw validationError(parsed.error)
     const { action } = parsed.data
     const runId = req.params.id
-    const run = await getRun(pool, TENANT, runId)
+    const store = storeFor(req)
+    const run = await getRun(pool, req.auth.tenantId, runId)
     if (!run) throw runNotFound(runId)
     // approve and reject keep their original error code for a run that is not waiting.
     const notWaiting =
@@ -223,7 +226,8 @@ export function registerRunRoutes(app: FastifyInstance, deps: { pool: ReturnType
 
   app.post<{ Params: { id: string } }>('/v1/runs/:id/cancel', { config: { idempotent: true } }, async (req, reply) => {
     const runId = req.params.id
-    const run = await getRun(pool, TENANT, runId)
+    const store = storeFor(req)
+    const run = await getRun(pool, req.auth.tenantId, runId)
     if (!run) throw runNotFound(runId)
     if (run.status !== 'queued' && run.status !== 'waiting_human') {
       throw notCancellable(

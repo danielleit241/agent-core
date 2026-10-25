@@ -5,6 +5,7 @@ import type { ModelProfile } from '@agent-core/core'
 import type { probeModel } from '@agent-core/llm'
 import { ModelProfileRepo } from '@agent-core/store-postgres'
 import type { createPool } from '@agent-core/store-postgres'
+import { requireAdmin } from '../auth'
 import { apiError, validationError } from '../errors'
 
 export type ProbeResult = Awaited<ReturnType<typeof probeModel>>
@@ -42,9 +43,13 @@ export function registerModelRoutes(
   }
   const list = async (aliases: string[]) => ({ models: await Promise.all(aliases.map(view)) })
 
-  app.get('/v1/models', async () => list(Object.keys(deps.models)))
+  app.get('/v1/models', async (req) => {
+    requireAdmin(req)
+    return list(Object.keys(deps.models))
+  })
 
   app.post('/v1/models/check', async (req) => {
+    requireAdmin(req)
     const body = CheckBody.safeParse(req.body ?? {})
     if (!body.success) throw validationError(body.error)
     const { probe } = deps
@@ -70,6 +75,7 @@ export function registerModelRoutes(
   })
 
   app.patch<{ Params: { alias: string } }>('/v1/models/:alias', { config: { idempotent: true } }, async (req) => {
+    requireAdmin(req)
     const model = modelOf(req.params.alias)
     const body = parsePatch(req.body)
     if (!body.success) throw validationError(body.error)

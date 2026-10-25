@@ -1,7 +1,7 @@
 import type { FastifyInstance } from 'fastify'
 import { afterAll, beforeAll, beforeEach, expect, test } from 'vitest'
 import { DEFAULT_MODEL_PROFILE } from '@agent-core/core'
-import { assertTestDatabase, createPool, runMigrations } from '@agent-core/store-postgres'
+import { assertTestDatabase, createPool, runtimeTestUrl, runMigrations } from '@agent-core/store-postgres'
 import { buildApp } from '../../../src/http/app'
 import type { ProbeResult } from '../../../src/http/routes/models'
 import { createSecretBox } from '@agent-core/core'
@@ -9,6 +9,7 @@ import { createSecretBox } from '@agent-core/core'
 const box = createSecretBox(Buffer.alloc(32, 7))
 const url = process.env.TEST_DATABASE_URL ?? 'postgres://agentcore:agentcore@localhost:5433/agentcore_test'
 const ADMIN_KEY = 'test-admin-key'
+let migrator: ReturnType<typeof createPool>
 let pool: ReturnType<typeof createPool>
 let app: FastifyInstance
 let probed: string[]
@@ -26,17 +27,19 @@ const probe = async (model: string): Promise<ProbeResult> => {
 
 beforeAll(() => {
   assertTestDatabase(url)
-  pool = createPool(url)
+  migrator = createPool(url)
+  pool = createPool(runtimeTestUrl(url))
 })
 beforeEach(async () => {
-  await pool.query('DROP SCHEMA public CASCADE; CREATE SCHEMA public')
-  await runMigrations(pool)
+  await migrator.query('DROP SCHEMA public CASCADE; CREATE SCHEMA public')
+  await runMigrations(migrator, { runtimeUser: 'agentcore_runtime' })
   probed = []
   probeFails = false
   app = buildApp({ secrets: box, pool, adminKey: ADMIN_KEY, models: { default: 'real-a', smart: 'real-b' }, probe })
 })
 afterAll(async () => {
   await pool.end()
+  await migrator.end()
 })
 
 function authed(method: 'GET' | 'POST' | 'PATCH', path: string, payload?: unknown) {
