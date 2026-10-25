@@ -163,17 +163,19 @@ export function registerRunRoutes(app: FastifyInstance, deps: { pool: ReturnType
             'Only a run with status "waiting_human" can be resolved. Check GET /v1/runs/{id}.',
             409,
           )
-    if (run.status !== 'waiting_human') throw notWaiting
-    const allowed = allowedFor(run.waitingReason)
+    // One read of the log: the checks, the events to write and the log head all come from it.
+    const logged = await store.readEvents(runId)
+    const proj = projectRun(logged, '')
+    if (proj.status !== 'waiting_human') throw notWaiting
+    const allowed = allowedFor(proj.waitingReason)
     if (!allowed.includes(action)) {
       throw apiError(
         'action_not_allowed',
-        `The action "${action}" does not fit a run waiting for "${run.waitingReason}".`,
+        `The action "${action}" does not fit a run waiting for "${proj.waitingReason}".`,
         `Use one of: ${allowed.join(', ')}.`,
         409,
       )
     }
-    const proj = projectRun(await store.readEvents(runId), '')
     const stateTo = (to: 'running' | 'cancelled'): NewEvent => ({
       type: 'run.state_changed',
       payload: { from: 'waiting_human', to },
@@ -205,7 +207,7 @@ export function registerRunRoutes(app: FastifyInstance, deps: { pool: ReturnType
     }
     try {
       // The expectation is checked under the row lock, so two concurrent resolves cannot both write.
-      await store.append(runId, events, { expect: { status: 'waiting_human', waitingReason: run.waitingReason ?? undefined }, enqueue })
+      await store.append(runId, events, { expect: { status: 'waiting_human', waitingReason: proj.waitingReason ?? undefined, lastSeq: logged.at(-1)!.seq }, enqueue })
     } catch (err) {
       if (err instanceof StateConflictError) throw notWaiting
       throw err

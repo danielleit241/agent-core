@@ -130,6 +130,19 @@ test('append with expect throws StateConflictError and writes nothing when the s
   expect((await getRun(pool, 'default', 'r9'))?.status).toBe('running')
 })
 
+test('append with expect.lastSeq throws StateConflictError and writes nothing when the log moved on', async () => {
+  await createRun(pool, { tenantId: 'default', runId: 'r9b', agentId: 'a', agentVersion: 1, input: { text: 'hi' } })
+  const store = new PgRunStore(pool, 'default')
+  await store.append('r9b', [ev.runCreated(), ev.llmRequested()])
+  const before = (await store.readEvents('r9b')).length
+  await expect(
+    store.append('r9b', [ev.llmRequested()], { expect: { status: 'queued', lastSeq: 1 } }),
+  ).rejects.toBeInstanceOf(StateConflictError)
+  expect((await store.readEvents('r9b')).length).toBe(before)
+  await store.append('r9b', [ev.llmRequested()], { expect: { status: 'queued', lastSeq: 2 } })
+  expect((await store.readEvents('r9b')).length).toBe(before + 1)
+})
+
 test('a state change from a status the run is no longer in throws StateConflictError and writes nothing', async () => {
   await createRun(pool, { tenantId: 'default', runId: 'r19', agentId: 'a', agentVersion: 1, input: { text: 'hi' } })
   const store = new PgRunStore(pool, 'default')
