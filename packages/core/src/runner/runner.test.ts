@@ -350,12 +350,110 @@ test('stopReason length without tool calls fails the run', async () => {
 })
 
 test('a throwing LLM fails the run with error.raised', async () => {
-  const llm = scriptedLlm([{ stopReason: 'end', throws: Object.assign(new Error('rate limited'), { retryable: true }) }])
+  const llm = scriptedLlm([{ stopReason: 'end', throws: Object.assign(new Error('rate limited'), { retryable: false }) }])
   const { store, tools } = await setup()
   expect(await advanceRun('r1', deps({ llm, store, tools }))).toBe('failed')
   const events = await store.readEvents('r1')
-  expect(events.find((e) => e.type === 'error.raised')!.payload).toEqual({ message: 'rate limited', retryable: true })
+  expect(events.find((e) => e.type === 'error.raised')!.payload).toEqual({ message: 'rate limited', retryable: false })
   expect(events.at(-1)).toMatchObject({ type: 'run.state_changed', payload: { from: 'running', to: 'failed' } })
+})
+
+describe('durable LLM retry', () => {
+  const T0 = new Date('2026-01-01T00:00:00.000Z')
+  const transient = (extra: Record<string, unknown> = {}): Step => ({
+    stopReason: 'end',
+    throws: Object.assign(new Error('rate limited'), { retryable: true, ...extra }),
+  })
+  const lastError = async (store: MemoryRunStore) =>
+    (await store.readEvents('r1')).findLast((e) => e.type === 'error.raised')!.payload as { retryAt?: string; retryable: boolean }
+
+  test('a retryable LLM error waits 30 s and the run stays running', async () => {
+    const llm = scriptedLlm([transient()])
+    const { store, tools } = await setup()
+    expect(await advanceRun('r1', deps({ llm, store, tools, now: () => T0 }))).toBe('running')
+    const events = await store.readEvents('r1')
+    expect(events.at(-1)).toMatchObject({
+      type: 'error.raised',
+      payload: { message: 'rate limited', retryable: true, retryAt: new Date(T0.getTime() + 30_000).toISOString() },
+    })
+    expect(projectRun(events, '').status).toBe('running')
+  })
+
+  test('advancing before retryAt does nothing', async () => {
+    const llm = scriptedLlm([transient()])
+    const { store, tools } = await setup()
+    await advanceRun('r1', deps({ llm, store, tools, now: () => T0 }))
+    const before = (await store.readEvents('r1')).length
+    expect(await advanceRun('r1', deps({ llm, store, tools, now: () => T0 }))).toBe('running')
+    expect(await store.readEvents('r1')).toHaveLength(before)
+    expect(llm.requests).toHaveLength(1)
+  })
+
+  test('retry waits grow 30, 60, 120, 240, 300 s and the 6th failure fails the run', async () => {
+    const llm = scriptedLlm(Array.from({ length: 6 }, () => transient()))
+    const { store, tools } = await setup()
+    let now = T0
+    const waits: number[] = []
+    for (let i = 0; i < 5; i++) {
+      expect(await advanceRun('r1', deps({ llm, store, tools, now: () => now }))).toBe('running')
+      const retryAt = new Date((await lastError(store)).retryAt!)
+      waits.push(retryAt.getTime() - now.getTime())
+      now = retryAt
+    }
+    expect(waits).toEqual([30_000, 60_000, 120_000, 240_000, 300_000])
+    expect(await advanceRun('r1', deps({ llm, store, tools, now: () => now }))).toBe('failed')
+    const events = await store.readEvents('r1')
+    expect(events.at(-2)).toMatchObject({ type: 'error.raised', payload: { message: 'rate limited', retryable: false } })
+    expect(events.at(-1)).toMatchObject({ type: 'run.state_changed', payload: { from: 'running', to: 'failed' } })
+  })
+
+  test('Retry-After replaces the computed wait and is capped at 300 s', async () => {
+    for (const [retryAfterMs, expected] of [
+      [90_000, 90_000],
+      [3_600_000, 300_000],
+    ] as const) {
+      const llm = scriptedLlm([transient({ retryAfterMs })])
+      const { store, tools } = await setup()
+      await advanceRun('r1', deps({ llm, store, tools, now: () => T0 }))
+      expect((await lastError(store)).retryAt).toBe(new Date(T0.getTime() + expected).toISOString())
+    }
+  })
+
+  test('a bad Retry-After value is ignored', async () => {
+    for (const retryAfterMs of [-1, Number.NaN, Number.POSITIVE_INFINITY, '90']) {
+      const llm = scriptedLlm([transient({ retryAfterMs })])
+      const { store, tools } = await setup()
+      await advanceRun('r1', deps({ llm, store, tools, now: () => T0 }))
+      expect((await lastError(store)).retryAt).toBe(new Date(T0.getTime() + 30_000).toISOString())
+    }
+  })
+
+  test('a success after a retry resets the count', async () => {
+    const llm = scriptedLlm([transient(), callTool('orders.get', { order_id: '1042' }), transient()])
+    const { store, tools } = await setup()
+    const first = await advanceRun('r1', deps({ llm, store, tools, now: () => T0 }))
+    expect(first).toBe('running')
+    const later = new Date(T0.getTime() + 30_000)
+    expect(await advanceRun('r1', deps({ llm, store, tools, now: () => later }))).toBe('running')
+    expect((await lastError(store)).retryAt).toBe(new Date(later.getTime() + 30_000).toISOString())
+    expect(tools.calls).toHaveLength(1)
+  })
+
+  test('jitter stays inside 0.8-1.2 and the cap', async () => {
+    const low = await setup()
+    await advanceRun('r1', deps({ llm: scriptedLlm([transient()]), ...low, now: () => T0, random: () => 0 }))
+    expect((await lastError(low.store)).retryAt).toBe(new Date(T0.getTime() + 24_000).toISOString())
+
+    const llm = scriptedLlm(Array.from({ length: 5 }, () => transient()))
+    const { store, tools } = await setup()
+    let now = T0
+    for (let i = 0; i < 5; i++) {
+      await advanceRun('r1', deps({ llm, store, tools, now: () => now, random: () => 1 }))
+      const retryAt = new Date((await lastError(store)).retryAt!)
+      if (i === 4) expect(retryAt.getTime() - now.getTime()).toBe(300_000)
+      now = retryAt
+    }
+  })
 })
 
 test('labels: run.created is untrusted, tool.responded carries the tool label', async () => {
@@ -850,4 +948,61 @@ test.each([
   const sleeps: number[] = []
   await advanceRun('r1', deps({ llm, store, tools, sleeps, random: () => r }))
   expect(sleeps).toEqual(expected)
+})
+
+test('a crash after any append never repeats a completed tool call or an unkeyed write', async () => {
+  const refStore = new MemoryRunStore()
+  await refStore.append('r1', [created()])
+  const boundaries = [1]
+  const recording: RunStore = {
+    readEvents: (id) => refStore.readEvents(id),
+    async append(id, events) {
+      const stored = await refStore.append(id, events)
+      boundaries.push((await refStore.readEvents(id)).length)
+      return stored
+    },
+  }
+  const refLlm = scriptedLlm([
+    callTool('orders.get', { order_id: '1042' }),
+    callTool('payments.capture', { order_id: '1042' }),
+    callTool('payments.refund', { order_id: '1042', amount: 500 }),
+    say('Done.'),
+  ])
+  expect(await advanceRun('r1', capDeps({ llm: refLlm, store: recording, tools: fakeTools() }))).toBe('completed')
+  const log = await refStore.readEvents('r1')
+  const responses = log.filter((e) => e.type === 'llm.responded').map((e) => (e.payload as { message: Message }).message)
+  expect(responses).toHaveLength(4)
+  expect(boundaries.at(-1)).toBe(log.length)
+
+  for (const b of boundaries.slice(0, -1)) {
+    const prefix = log.slice(0, b)
+    const store = new MemoryRunStore()
+    await store.append('r1', prefix.map(({ type, payload, labels }) => ({ type, payload, labels }) as NewEvent))
+    const done = prefix.filter((e) => e.type === 'llm.responded').length
+    let n = done
+    const llm: LLMPort = {
+      async complete() {
+        const message = responses[n++]
+        if (!message) throw new Error('script exhausted')
+        return { message, usage: { inputTokens: 1, outputTokens: 1 }, stopReason: message.toolCalls ? 'tool_calls' : 'end' }
+      },
+    }
+    const tools = fakeTools()
+    const status = await advanceRun('r1', capDeps({ llm, store, tools }))
+
+    const idOf = (e: StoredEvent) => (e.payload as { toolCallId: string }).toolCallId
+    const responded = new Set(prefix.filter((e) => e.type === 'tool.responded').map(idOf))
+    const inFlight = prefix.filter((e) => e.type === 'tool.requested' && !responded.has(idOf(e))).map((e) => e.payload as { toolCallId: string; tool: string })[0]
+    const ctx = `boundary ${b}`
+    const called = tools.calls.map((c) => c.idempotencyKey.replace('r1:', ''))
+    for (const id of responded) expect(called, ctx).not.toContain(id)
+    if (inFlight?.tool === 'payments.refund') {
+      expect(tools.calls, ctx).toHaveLength(0)
+      expect(status, ctx).toBe('waiting_human')
+      expect(projectRun(await store.readEvents('r1'), '').waitingReason, ctx).toBe('unknown_outcome')
+    } else {
+      if (inFlight) expect(called.filter((id) => id === inFlight.toolCallId), ctx).toHaveLength(1)
+      expect(status, ctx).toBe('completed')
+    }
+  }
 })

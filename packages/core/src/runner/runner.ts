@@ -27,6 +27,8 @@ const MAX_TOOL_OUTPUT_CHARS = 48_000
 
 const TOOL_MAX_ATTEMPTS = 3
 const TOOL_RETRY_WAITS_MS = [500, 1000]
+const LLM_RETRY_WAITS_MS = [30_000, 60_000, 120_000, 240_000, 300_000]
+const LLM_MAX_WAIT_MS = 300_000
 
 const jitter = (ms: number, random: () => number): number => Math.round(ms * (0.8 + 0.4 * random()))
 const sleepMs = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms))
@@ -250,6 +252,9 @@ async function llmStep(
   maxLlmCalls: number,
 ): Promise<RunStatus | 'continue'> {
   const { store } = deps
+  const now = deps.now ?? (() => new Date())
+  // The run waits for an LLM retry; the worker calls again once `retryAt` has passed.
+  if (proj.llmRetry.retryAt !== null && new Date(proj.llmRetry.retryAt).getTime() > now().getTime()) return 'running'
   if (proj.llmCalls >= maxLlmCalls) {
     await store.append(runId, [waitHuman('running', 'breaker')])
     return 'waiting_human'
@@ -260,24 +265,33 @@ async function llmStep(
     // The time goes into the request only. It is not an event, so the projection never holds it.
     const firstTurn = proj.messages.findIndex((m) => m.role !== 'system')
     const at = firstTurn === -1 ? proj.messages.length : firstTurn
-    const now = (deps.now ?? (() => new Date()))()
+    const requestedAt = now()
     res = await deps.llm.complete({
       model: deps.agent.model,
       messages: [
         ...proj.messages.slice(0, at),
-        { role: 'system', content: `Current time: ${now.toISOString()}`, volatile: true },
+        { role: 'system', content: `Current time: ${requestedAt.toISOString()}`, volatile: true },
         ...proj.messages.slice(at),
       ],
       // A tool changed since review stays hidden until an owner reviews it again.
       tools: Object.values(deps.toolsByName).filter((t) => t.changedSinceReview !== true),
     })
   } catch (err) {
+    const { retryable, retryAfterMs } = (err ?? {}) as { retryable?: unknown; retryAfterMs?: unknown }
+    const attempts = proj.llmRetry.attempts
+    if (retryable === true && attempts < LLM_RETRY_WAITS_MS.length) {
+      const wait =
+        typeof retryAfterMs === 'number' && Number.isFinite(retryAfterMs) && retryAfterMs >= 0
+          ? retryAfterMs
+          : jitter(LLM_RETRY_WAITS_MS[attempts]!, deps.random ?? Math.random)
+      const retryAt = new Date(now().getTime() + Math.min(wait, LLM_MAX_WAIT_MS)).toISOString()
+      await store.append(runId, [
+        { type: 'error.raised', payload: { message: errorMessage(err), retryable: true, retryAt }, labels: [] },
+      ])
+      return 'running'
+    }
     await store.append(runId, [
-      {
-        type: 'error.raised',
-        payload: { message: errorMessage(err), retryable: (err as { retryable?: unknown } | null)?.retryable === true },
-        labels: [],
-      },
+      { type: 'error.raised', payload: { message: errorMessage(err), retryable: false }, labels: [] },
       stateChanged('running', 'failed'),
     ])
     return 'failed'
