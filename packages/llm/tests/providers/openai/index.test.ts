@@ -426,3 +426,58 @@ describe('Retry-After', () => {
     expect((err as LlmError).retryAfterMs).toBeUndefined()
   })
 })
+
+function fetchWith(choice: unknown, calls?: { n: number }): typeof fetch {
+  return (async () => {
+    if (calls) calls.n++
+    return new Response(JSON.stringify({ choices: [choice] }), { status: 200, headers: { 'Content-Type': 'application/json' } })
+  }) as typeof fetch
+}
+const portWith = (f: typeof fetch): LLMPort =>
+  createOpenAICompatible({ baseUrl: 'http://x/v1', apiKey: 'k', models: { default: 'm' }, fetch: f })
+
+test('finish_reason content_filter gives stopReason filtered', async () => {
+  const port = portWith(fetchWith({ message: { content: '' }, finish_reason: 'content_filter' }))
+  expect((await port.complete(req)).stopReason).toBe('filtered')
+})
+
+test('a non-empty message.refusal gives stopReason filtered', async () => {
+  const port = portWith(fetchWith({ message: { content: null, refusal: 'I cannot help' }, finish_reason: 'stop' }))
+  expect((await port.complete(req)).stopReason).toBe('filtered')
+})
+
+test('an empty or null refusal does not filter', async () => {
+  const port = portWith(fetchWith({ message: { content: 'ok', refusal: null }, finish_reason: 'stop' }))
+  expect((await port.complete(req)).stopReason).toBe('end')
+})
+
+test('finish_reason length still maps to length', async () => {
+  const port = portWith(fetchWith({ message: { content: 'par' }, finish_reason: 'length' }))
+  expect((await port.complete(req)).stopReason).toBe('length')
+})
+
+test('tool calls win over content_filter', async () => {
+  const port = portWith(
+    fetchWith({
+      message: { content: null, tool_calls: [{ id: 'c1', function: { name: 'a', arguments: '{}' } }] },
+      finish_reason: 'content_filter',
+    }),
+  )
+  expect((await port.complete(req)).stopReason).toBe('tool_calls')
+})
+
+test('structured output: a filtered answer returns filtered without a retry', async () => {
+  for (const strict of [true, false]) {
+    const calls = { n: 0 }
+    const port = createOpenAICompatible({
+      baseUrl: 'http://x/v1',
+      apiKey: 'k',
+      models: { default: 'm' },
+      profile: () => ({ ...DEFAULT_MODEL_PROFILE, jsonSchemaStrict: strict }),
+      fetch: fetchWith({ message: { content: '' }, finish_reason: 'content_filter' }, calls),
+    })
+    const res = await port.complete({ ...req, output: { name: 'out', schema: z.object({ a: z.string() }) } })
+    expect(res.stopReason).toBe('filtered')
+    expect(calls.n).toBe(1)
+  }
+})

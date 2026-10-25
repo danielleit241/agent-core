@@ -112,6 +112,7 @@ type WireResponse = {
     message?: {
       content?: string | { type?: string; text?: string }[] | null
       tool_calls?: { id?: string; function?: { name?: string; arguments?: unknown } }[]
+      refusal?: string | null
     }
     finish_reason?: string
   }[]
@@ -163,7 +164,7 @@ export function createOpenAICompatible(opts: Opts): LLMPort {
     messages: Message[],
     tools: ToolDescriptor[],
     responseFormat?: unknown,
-  ): Promise<{ message: Message; usage: Usage; stopReason: 'end' | 'tool_calls' | 'length' }> {
+  ): Promise<{ message: Message; usage: Usage; stopReason: 'end' | 'tool_calls' | 'length' | 'filtered' }> {
     const wireToInternal = new Map<string, string>()
     for (const t of tools) {
       const wire = toWireName(t.name)
@@ -207,9 +208,12 @@ export function createOpenAICompatible(opts: Opts): LLMPort {
     const stopReason =
       toolCalls.length > 0
         ? 'tool_calls'
-        : choice.finish_reason === 'length'
-          ? 'length'
-          : 'end'
+        : choice.finish_reason === 'content_filter' ||
+            (typeof choice.message.refusal === 'string' && choice.message.refusal !== '')
+          ? 'filtered'
+          : choice.finish_reason === 'length'
+            ? 'length'
+            : 'end'
     return { message, usage, stopReason }
   }
 
@@ -246,6 +250,8 @@ export function createOpenAICompatible(opts: Opts): LLMPort {
           type: 'json_schema',
           json_schema: { name, strict: true, schema: jsonSchema },
         })
+        // A filtered answer has no valid output; the runner fails the run.
+        if (res.stopReason === 'filtered') return res
         const r = check(res.message.content)
         if ('issue' in r) throw new LlmError(`output_invalid: ${name}`, 422, false)
         return { ...res, message: { role: 'assistant', content: r.ok } }
@@ -265,6 +271,7 @@ export function createOpenAICompatible(opts: Opts): LLMPort {
         outputTokens += res.usage.outputTokens
         if (res.usage.costUsd !== undefined) costUsd = (costUsd ?? 0) + res.usage.costUsd
         const usage: Usage = { inputTokens, outputTokens, ...(costUsd !== undefined ? { costUsd } : {}) }
+        if (res.stopReason === 'filtered') return { message: res.message, usage, stopReason: 'filtered' }
         const r = check(res.message.content)
         if ('ok' in r) return { message: { role: 'assistant', content: r.ok }, usage, stopReason: res.stopReason }
         messages.push(
