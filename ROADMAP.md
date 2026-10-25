@@ -80,11 +80,11 @@ The harness is one system, from the moment work comes in to the moment a result 
 | Stage | What happens | Milestones |
 |---|---|---|
 | 1. Intake | A face, a channel or a trigger hands work in | M0 (Control API), M3.6 (events), M4.2 (schedule), M4.3 and M5.2 (channels), M4–M6 (chat faces) |
-| 2. Normalise | The work becomes a run: principal, input labelled `untrusted`, idempotency key | M0, M2.2, M3.2 |
+| 2. Normalise | The work becomes a run: principal, input checked against the agent's input schema and labelled `untrusted`, idempotency key | M0, M2.2, M3.2, M3.9 |
 | 3. Queue | The run waits for a worker; tenants share workers fairly | M0, M2.3 |
 | 4. Load | The worker loads the agent version: instructions, skills, rules, connections | M0, M3.5, M6.5 |
 | 5. Loop | Context → LLM → rule gate → human approval → tool gate, until the run ends or waits | M0, M3.3, M6.1, M9.4 |
-| 6. Deliver | Results and approval requests go out: signed webhooks, SSE, and a reply on the channel the work came from | M0, M2.7, M4.3, M5.2 |
+| 6. Deliver | Results, with a typed `result` when the agent declares an output schema, and approval requests with one-time approval links go out: signed webhooks, SSE, and a reply on the channel the work came from | M0, M2.7, M3.9, M3.10, M4.3, M5.2 |
 | 7. Evidence | The trace, eval scores, shadow match rates and the trust ladder show whether the agent did the work correctly | M0, M1, M5.3, M9 |
 
 ### Agent, workflow, extension points
@@ -274,6 +274,8 @@ Each task has an ID, a short description and a "done when" line. Only the next m
 - [ ] **M3.6** Event triggers: `POST /v1/events`, signed inbound webhooks, filters, debounce, rate limits. *Done when:* a storm of 10,000 events stays within budget.
 - [ ] **M3.7** SSRF guard and per-tenant host allow-list; no secrets in logs. *Done when:* invariants B3, B10 and B11 pass.
 - [ ] **M3.8** API-only end-to-end journey, extended from M0. *Done when:* metric S7 passes.
+- [ ] **M3.9** Typed run contract: an agent version may declare an input schema and an output schema, in a strict subset of JSON Schema. `POST /v1/runs` checks `input.data` against the input schema and labels it `untrusted`, like the text. The model returns the result through the built-in tool `agent_core.submit_result`, which passes the rule gate like any other tool; by default a result counts as a decision the team will act on, so under `supervised` it waits for approval unless an `allow` rule matches. The API and webhooks return it as `result` beside the text `output`. *Done when:* a result that is invalid, missing or rejected goes back to the model at most twice and then the run fails; an `allow` rule on result fields lets a result through; and the refund scenario returns a `result` that matches its schema.
+- [ ] **M3.10** One-time approval links and `amend`. The `approval.requested` webhook carries a link that works once, expires with the wait, and is bound to the tool call and its arguments. Opening the link never acts; only a confirmation does. The token is never stored or logged, no read endpoint returns the link, and only an `owner` can change a webhook that receives links. A tenant can require sign-in as one of the agent's approvers. `resolve` accepts `amend` with new arguments, which the rule gate checks again. *Done when:* a link fails after use, after expiry and after the request changes; fetching the link does not approve; the token appears in no event, table or log; the event log records that the approval came through a link; and an amended call that the rules deny is refused while the run keeps waiting.
 
 ### M4 — SDK and a second agent
 
