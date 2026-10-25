@@ -1,10 +1,10 @@
 import { randomUUID } from 'node:crypto'
 import type { Pool } from 'pg'
-import { signWebhook } from './sign'
+import { signWebhook } from '@agent-core/protocol'
 
 export const RETRY_DELAYS_S = [10, 30, 120, 600, 1800, 3600, 14400, 43200]
 
-export type WebhookEventType = 'run.completed' | 'run.failed' | 'approval.requested'
+export type WebhookEventType = 'run.completed' | 'run.failed' | 'approval.requested' | 'run.waiting_human'
 
 const LEASE_S = 60
 const SEND_TIMEOUT_MS = 10_000

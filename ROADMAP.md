@@ -61,7 +61,7 @@ The service never loosens a rule by itself. It proposes, with numbers, and an `o
 
 ### Seven faces, one run model
 
-Every face translates into the same run model. A face is a thin adapter, never a second code path.
+Every face translates into the same run model. A face is a thin adapter, never a second code path. The same is true for every other source of work: channels, triggers, follow-ups, workflow steps and sub-agents all create the same kind of run, and every run goes through the same rule gate.
 
 | Face | Milestone |
 |---|---|
@@ -72,6 +72,30 @@ Every face translates into the same run model. A face is a thin adapter, never a
 | WebSocket and embeddable chat widget | M5 |
 | OpenAI-compatible Responses | M5 |
 | MCP server (each agent is a tool) | M6 |
+
+### Run lifecycle
+
+The harness is one system, from the moment work comes in to the moment a result goes out. Every run follows the same seven stages. Every stage writes events to the log.
+
+| Stage | What happens | Milestones |
+|---|---|---|
+| 1. Intake | A face, a channel or a trigger hands work in | M0 (Control API), M3.6 (events), M4.2 (schedule), M4.3 and M5.2 (channels), M4–M6 (chat faces) |
+| 2. Normalise | The work becomes a run: principal, input checked against the agent's input schema and labelled `untrusted`, idempotency key | M0, M2.2, M3.2, M3.9 |
+| 3. Queue | The run waits for a worker; tenants share workers fairly | M0, M2.3 |
+| 4. Load | The worker loads the agent version: instructions, skills, rules, connections | M0, M3.5, M6.5 |
+| 5. Loop | Context → LLM → rule gate → human approval → tool gate, until the run ends or waits | M0, M3.3, M6.1, M9.4 |
+| 6. Deliver | Results, with a typed `result` when the agent declares an output schema, and approval requests with one-time approval links go out: signed webhooks, SSE, and a reply on the channel the work came from | M0, M2.7, M3.9, M3.10, M4.3, M5.2 |
+| 7. Evidence | The trace, eval scores, shadow match rates and the trust ladder show whether the agent did the work correctly | M0, M1, M5.3, M9 |
+
+### Agent, workflow, extension points
+
+Three parts share one run model. Each has a different job.
+
+| Part | What it decides | What it never does |
+|---|---|---|
+| **Agent** | The next step, inside its rules | Changes its own rules or autonomy level |
+| **Workflow** (M2.4) | A fixed order of steps; a step can be an agent run or a wait for approval | Reasons, or skips the rule gate |
+| **Extension points** (policy webhook M4.5, tools built with the SDK M4.1) | Team logic, in the team's own systems | Runs inside the service, or loosens a rule; a timeout or an error counts as `deny` |
 
 ### Architecture
 
@@ -175,7 +199,7 @@ A milestone is done when:
 | | | *Feature floor for `v0.1.0` reached. The version still needs the whole release gate.* |
 | M4 | SDK and a second agent | `@agent-core/sdk`, schedules, Telegram, a second agent built with zero commits, OpenAI-compatible chat |
 | M5 | Self-serve integration | OpenAPI import, email channel, shadow mode, setup console, WebSocket, widget, Responses API |
-| M6 | Context and MCP server | Context budgets, long-term memory, prompt caching, agents exposed as MCP tools |
+| M6 | Context and MCP server | Context budgets, long-term memory, prompt caching, agents exposed as MCP tools, skill selection |
 | M7 | Data protection | Per-item taint, PII masking, confidential-data routing, attack eval suite |
 | M8 | Agent teams | Orchestrator and workers, quarantined sub-agents |
 | M9 | Console and trust | Owner and Ops consoles, waterfall trace, fork, trust ladder, OTLP, face-parity tests |
@@ -215,20 +239,20 @@ Each task has an ID, a short description and a "done when" line. Only the next m
 
 **Goal:** we can measure whether an agent is right, and replay a run without calling the LLM.
 
-- [ ] **M1.1** Eval scenario format; load shop fixtures before each scenario. *Done when:* a scenario runs alone and repeats with the same result.
-- [ ] **M1.2** Graders: tools called, arguments, final state; LLM rubric grader. *Done when:* the eval command prints a score per group.
-- [ ] **M1.3** The first 10 scenarios for the shop agent. *Done when:* a baseline score exists.
-- [ ] **M1.4** Record and replay with a normalised request hash; `volatile` context items. *Done when:* replay gives the same score without LLM calls, and a changed timestamp does not break replay.
-- [ ] **M1.5** Webhook tools (the third tool protocol). *Done when:* the service calls a signed webhook tool that receives a principal JWT.
-- [ ] **M1.6** Full inference of the four safety properties; API to confirm them. *Done when:* hints only ever make a tool stricter; loosening needs confirmation.
-- [ ] **M1.7** Model capability profiles and `models check`. *Done when:* for a model without strict JSON schema, the service validates and retries.
-- [ ] **M1.8** API to settle an `unknown_outcome` run. *Done when:* a human can mark the interrupted write as done or not done, and the run continues.
+- [x] **M1.1** Eval scenario format; load shop fixtures before each scenario. *Done when:* a scenario runs alone and repeats with the same result.
+- [x] **M1.2** Graders: tools called, arguments, final state; LLM rubric grader. A scenario passes only when every check passes; a group's score is the share of its scenarios that pass. *Done when:* the eval command prints a score per group.
+- [x] **M1.3** The first 10 scenarios for the shop agent. *Done when:* a baseline score exists.
+- [x] **M1.4** Record and replay with a normalised request hash; `volatile` context items. *Done when:* replay gives the same score without LLM calls, and a changed timestamp does not break replay.
+- [x] **M1.5** Webhook tools (the third tool protocol). *Done when:* the service calls a signed webhook tool that receives a principal JWT (HS256, signed with the connection's secret, valid for 5 minutes, `aud` is the connection).
+- [x] **M1.6** Full inference of the four safety properties; API to confirm them. *Done when:* hints only ever make a tool stricter; loosening needs confirmation.
+- [x] **M1.7** Model capability profiles and `models check`. *Done when:* for a model without strict JSON schema, the service validates and retries.
+- [x] **M1.8** API to settle an `unknown_outcome` run. *Done when:* a human can mark the interrupted write as done, as not done (call it again), or cancel the run; the run continues or ends.
 
 ### M2 — Durable and multi-tenant
 
 **Goal:** runs survive restarts, and tenants cannot see each other.
 
-- [ ] **M2.1** Resume from the event log; full resume and retry table. *Done when:* killing a run mid-way never repeats a tool call; a write without an idempotency key goes to `unknown_outcome`.
+- [x] **M2.1** Resume from the event log; full resume and retry table. *Done when:* killing a run mid-way never repeats a completed tool call, and repeats an interrupted one only with the same idempotency key; a write without an idempotency key goes to `unknown_outcome`.
 - [ ] **M2.2** Full idempotency for inbound work and tool calls. *Done when:* a repeated `Idempotency-Key` returns the original run.
 - [ ] **M2.3** Fair queue per tenant; concurrency limits. *Done when:* one busy tenant does not block another.
 - [ ] **M2.4** Workflow runs (four step types, branching with fixed operators). *Done when:* a sample workflow runs, waits for approval and continues.
@@ -243,13 +267,15 @@ Each task has an ID, a short description and a "done when" line. Only the next m
 **Goal:** the agent acts on behalf of a known person, under rules that code enforces.
 
 - [ ] **M3.1** Members, roles, console sign-in, API keys scoped to an environment and a role set. *Done when:* a key can only claim roles it was granted.
-- [ ] **M3.2** Principals: short-lived JWT sent with each tool call; `scope` rules. *Done when:* invariant B1 passes.
+- [ ] **M3.2** Principals: the principal JWT from M1.5 is sent with every tool call, MCP included; `scope` rules. *Done when:* invariant B1 passes.
 - [ ] **M3.3** Full rule gate (allow, require approval, deny, fixed operators); `autonomous` level. *Done when:* the decision table tests pass.
 - [ ] **M3.4** Run-level taint tracking. *Done when:* invariant B2 (run level) passes.
-- [ ] **M3.5** Agent versions: draft, publish, environments, YAML export and import. *Done when:* each run records the version it used; invariant B9 passes.
+- [ ] **M3.5** Agent versions: draft, publish, environments, YAML export and import. A version holds instructions, named skills, rules and connections. *Done when:* each run records the version and the skills it loaded; invariant B9 passes.
 - [ ] **M3.6** Event triggers: `POST /v1/events`, signed inbound webhooks, filters, debounce, rate limits. *Done when:* a storm of 10,000 events stays within budget.
 - [ ] **M3.7** SSRF guard and per-tenant host allow-list; no secrets in logs. *Done when:* invariants B3, B10 and B11 pass.
 - [ ] **M3.8** API-only end-to-end journey, extended from M0. *Done when:* metric S7 passes.
+- [ ] **M3.9** Typed run contract: an agent version may declare an input schema and an output schema, in a strict subset of JSON Schema. `POST /v1/runs` checks `input.data` against the input schema and labels it `untrusted`, like the text. The model returns the result through the built-in tool `agent_core.submit_result`, which passes the rule gate like any other tool; by default a result counts as a decision the team will act on, so under `supervised` it waits for approval unless an `allow` rule matches. The API and webhooks return it as `result` beside the text `output`. *Done when:* a result that is invalid, missing or rejected goes back to the model at most twice and then the run fails; an `allow` rule on result fields lets a result through; and the refund scenario returns a `result` that matches its schema.
+- [ ] **M3.10** One-time approval links and `amend`. The `approval.requested` webhook carries a link that works once, expires with the wait, and is bound to the tool call and its arguments. Opening the link never acts; only a confirmation does. The token is never stored or logged, no read endpoint returns the link, and only an `owner` can change a webhook that receives links. A tenant can require sign-in as one of the agent's approvers. `resolve` accepts `amend` with new arguments, which the rule gate checks again. *Done when:* a link fails after use, after expiry and after the request changes; fetching the link does not approve; the token appears in no event, table or log; the event log records that the approval came through a link; and an amended call that the rules deny is refused while the run keeps waiting.
 
 ### M4 — SDK and a second agent
 
@@ -282,6 +308,7 @@ Each task has an ID, a short description and a "done when" line. Only the next m
 - [ ] **M6.2** Long-term memory per principal; retrieval. *Done when:* the agent remembers a customer across threads.
 - [ ] **M6.3** Prompt caching where the provider supports it. *Done when:* cost drops measurably.
 - [ ] **M6.4** MCP server at `/v1/mcp`: each agent is a tool; `get_run` and `resolve`; OAuth or API-key auth. *Done when:* Claude Desktop can call the shop agent.
+- [ ] **M6.5** Skill selection: a run loads only the skills that match its work; the trace shows which skills were loaded and why. *Done when:* an agent with 20 skills loads only the relevant ones, and its eval score does not drop.
 
 ### M7 — Data protection
 

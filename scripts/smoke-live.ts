@@ -1,4 +1,5 @@
-import { startStack } from '../e2e/harness'
+import { startStack } from '../e2e/support/harness'
+import { registerShop } from '../e2e/support/setup'
 
 // Uses the same OpenAI-compatible endpoint as the service (LLM_BASE_URL, LLM_API_KEY).
 const baseUrl = process.env.LLM_BASE_URL
@@ -17,7 +18,7 @@ type Ev = { type: string; payload: Record<string, any> } // eslint-disable-line 
 async function main(): Promise<boolean> {
   const s = await startStack([], { realLlm: { baseUrl: baseUrl!, apiKey: apiKey!, model: model! } })
   try {
-    await s.api('POST', '/v1/connections', { id: 'shop', url: s.shop.url })
+    await registerShop(s)
     await s.api('POST', '/v1/agents', {
       id: 'retail-support',
       instructions: 'Bạn là trợ lý của Cửa hàng Mộc. Dùng công cụ để tra cứu đơn hàng.',

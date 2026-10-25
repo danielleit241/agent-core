@@ -8,3 +8,5 @@ docs
 e2e
 scripts
 **/*.test.ts
+packages/evals/*
+!packages/evals/package.json

@@ -1,7 +1,7 @@
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
-import { inferSafetyFromMcp } from '@agent-core/core'
-import type { ToolDescriptor, ToolInvoker } from '@agent-core/core'
+import { SupportSchema, ToolSafetySchema, resolveSafety } from '@agent-core/core'
+import type { SafetySource, Support, ToolDescriptor, ToolInvoker } from '@agent-core/core'
 
 export class ToolInvocationError extends Error {
   constructor(
@@ -44,10 +44,38 @@ async function connect(connectionId: string, url: string): Promise<Client> {
   return client
 }
 
+const DeclaredSafetySchema = ToolSafetySchema.partial().strict()
+const HINTS = ['readOnlyHint', 'destructiveHint', 'idempotentHint', 'openWorldHint'] as const
+
+/** What the tool says about itself: annotations plus the `agent-core/*` `_meta` declarations. All of it is a proposal. */
+function readSource(connectionId: string, t: { name: string; annotations?: object; _meta?: Record<string, unknown> }): SafetySource {
+  const source: SafetySource = {}
+  const annotations: Record<string, boolean> = {}
+  for (const h of HINTS) {
+    const v = (t.annotations as Record<string, unknown> | undefined)?.[h]
+    if (typeof v === 'boolean') annotations[h] = v
+  }
+  if (Object.keys(annotations).length > 0) source.annotations = annotations
+  const rawSafety = t._meta?.['agent-core/safety']
+  if (rawSafety !== undefined) {
+    const declared = DeclaredSafetySchema.safeParse(rawSafety)
+    if (declared.success) source.declared = declared.data
+    else console.error(`mcp: ignored invalid agent-core/safety on tool ${t.name} of ${connectionId}`)
+  }
+  const rawSupports = t._meta?.['agent-core/supports']
+  if (Array.isArray(rawSupports)) {
+    source.supports = rawSupports.flatMap((v): Support[] => {
+      const s = SupportSchema.safeParse(v)
+      return s.success ? [s.data] : []
+    })
+  }
+  return source
+}
+
 export async function discoverMcpTools(
   connectionId: string,
   url: string,
-): Promise<{ tool: ToolDescriptor; needsConfirmation: string[] }[]> {
+): Promise<{ tool: ToolDescriptor; source: SafetySource }[]> {
   let client: Client
   try {
     client = await connect(connectionId, url)
@@ -55,25 +83,27 @@ export async function discoverMcpTools(
     throw new Error(reason(err))
   }
   try {
-    const found: ToolDescriptor[] = []
-    const confirmations: string[][] = []
+    const found: { tool: ToolDescriptor; source: SafetySource }[] = []
     let cursor: string | undefined
     do {
       const page = await client.listTools(cursor ? { cursor } : undefined)
       for (const t of page.tools) {
-        const { safety, needsConfirmation } = inferSafetyFromMcp(t.annotations)
+        const source = readSource(connectionId, t)
         found.push({
-          name: t.name,
-          description: t.description ?? '',
-          inputSchema: t.inputSchema as Record<string, unknown>,
-          safety,
-          connectionId,
+          tool: {
+            name: t.name,
+            description: t.description ?? '',
+            inputSchema: t.inputSchema as Record<string, unknown>,
+            safety: resolveSafety(source).safety,
+            connectionId,
+            ...(source.supports && { supports: source.supports }),
+          },
+          source,
         })
-        confirmations.push(needsConfirmation)
       }
       cursor = page.nextCursor
     } while (cursor)
-    return found.map((tool, i) => ({ tool, needsConfirmation: confirmations[i]! }))
+    return found
   } finally {
     await client.close()
   }
@@ -130,14 +160,8 @@ export function createMcpInvoker(
     async call(tool, args, ctx) {
       // No dry-run protocol in M0: a write cannot be simulated, a read is harmless to run.
       if (ctx.dryRun && tool.safety.effect === 'write') throw new Error(`dry_run_not_supported: ${tool.name}`)
-      let result
-      try {
-        result = await attempt(tool, args, ctx.idempotencyKey)
-      } catch (err) {
-        // Only reads are retried (once); a write may already have executed.
-        if (tool.safety.effect !== 'read') throw err
-        result = await attempt(tool, args, ctx.idempotencyKey)
-      }
+      // One attempt only: the runner owns retries.
+      const result = await attempt(tool, args, ctx.idempotencyKey)
       const parts = Array.isArray(result.content) ? result.content : []
       const content = parts
         .filter((p): p is { type: 'text'; text: string } => p.type === 'text' && typeof p.text === 'string')

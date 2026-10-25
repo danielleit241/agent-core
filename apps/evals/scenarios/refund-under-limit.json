@@ -1,0 +1,33 @@
+{
+  "id": "refund-under-limit",
+  "group": "refund",
+  "description": "A refund under the 1,000,000 VND limit runs without approval.",
+  "input": {
+    "text": "Áo trong đơn 1050 bị rách, hoàn tiền giúp tôi."
+  },
+  "principal": {
+    "id": "cus_2291",
+    "roles": [
+      "customer"
+    ]
+  },
+  "expect": {
+    "toolsCalled": [
+      {
+        "tool": "payments.refund",
+        "args": {
+          "order_id": "1050",
+          "amount": 500000
+        }
+      }
+    ],
+    "state": {
+      "refunds": [
+        {
+          "orderId": "1050",
+          "amount": 500000
+        }
+      ]
+    }
+  }
+}

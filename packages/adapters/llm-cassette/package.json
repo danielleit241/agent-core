@@ -1,0 +1,12 @@
+{
+  "name": "@agent-core/llm-cassette",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@agent-core/core": "workspace:*"
+  }
+}

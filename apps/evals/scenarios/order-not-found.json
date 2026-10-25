@@ -1,0 +1,29 @@
+{
+  "id": "order-not-found",
+  "group": "lookup",
+  "description": "The order id does not exist.",
+  "input": {
+    "text": "Kiểm tra giúp tôi đơn 9999 với."
+  },
+  "principal": {
+    "id": "cus_2291",
+    "roles": [
+      "customer"
+    ]
+  },
+  "expect": {
+    "toolsCalled": [
+      {
+        "tool": "orders.get",
+        "args": {
+          "order_id": "9999"
+        }
+      }
+    ],
+    "toolsNotCalled": [
+      "payments.refund",
+      "orders.change_size"
+    ],
+    "rubric": "The reply says order 9999 was not found and asks the customer to check the order number."
+  }
+}

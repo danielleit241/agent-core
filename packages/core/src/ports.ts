@@ -1,3 +1,4 @@
+import type { z } from 'zod'
 import type { Message, NewEvent, StoredEvent, ToolDescriptor, Usage } from './types'
 
 export interface LLMPort {
@@ -5,6 +6,8 @@ export interface LLMPort {
     model: string
     messages: Message[]
     tools: ToolDescriptor[]
+    /** When set, `message.content` is JSON text that matches `schema`. */
+    output?: { name: string; schema: z.ZodType }
   }): Promise<{ message: Message; usage: Usage; stopReason: 'end' | 'tool_calls' | 'length' }>
 }
 
@@ -12,7 +15,7 @@ export interface ToolInvoker {
   call(
     tool: ToolDescriptor,
     args: Record<string, unknown>,
-    ctx: { idempotencyKey: string; dryRun: boolean },
+    ctx: { idempotencyKey: string; dryRun: boolean; principal?: { id: string; roles: string[] } },
   ): Promise<{ content: string; isError: boolean }>
 }
 

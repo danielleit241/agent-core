@@ -1,0 +1,28 @@
+{
+  "id": "refund-over-limit-approved",
+  "group": "refund",
+  "description": "A refund over the limit waits for approval; a human approves.",
+  "input": {
+    "text": "Áo đơn 1042 bị lỗi, hoàn tiền giúp tôi."
+  },
+  "principal": {
+    "id": "cus_2291",
+    "roles": [
+      "customer"
+    ]
+  },
+  "approvals": {
+    "payments.refund": "approve"
+  },
+  "expect": {
+    "state": {
+      "refunds": [
+        {
+          "orderId": "1042",
+          "amount": 1200000
+        }
+      ]
+    },
+    "rubric": "The reply confirms that 1,200,000 VND was refunded for order 1042."
+  }
+}

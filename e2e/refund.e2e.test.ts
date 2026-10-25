@@ -1,8 +1,9 @@
 import { afterEach, expect, test } from 'vitest'
-import { verifyWebhook } from '@agent-core/webhooks'
+import { verifyWebhook } from '@agent-core/protocol'
 import type { FakeTurn } from '@agent-core/fake-llm'
-import { startStack } from './harness'
-import type { Stack } from './harness'
+import { startStack } from './support/harness'
+import type { Stack } from './support/harness'
+import { registerShop } from './support/setup'
 
 let stack: Stack | undefined
 afterEach(async () => {
@@ -27,9 +28,22 @@ const lastOf = (s: Stack, type: string) => s.receiver.received.filter((r) => typ
 
 async function setup(s: Stack): Promise<{ secret: string }> {
   const conn = await s.api('POST', '/v1/connections', { id: 'shop', url: s.shop.url })
-  expect(conn.body.tools.map((t: { name: string; safety: { effect: string } }) => [t.name, t.safety.effect])).toEqual([
+  const tools = conn.body.tools as { name: string; safety: { effect: string }; needsConfirmation: string[] }[]
+  // Before confirming, every tool runs as a write; only the proposal says read.
+  expect(tools.map((t) => [t.name, t.safety.effect])).toEqual([
+    ['orders.get', 'write'],
+    ['payments.refund', 'write'],
+    ['inventory.check', 'write'],
+    ['orders.change_size', 'write'],
+  ])
+  expect(tools.find((t) => t.name === 'orders.get')!.needsConfirmation).toContain('effect')
+  await registerShop(s)
+  const confirmed = await s.api('GET', '/v1/connections/shop/tools')
+  expect(confirmed.body.tools.map((t: { name: string; safety: { effect: string } }) => [t.name, t.safety.effect])).toEqual([
     ['orders.get', 'read'],
     ['payments.refund', 'write'],
+    ['inventory.check', 'read'],
+    ['orders.change_size', 'write'],
   ])
   await s.api('POST', '/v1/agents', {
     id: 'retail-support',

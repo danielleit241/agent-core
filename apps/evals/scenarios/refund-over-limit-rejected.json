@@ -1,0 +1,20 @@
+{
+  "id": "refund-over-limit-rejected",
+  "group": "refund",
+  "description": "A refund over the limit waits for approval; a human rejects.",
+  "input": {
+    "text": "Áo đơn 1042 bị lỗi, hoàn tiền giúp tôi."
+  },
+  "principal": {
+    "id": "cus_2291",
+    "roles": [
+      "customer"
+    ]
+  },
+  "expect": {
+    "state": {
+      "refunds": []
+    },
+    "rubric": "The reply tells the customer that the refund was not approved, and does not claim that money was refunded."
+  }
+}
