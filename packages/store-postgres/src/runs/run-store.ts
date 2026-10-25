@@ -249,26 +249,29 @@ export async function createRunWithEvent(
     agentId: string
     agentVersion: number
     idempotencyKey?: string
+    /** Hash of the request. A replay returns the stored hash, so the caller can refuse a different request. */
+    requestHash?: string
     created: NewEvent
   },
-): Promise<{ id: string; created: boolean }> {
+): Promise<{ id: string; created: boolean; requestHash: string | null }> {
   return inTransaction(pool, async (client) => {
     const inserted = await client.query(
-      `INSERT INTO runs (tenant_id, id, agent_id, agent_version, status, idempotency_key)
-       VALUES ($1, $2, $3, $4, 'queued', $5)
+      `INSERT INTO runs (tenant_id, id, agent_id, agent_version, status, idempotency_key, idempotency_request_hash)
+       VALUES ($1, $2, $3, $4, 'queued', $5, $6)
        ON CONFLICT (tenant_id, idempotency_key) DO NOTHING
        RETURNING id`,
-      [r.tenantId, r.runId, r.agentId, r.agentVersion, r.idempotencyKey ?? null],
+      [r.tenantId, r.runId, r.agentId, r.agentVersion, r.idempotencyKey ?? null, r.requestHash ?? null],
     )
     if (inserted.rowCount === 1) {
       await appendInTransaction(client, r.tenantId, r.runId, [r.created], { enqueue: true })
-      return { id: r.runId, created: true }
+      return { id: r.runId, created: true, requestHash: r.requestHash ?? null }
     }
-    const existing = await client.query<{ id: string }>(
-      'SELECT id FROM runs WHERE tenant_id = $1 AND idempotency_key = $2',
+    const existing = await client.query<{ id: string; idempotency_request_hash: string | null }>(
+      'SELECT id, idempotency_request_hash FROM runs WHERE tenant_id = $1 AND idempotency_key = $2',
       [r.tenantId, r.idempotencyKey],
     )
-    return { id: existing.rows[0]!.id, created: false }
+    const row = existing.rows[0]!
+    return { id: row.id, created: false, requestHash: row.idempotency_request_hash }
   })
 }
 

@@ -4,6 +4,7 @@ import { discoverMcpTools } from '@agent-core/tools'
 import type { createPool } from '@agent-core/store-postgres'
 import { checkAdminKey } from './auth'
 import { ApiError, apiError } from './errors'
+import { registerIdempotency } from './idempotency'
 import { registerConfigRoutes } from './routes/config'
 import { registerHealthRoutes } from './routes/health'
 import { registerModelRoutes } from './routes/models'
@@ -59,6 +60,7 @@ export function buildApp(deps: AppDeps): FastifyInstance {
     v1.addHook('onRequest', async (req) => {
       checkAdminKey(req.headers.authorization, deps.adminKey)
     })
+    registerIdempotency(v1, { pool: deps.pool })
     registerConfigRoutes(v1, { pool: deps.pool, discoverTools: deps.discoverTools ?? discoverMcpTools })
     registerModelRoutes(v1, { pool: deps.pool, models: deps.models ?? {}, probe: deps.probe })
     registerRunRoutes(v1, { pool: deps.pool, closing: closing.signal })

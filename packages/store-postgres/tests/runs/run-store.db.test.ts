@@ -201,7 +201,7 @@ const queueRows = async (runId: string): Promise<number> =>
 
 test('createRunWithEvent inserts the run, run.created and the queue row together', async () => {
   const res = await createRunWithEvent(pool, newRun('r13', 'k13'))
-  expect(res).toEqual({ id: 'r13', created: true })
+  expect(res).toEqual({ id: 'r13', created: true, requestHash: null })
   const events = await new PgRunStore(pool, 'default').readEvents('r13')
   expect(events.map((e) => e.type)).toEqual(['run.created'])
   expect(verifyChain(events)).toEqual({ valid: true })
@@ -213,10 +213,18 @@ test('createRunWithEvent on a replayed key appends and enqueues nothing', async 
   await createRunWithEvent(pool, newRun('r14', 'k14'))
   await pool.query('DELETE FROM queue')
   const again = await createRunWithEvent(pool, newRun('r15', 'k14'))
-  expect(again).toEqual({ id: 'r14', created: false })
+  expect(again).toEqual({ id: 'r14', created: false, requestHash: null })
   expect(await new PgRunStore(pool, 'default').readEvents('r14')).toHaveLength(1)
   expect(await queueRows('r14')).toBe(0)
   expect((await pool.query("SELECT 1 FROM runs WHERE id = 'r15'")).rowCount).toBe(0)
+})
+
+test('createRunWithEvent stores the request hash and returns it on a replay', async () => {
+  const hash = 'a'.repeat(64)
+  const first = await createRunWithEvent(pool, { ...newRun('r20', 'k20'), requestHash: hash })
+  expect(first).toEqual({ id: 'r20', created: true, requestHash: hash })
+  const again = await createRunWithEvent(pool, { ...newRun('r21', 'k20'), requestHash: 'b'.repeat(64) })
+  expect(again).toEqual({ id: 'r20', created: false, requestHash: hash })
 })
 
 test('createRunWithEvent leaves nothing behind when the event is invalid', async () => {

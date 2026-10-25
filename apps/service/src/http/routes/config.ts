@@ -74,7 +74,7 @@ export function registerConfigRoutes(
   const kindConflict = (id: string, kind: string, wanted: string) =>
     apiError('connection_kind_conflict', `Connection "${id}" exists with kind "${kind}".`, `Use a different id for the ${wanted} connection.`, 409)
 
-  app.post('/v1/connections', async (req, reply) => {
+  app.post('/v1/connections', { config: { idempotent: true } }, async (req, reply) => {
     if ((req.body as { kind?: unknown } | null | undefined)?.kind === 'webhook') {
       const wh = WebhookConnectionBody.safeParse(req.body)
       if (!wh.success) throw validationError(wh.error)
@@ -150,7 +150,7 @@ export function registerConfigRoutes(
     return { tools: conn.tools.map(toView) }
   })
 
-  app.patch<{ Params: { id: string; tool: string } }>('/v1/connections/:id/tools/:tool', async (req) => {
+  app.patch<{ Params: { id: string; tool: string } }>('/v1/connections/:id/tools/:tool', { config: { idempotent: true } }, async (req) => {
     const parsed = ConfirmBody.safeParse(req.body)
     if (!parsed.success) throw validationError(parsed.error)
     const { confirm, fingerprint, ...values } = parsed.data
@@ -187,7 +187,7 @@ export function registerConfigRoutes(
     return toView(updated)
   })
 
-  app.post('/v1/agents', async (req, reply) => {
+  app.post('/v1/agents', { config: { idempotent: true } }, async (req, reply) => {
     const autonomy = (req.body as { autonomy?: unknown } | null | undefined)?.autonomy
     if (autonomy !== undefined && autonomy !== 'supervised') {
       throw apiError(
@@ -213,7 +213,7 @@ export function registerConfigRoutes(
     return reply.code(201).send({ id, version })
   })
 
-  app.post('/v1/webhooks', async (req, reply) => {
+  app.post('/v1/webhooks', { config: { idempotent: true } }, async (req, reply) => {
     const parsed = WebhookBody.safeParse(req.body)
     if (!parsed.success) throw validationError(parsed.error)
     const id = `wh_${randomUUID()}`

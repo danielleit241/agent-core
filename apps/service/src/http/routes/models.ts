@@ -69,7 +69,7 @@ export function registerModelRoutes(
     return list(aliases)
   })
 
-  app.patch<{ Params: { alias: string } }>('/v1/models/:alias', async (req) => {
+  app.patch<{ Params: { alias: string } }>('/v1/models/:alias', { config: { idempotent: true } }, async (req) => {
     const model = modelOf(req.params.alias)
     const body = parsePatch(req.body)
     if (!body.success) throw validationError(body.error)
