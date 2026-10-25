@@ -393,3 +393,140 @@ test('a worker whose lock was taken writes nothing and does not fail, settle or 
   expect((await new PgRunStore(pool, 'default').readEvents('r-lost')).map((e) => e.type)).toEqual(['run.created'])
   expect((await pool.query('SELECT locked_by FROM queue')).rows).toEqual([{ locked_by: 'w2' }])
 })
+
+class RetryableLlmError extends Error {
+  readonly retryable = true
+}
+
+test('a retryable LLM error re-enqueues the run at retryAt without failing or settling it', async () => {
+  const { version } = await new ConfigRepo(pool, 'default').putAgent(agent)
+  await seedRun('r11', 'helper', version)
+  const failing: LLMPort = {
+    complete: async () => {
+      throw new RetryableLlmError('provider busy')
+    },
+  }
+  const settled: string[] = []
+  const worker = startRunWorker({
+    pool,
+    llm: failing,
+    tools,
+    workerId: 'w1',
+    pollMs: 20,
+    onRunSettled: async (id) => {
+      settled.push(id)
+    },
+  })
+  const store = new PgRunStore(pool, 'default')
+  let retryAt: string | undefined
+  await waitFor(() => {
+    void store.readEvents('r11').then((events) => {
+      const wait = events.find((e) => e.type === 'error.raised' && (e.payload as { retryAt?: string }).retryAt !== undefined)
+      retryAt = (wait?.payload as { retryAt?: string } | undefined)?.retryAt
+    })
+    return retryAt !== undefined
+  })
+  await new Promise((r) => setTimeout(r, 200))
+  await worker.stop()
+  expect(settled).toEqual([])
+  expect(await runStatus('r11')).toBe('running')
+  const rows = await pool.query<{ locked_by: string | null; available_at: Date }>(
+    'SELECT locked_by, available_at FROM queue WHERE run_id = $1',
+    ['r11'],
+  )
+  expect(rows.rows).toHaveLength(1)
+  expect(rows.rows[0]?.locked_by).toBeNull()
+  expect(rows.rows[0]?.available_at.getTime()).toBe(new Date(retryAt!).getTime())
+})
+
+// Seeds the log of a run whose worker died right after `tool.requested` for call_1.
+async function seedInFlight(runId: string, versionNo: number, toolName: string): Promise<void> {
+  await createRun(pool, { tenantId: 'default', runId, agentId: 'helper', agentVersion: versionNo, input: { text: 'hi' } })
+  await new PgRunStore(pool, 'default').append(runId, [
+    { type: 'run.created', payload: { agentId: 'helper', input: { text: 'hi' } }, labels: ['trusted'] },
+    { type: 'run.state_changed', payload: { from: 'queued', to: 'running' }, labels: [] },
+    {
+      type: 'llm.responded',
+      payload: {
+        message: { role: 'assistant', content: '', toolCalls: [{ id: 'call_1', name: toolName, arguments: {} }] },
+        usage: { inputTokens: 1, outputTokens: 1 },
+        stopReason: 'tool_calls',
+      },
+      labels: [],
+    },
+    {
+      type: 'tool.requested',
+      payload: { toolCallId: 'call_1', tool: toolName, args: {}, idempotencyKey: `${runId}:call_1` },
+      labels: [],
+    },
+  ])
+  await enqueue(pool, { runId, tenantId: 'default' })
+}
+
+const writeTool = (idempotency: boolean) => ({
+  name: 'pay',
+  description: 'd',
+  inputSchema: {},
+  safety: { effect: 'write' as const, idempotency, reachesOutside: true, outputLabel: 'trusted' as const },
+  connectionId: 'c1',
+  source: {},
+  confirmed: {},
+})
+
+function recordingTools(): ToolInvoker & { keys: string[] } {
+  const port = {
+    keys: [] as string[],
+    call: async (_tool: unknown, _args: unknown, ctx: { idempotencyKey: string }) => {
+      port.keys.push(ctx.idempotencyKey)
+      return { content: 'ok', isError: false }
+    },
+  }
+  return port
+}
+
+test('a run resumed after tool.requested calls a keyed write again with the same key', async () => {
+  const { version } = await new ConfigRepo(pool, 'default').putAgent(agent)
+  await seedInFlight('r12', version, 'pay')
+  const recorder = recordingTools()
+  const settled: Array<[string, RunStatus]> = []
+  const worker = startRunWorker({
+    pool,
+    llm,
+    tools: recorder,
+    workerId: 'w1',
+    pollMs: 20,
+    loadContext: async () => ({ agent, agentVersion: version, toolsByName: { pay: writeTool(true) } }),
+    onRunSettled: async (id, status) => {
+      settled.push([id, status])
+    },
+  })
+  await waitFor(() => settled.length === 1)
+  await worker.stop()
+  expect(recorder.keys).toEqual(['r12:call_1'])
+  expect(settled).toEqual([['r12', 'completed']])
+  expect(await runStatus('r12')).toBe('completed')
+})
+
+test('a run resumed after tool.requested for an unkeyed write waits for a human', async () => {
+  const { version } = await new ConfigRepo(pool, 'default').putAgent(agent)
+  await seedInFlight('r13', version, 'pay')
+  const recorder = recordingTools()
+  const settled: Array<[string, RunStatus]> = []
+  const worker = startRunWorker({
+    pool,
+    llm,
+    tools: recorder,
+    workerId: 'w1',
+    pollMs: 20,
+    loadContext: async () => ({ agent, agentVersion: version, toolsByName: { pay: writeTool(false) } }),
+    onRunSettled: async (id, status) => {
+      settled.push([id, status])
+    },
+  })
+  await waitFor(() => settled.length === 1)
+  await worker.stop()
+  expect(recorder.keys).toEqual([])
+  expect(settled).toEqual([['r13', 'waiting_human']])
+  const row = await pool.query('SELECT status, waiting_reason FROM runs WHERE id = $1', ['r13'])
+  expect(row.rows).toEqual([{ status: 'waiting_human', waiting_reason: 'unknown_outcome' }])
+})

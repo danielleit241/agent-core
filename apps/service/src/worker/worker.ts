@@ -1,4 +1,4 @@
-import { advanceRun } from '@agent-core/core'
+import { advanceRun, projectRun } from '@agent-core/core'
 import type { AgentDefinition, LLMPort, RunStatus, ToolDescriptor, ToolInvoker } from '@agent-core/core'
 import {
   ConfigRepo,
@@ -31,6 +31,7 @@ export type RunWorkerDeps = {
 }
 
 const RETRY_DELAY_MS = 5000
+const MIN_REQUEUE_DELAY_MS = 1000
 const TERMINAL: readonly RunStatus[] = ['completed', 'failed', 'cancelled']
 
 /** A permanent problem with the run's configuration: retrying cannot help. */
@@ -138,6 +139,24 @@ async function processJob(deps: RunWorkerDeps, job: { runId: string; tenantId: s
     return // lost lock: the new holder owns the job
   }
   if (status === null) return // lock expires, the run is retried later
+  if (status === 'running') {
+    // The run waits for an LLM retry. Put the job back, unlocked, for when the retry is due: no settle, no release.
+    try {
+      const events = await new PgRunStore(deps.pool, tenantId, { lockedBy: deps.workerId }).readEvents(runId)
+      const proj = projectRun(events, '')
+      if (proj.status === 'running') {
+        const now = Date.now()
+        const retryAt = proj.llmRetry.retryAt === null ? Number.NaN : new Date(proj.llmRetry.retryAt).getTime()
+        const dueAt = Number.isNaN(retryAt) ? now + RETRY_DELAY_MS : Math.max(retryAt, now + MIN_REQUEUE_DELAY_MS)
+        await enqueue(deps.pool, { runId, tenantId, availableAt: new Date(dueAt) })
+        return
+      }
+      status = proj.status
+    } catch (err) {
+      console.error(`worker: could not re-enqueue run ${runId}; the lock will expire`, err)
+      return
+    }
+  }
   // Settle before release: when settling fails the row stays locked, the lock expires and the job
   // runs again. The settle step is idempotent, so the repeat is safe.
   try {
