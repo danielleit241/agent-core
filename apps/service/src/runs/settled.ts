@@ -1,5 +1,5 @@
 import type { RunStatus } from '@agent-core/core'
-import { getRunHead } from '@agent-core/store-postgres'
+import { getRunHead, withTenant } from '@agent-core/store-postgres'
 import type { createPool } from '@agent-core/store-postgres'
 import { enqueueWebhookEvent } from '@agent-core/webhooks'
 import type { WebhookEventType } from '@agent-core/webhooks'
@@ -23,6 +23,7 @@ export function createRunSettledHandler(pool: Pool): (runId: string, status: Run
     if (head?.lastSeq == null) return
     const { id, ...rest } = view
     // Deterministic id: the worker may run this again after a crash, and the unique index drops the repeat.
-    await enqueueWebhookEvent(pool, TENANT, type, { run_id: id, ...rest }, `evt_${runId}_${head.lastSeq}_${type}`)
+    const eventId = `evt_${runId}_${head.lastSeq}_${type}`
+    await withTenant(pool, TENANT, (db) => enqueueWebhookEvent(db, TENANT, type, { run_id: id, ...rest }, eventId))
   }
 }

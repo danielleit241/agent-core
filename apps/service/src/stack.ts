@@ -1,4 +1,4 @@
-import { ConfigRepo } from '@agent-core/store-postgres'
+import { ConfigRepo, withClaim, withTenant } from '@agent-core/store-postgres'
 import type { createPool } from '@agent-core/store-postgres'
 import { startDeliveryWorker } from '@agent-core/webhooks'
 import type { LLMPort } from '@agent-core/core'
@@ -35,7 +35,12 @@ export function createServiceStack(deps: ServiceStackDeps) {
     pollMs: deps.runPollMs,
     onRunSettled: createRunSettledHandler(pool),
   })
-  const deliveryWorker = startDeliveryWorker({ pool, pollMs: deps.deliveryPollMs, delaysS: deps.deliveryDelaysS })
+  const deliveryWorker = startDeliveryWorker({
+    scope: { claim: (fn) => withClaim(pool, fn), tenant: (t, fn) => withTenant(pool, t, fn) },
+    openSecret: (_tenantId, _webhookId, sealed) => sealed,
+    pollMs: deps.deliveryPollMs,
+    delaysS: deps.deliveryDelaysS,
+  })
   return {
     app,
     /** Stops the app first, then the workers, then the invoker. */
