@@ -18,6 +18,23 @@ export type RunnerDeps = {
 }
 
 const DEFAULT_MAX_LLM_CALLS = 30
+// About 12k tokens: a large tool output would fill the LLM context and every later request.
+const MAX_TOOL_OUTPUT_CHARS = 48_000
+
+const isHighSurrogate = (code: number): boolean => code >= 0xd800 && code <= 0xdbff
+
+/** Keeps the head and the tail of a long output, so both a header and a final summary survive. */
+function capToolOutput(content: string): string {
+  if (content.length <= MAX_TOOL_OUTPUT_CHARS) return content
+  let head = MAX_TOOL_OUTPUT_CHARS / 2
+  let tail = content.length - MAX_TOOL_OUTPUT_CHARS / 2
+  // Never split a surrogate pair: Postgres refuses a lone surrogate in jsonb.
+  if (isHighSurrogate(content.charCodeAt(head - 1))) head -= 1
+  if (isHighSurrogate(content.charCodeAt(tail - 1))) tail += 1
+  return `${content.slice(0, head)}
+[... ${tail - head} characters cut ...]
+${content.slice(tail)}`
+}
 
 const stateChanged = (from: RunStatus, to: RunStatus, reason?: string): NewEvent => ({
   type: 'run.state_changed',
@@ -183,7 +200,7 @@ async function execute(
   await deps.store.append(runId, [
     {
       type: 'tool.responded',
-      payload: { toolCallId: call.id, content: result.content, isError: result.isError },
+      payload: { toolCallId: call.id, content: capToolOutput(result.content), isError: result.isError },
       labels: [tool.safety.outputLabel],
     },
   ])
