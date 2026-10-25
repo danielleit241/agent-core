@@ -8,10 +8,11 @@
   },
   "dependencies": {
     "@agent-core/core": "workspace:*",
-    "@agent-core/store-postgres": "workspace:*",
+    "@agent-core/protocol": "workspace:*",
     "pg": "^8.0.0"
   },
   "devDependencies": {
+    "@agent-core/store-postgres": "workspace:*",
     "@types/pg": "^8.0.0"
   }
 }
