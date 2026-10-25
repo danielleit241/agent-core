@@ -21,8 +21,10 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions exist
 - Tool fingerprints: each tool remembers the definition an admin last reviewed. When it changes, the tool shows `changedSinceReview`, its confirmations no longer count, and every call waits for approval, even when an `allow` rule matches, until it is confirmed again. `PATCH` accepts the reviewed `fingerprint` and answers `409 tool_changed` when the tool changed since.
 - A run that waits on an unknown outcome records why (`error.raised`, for example `HTTP 503`); `pending_outcome.reason` shows it.
 - Every write endpoint accepts `Idempotency-Key`; a key reused with a different request gets 422 `idempotency_key_reused`.
-
-### Fixed
+- Tenants: `POST /v1/tenants` creates a tenant and its first API key; `POST /v1/tenants/{id}/keys` issues another key (older keys keep working). Every tenant has its own agents, connections, runs, webhooks and idempotency keys. The admin key works as the tenant `default`.
+- Row-level security: the service connects as a login role without table rights and switches to `agentcore_app` or `agentcore_claim` inside each transaction, so the database refuses a query that reaches another tenant's rows.
+- Connection and webhook secrets are encrypted at rest (AES-256-GCM, bound to tenant, table and row).
+- The admin key may send `X-Tenant-Id` on `/v1/connections` and `/v1/webhooks` routes to act for a tenant.
 
 - A filtered or refused LLM answer now fails the run with reason `filtered` instead of completing it.
 - The event log refuses a state change written from a stale status, so a run cancelled while a worker was starting it stays cancelled.
@@ -58,5 +60,10 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions exist
 - Tests moved from `src/` to a `tests/` folder in each package that mirrors `src/`.
 
 ### Upgrade notes
+
+- **Breaking:** `MIGRATOR_DATABASE_URL` (the owner that runs migrations) and `AGENT_CORE_MASTER_KEY` (32 bytes in base64, for example `openssl rand -base64 32`) are now required. `DATABASE_URL` must name the runtime login role (`agentcore_runtime` in development).
+- **Breaking:** PostgreSQL 16 or newer is required.
+- **Breaking:** `POST /v1/connections` and `POST /v1/webhooks` need the admin key; a tenant key gets 403. This holds until the SSRF guard exists.
+- **Breaking:** recreate existing databases with `docker compose down -v && pnpm db:up`. Plaintext secrets are not migrated, and the `agentcore_runtime` role is created only on a fresh volume.
 
 - After this change, every tool stored earlier (including read tools such as `orders.get`) runs strict and waits for approval. List the tools with `GET /v1/connections/{id}/tools` and confirm each one with `PATCH /v1/connections/{id}/tools/{tool}`, sending the `fingerprint` you reviewed.
