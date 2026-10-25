@@ -15,11 +15,23 @@ export type RunnerDeps = {
   signal?: AbortSignal
   /** Clock for the current-time context item. Tests inject a fixed one. */
   now?: () => Date
+  /** Jitter source for retry waits. Tests inject a fixed one. */
+  random?: () => number
+  /** Waits between tool attempts. Tests inject one that resolves at once. */
+  sleep?: (ms: number) => Promise<void>
 }
 
 const DEFAULT_MAX_LLM_CALLS = 30
 // About 12k tokens: a large tool output would fill the LLM context and every later request.
 const MAX_TOOL_OUTPUT_CHARS = 48_000
+
+const TOOL_MAX_ATTEMPTS = 3
+const TOOL_RETRY_WAITS_MS = [500, 1000]
+
+const jitter = (ms: number, random: () => number): number => Math.round(ms * (0.8 + 0.4 * random()))
+const sleepMs = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms))
+const isRetryable = (tool: ToolDescriptor): boolean =>
+  tool.safety.effect === 'read' || (tool.safety.effect === 'write' && tool.safety.idempotency === true)
 
 const isHighSurrogate = (code: number): boolean => code >= 0xd800 && code <= 0xdbff
 
@@ -105,8 +117,8 @@ async function handleToolCall(
   const inFlight = proj.inFlight.includes(call.id)
 
   if (inFlight) {
-    // The worker died after `tool.requested`. Reads are retried with the same key; writes are never repeated.
-    if (tool === undefined || tool.safety.effect !== 'read') {
+    // The worker died after `tool.requested`. Reads and keyed writes are called again with the same key; other writes are never repeated.
+    if (tool === undefined || !isRetryable(tool)) {
       const why =
         tool === undefined
           ? 'The run stopped after the tool call was sent, and the tool is no longer known. It may have run.'
@@ -182,20 +194,44 @@ async function execute(
       },
     ])
   }
-  let result: Awaited<ReturnType<ToolInvoker['call']>>
-  try {
-    result = await deps.tools.call(tool, call.arguments, {
-      idempotencyKey,
-      dryRun: false,
-      ...(proj.principal === null ? {} : { principal: proj.principal }),
-    })
-  } catch (err) {
-    if (isNotSent(err) || tool.safety.effect === 'read') {
-      await deps.store.append(runId, [toolError(call.id, toolUnavailable(err))])
-      return 'continue'
+  const retryable = isRetryable(tool)
+  const maxAttempts = retryable ? TOOL_MAX_ATTEMPTS : 1
+  const random = deps.random ?? Math.random
+  const sleep = deps.sleep ?? sleepMs
+  // On a resume an earlier attempt may have landed, so the call counts as sent.
+  let sent = !recordRequest
+  let result: Awaited<ReturnType<ToolInvoker['call']>> | undefined
+  for (let attempt = 1; result === undefined; attempt++) {
+    if (attempt > 1) {
+      await sleep(jitter(TOOL_RETRY_WAITS_MS[attempt - 2]!, random))
+      if (deps.signal?.aborted) return proj.status
     }
-    await deps.store.append(runId, unknownOutcome(failedAfterSend(err)))
-    return 'waiting_human'
+    try {
+      result = await deps.tools.call(tool, call.arguments, {
+        idempotencyKey,
+        dryRun: false,
+        ...(proj.principal === null ? {} : { principal: proj.principal }),
+      })
+    } catch (err) {
+      if (!isNotSent(err)) sent = true
+      if (retryable) {
+        await deps.store.append(runId, [
+          {
+            type: 'error.raised',
+            payload: { message: isNotSent(err) ? toolUnavailable(err) : failedAfterSend(err), retryable: true },
+            labels: [],
+          },
+        ])
+      }
+      if (attempt >= maxAttempts) {
+        if (tool.safety.effect === 'read' || !sent) {
+          await deps.store.append(runId, [toolError(call.id, toolUnavailable(err))])
+          return 'continue'
+        }
+        await deps.store.append(runId, unknownOutcome(failedAfterSend(err)))
+        return 'waiting_human'
+      }
+    }
   }
   await deps.store.append(runId, [
     {

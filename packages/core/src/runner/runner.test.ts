@@ -49,12 +49,21 @@ const TOOLS: Record<string, ToolDescriptor> = {
   },
 }
 
+// Kept out of TOOLS: some tests assert the exact tool list the model sees. Tests that need it use capDeps.
+const CAPTURE: ToolDescriptor = {
+  name: 'payments.capture',
+  description: 'Capture a payment',
+  inputSchema: {},
+  safety: { effect: 'write', idempotency: true, reachesOutside: true, outputLabel: 'confidential' },
+  connectionId: 'shop',
+}
+
 const AGENT: AgentDefinition = {
   id: 'support',
   instructions: 'You are a support agent.',
   connections: ['shop'],
   autonomy: 'supervised',
-  allow: [{ tool: 'payments.refund', when: { amount: { lte: 1000000 } } }],
+  allow: [{ tool: 'payments.refund', when: { amount: { lte: 1000000 } } }, { tool: 'payments.capture' }],
   model: 'test-model',
 }
 
@@ -105,7 +114,9 @@ function scriptedLlm(steps: Step[]) {
   return llm
 }
 
-function fakeTools(failWith?: Error) {
+/** `failWith` is one error thrown on every call, or a list for successive calls (`undefined` = succeed). */
+type Failures = Error | (Error | undefined)[]
+function fakeTools(failWith?: Failures) {
   const calls: { name: string; args: Record<string, unknown>; idempotencyKey: string }[] = []
   const ctxs: Parameters<ToolInvoker['call']>[2][] = []
   const tools: ToolInvoker & { calls: typeof calls; ctxs: typeof ctxs } = {
@@ -114,7 +125,8 @@ function fakeTools(failWith?: Error) {
     async call(tool, args, ctx) {
       ctxs.push(ctx)
       calls.push({ name: tool.name, args, idempotencyKey: ctx.idempotencyKey })
-      if (failWith) throw failWith
+      const fail = Array.isArray(failWith) ? failWith[calls.length - 1] : failWith
+      if (fail) throw fail
       return tool.name === 'orders.get'
         ? { content: JSON.stringify({ id: '1042', status: 'delivered' }), isError: false }
         : { content: 'Refunded', isError: false }
@@ -140,15 +152,31 @@ const resolved = (toolCallId: string, action: 'approve' | 'reject'): NewEvent =>
 })
 const types = (events: StoredEvent[]) => events.map((e) => e.type)
 
-async function setupWithEvents(events: NewEvent[], failWith?: Error) {
+async function setupWithEvents(events: NewEvent[], failWith?: Failures) {
   const store = new MemoryRunStore()
   await store.append('r1', events)
   return { store, tools: fakeTools(failWith) }
 }
-const setup = (failWith?: Error) => setupWithEvents([created()], failWith)
+const setup = (failWith?: Failures) => setupWithEvents([created()], failWith)
 
-function deps(o: { llm: LLMPort; store: RunStore; tools: ToolInvoker; maxLlmCalls?: number; now?: () => Date }) {
+function deps(o: {
+  llm: LLMPort
+  store: RunStore
+  tools: ToolInvoker
+  maxLlmCalls?: number
+  now?: () => Date
+  random?: () => number
+  /** Receives every wait the runner asks for; the wait itself resolves at once. */
+  sleeps?: number[]
+  sleep?: (ms: number) => Promise<void>
+}) {
   return {
+    random: o.random ?? (() => 0.5),
+    sleep:
+      o.sleep ??
+      (async (ms: number) => {
+        o.sleeps?.push(ms)
+      }),
     store: o.store,
     llm: o.llm,
     tools: o.tools,
@@ -159,6 +187,8 @@ function deps(o: { llm: LLMPort; store: RunStore; tools: ToolInvoker; maxLlmCall
     ...(o.now !== undefined ? { now: o.now } : {}),
   }
 }
+
+const capDeps = (o: Parameters<typeof deps>[0]) => ({ ...deps(o), toolsByName: { ...TOOLS, 'payments.capture': CAPTURE } })
 
 function logAfterToolRequested(tool: string): NewEvent[] {
   const args = tool === 'orders.get' ? { order_id: '1042' } : { order_id: '1042', amount: 100 }
@@ -734,4 +764,90 @@ test('cutting a long tool output never splits a surrogate pair', async () => {
   const responded = (await store.readEvents('r1')).find((e) => e.type === 'tool.responded')!
   // encodeURIComponent throws on a lone surrogate.
   expect(() => encodeURIComponent((responded.payload as { content: string }).content)).not.toThrow()
+})
+
+const sentError = () => new Error('boom')
+const notSentError = () => Object.assign(new Error('refused'), { notSent: true })
+const three = (e: () => Error) => [e(), e(), e()]
+
+test('a failing read is tried 3 times with the same key, then the model gets a tool error', async () => {
+  const llm = scriptedLlm([callTool('orders.get', { order_id: '1042' }), say('Sorry.')])
+  const { store, tools } = await setup(three(sentError))
+  const sleeps: number[] = []
+  expect(await advanceRun('r1', deps({ llm, store, tools, sleeps }))).toBe('completed')
+  expect(tools.calls.map((c) => c.idempotencyKey)).toEqual(['r1:call_1', 'r1:call_1', 'r1:call_1'])
+  const events = await store.readEvents('r1')
+  expect(raised(events).map((p) => (p as { retryable: boolean }).retryable)).toEqual([true, true, true])
+  expect(llm.lastRequest().messages.at(-1)).toMatchObject({ role: 'tool', content: 'Tool unavailable.' })
+  expect(sleeps).toEqual([500, 1000])
+})
+
+test('a read that fails once then succeeds is answered normally', async () => {
+  const llm = scriptedLlm([callTool('orders.get', { order_id: '1042' }), say('ok')])
+  const { store, tools } = await setup([sentError(), undefined])
+  expect(await advanceRun('r1', deps({ llm, store, tools }))).toBe('completed')
+  expect(tools.calls).toHaveLength(2)
+  const events = await store.readEvents('r1')
+  expect(events.filter((e) => e.type === 'error.raised')).toHaveLength(1)
+  expect(events.find((e) => e.type === 'tool.responded')!.payload).toMatchObject({ isError: false })
+})
+
+test('a keyed write is retried with the same key', async () => {
+  const llm = scriptedLlm([callTool('payments.capture', { order_id: '1042' }), say('ok')])
+  const { store, tools } = await setup([sentError(), undefined])
+  expect(await advanceRun('r1', capDeps({ llm, store, tools }))).toBe('completed')
+  expect(tools.calls.map((c) => c.idempotencyKey)).toEqual(['r1:call_1', 'r1:call_1'])
+})
+
+test('a keyed write that fails 3 times after sending goes to unknown_outcome', async () => {
+  const llm = scriptedLlm([callTool('payments.capture', { order_id: '1042' })])
+  const { store, tools } = await setup(three(sentError))
+  expect(await advanceRun('r1', capDeps({ llm, store, tools }))).toBe('waiting_human')
+  expect(projectRun(await store.readEvents('r1'), '').waitingReason).toBe('unknown_outcome')
+  expect(tools.calls).toHaveLength(3)
+})
+
+test('a keyed write that is never sent in 3 attempts becomes a tool error', async () => {
+  const llm = scriptedLlm([callTool('payments.capture', { order_id: '1042' }), say('Sorry.')])
+  const { store, tools } = await setup(three(notSentError))
+  expect(await advanceRun('r1', capDeps({ llm, store, tools }))).toBe('completed')
+  expect(tools.calls).toHaveLength(3)
+  expect(llm.lastRequest().messages.at(-1)).toMatchObject({ role: 'tool', content: 'Tool unavailable.' })
+})
+
+test('a keyed write interrupted mid-call is called again with the same key', async () => {
+  const { store, tools } = await setupWithEvents(logAfterToolRequested('payments.capture'))
+  expect(await advanceRun('r1', capDeps({ llm: scriptedLlm([say('ok')]), store, tools }))).toBe('completed')
+  expect(tools.calls).toEqual([expect.objectContaining({ name: 'payments.capture', idempotencyKey: 'r1:call_1' })])
+  expect((await store.readEvents('r1')).filter((e) => e.type === 'tool.requested')).toHaveLength(1)
+})
+
+test('a resumed keyed write whose attempts are all not sent goes to unknown_outcome', async () => {
+  const { store, tools } = await setupWithEvents(logAfterToolRequested('payments.capture'), three(notSentError))
+  expect(await advanceRun('r1', capDeps({ llm: scriptedLlm([]), store, tools }))).toBe('waiting_human')
+  expect(tools.calls).toHaveLength(3)
+  expect(projectRun(await store.readEvents('r1'), '').waitingReason).toBe('unknown_outcome')
+})
+
+test('an abort during the wait between attempts appends nothing more', async () => {
+  const ac = new AbortController()
+  const llm = scriptedLlm([callTool('orders.get', { order_id: '1042' })])
+  const { store, tools } = await setup(three(sentError))
+  const sleep = async () => ac.abort()
+  await advanceRun('r1', { ...deps({ llm, store, tools, sleep }), signal: ac.signal })
+  const events = await store.readEvents('r1')
+  expect(types(events).at(-1)).toBe('error.raised')
+  expect(types(events)).not.toContain('tool.responded')
+  expect(tools.calls).toHaveLength(1)
+})
+
+test.each([
+  [0, [400, 800]],
+  [1, [600, 1200]],
+])('retry waits are jittered (random %d)', async (r, expected) => {
+  const llm = scriptedLlm([callTool('orders.get', { order_id: '1042' }), say('Sorry.')])
+  const { store, tools } = await setup(three(sentError))
+  const sleeps: number[] = []
+  await advanceRun('r1', deps({ llm, store, tools, sleeps, random: () => r }))
+  expect(sleeps).toEqual(expected)
 })
