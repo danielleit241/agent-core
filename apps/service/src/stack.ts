@@ -2,11 +2,11 @@ import { ConfigRepo } from '@agent-core/store-postgres'
 import type { createPool } from '@agent-core/store-postgres'
 import { startDeliveryWorker } from '@agent-core/webhooks'
 import type { LLMPort } from '@agent-core/core'
-import { buildApp } from './app'
-import type { ProbeResult } from './routes/models'
-import { createRunSettledHandler } from './settled'
-import { createToolRouter } from './tools'
-import { startRunWorker } from './worker'
+import { buildApp } from './http/app'
+import type { ProbeResult } from './http/routes/models'
+import { createRunSettledHandler } from './runs/settled'
+import { createToolRouter } from './tools/router'
+import { startRunWorker } from './worker/worker'
 
 export type ServiceStackDeps = {
   pool: ReturnType<typeof createPool>

@@ -3,8 +3,8 @@ import type { AddressInfo } from 'node:net'
 import { afterEach, expect, test } from 'vitest'
 import { verifyPrincipalJwt } from '@agent-core/tools-webhook'
 import { verifyWebhook } from '@agent-core/webhooks'
-import { startStack } from './harness'
-import type { Stack } from './harness'
+import { startStack } from './support/harness'
+import type { Stack } from './support/harness'
 
 let stack: Stack | undefined
 let toolServer: ReturnType<typeof createServer> | undefined

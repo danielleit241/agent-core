@@ -27,6 +27,7 @@ pnpm models:check            # probe the configured models (needs a running serv
 ## Rules
 
 - `packages/core` imports only `zod`, `node:crypto` and itself. Adapters live in `packages/adapters/*`.
+- Inside a package, `src/` is grouped by responsibility (for example `events/`, `policy/`, `runner/`); a small package stays flat. Tests sit next to the code they test: `*.test.ts` (unit), `*.db.test.ts` (needs Postgres); end-to-end tests live in `e2e/`.
 - The event log is the source of truth. Append only; recompute state from events.
 - Unknown tools are treated as writes that reach outside. Code never loosens a rule by itself.
 - No team code runs inside the service. No new integration paths beyond the three gates.

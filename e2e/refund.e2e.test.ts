@@ -1,9 +1,9 @@
 import { afterEach, expect, test } from 'vitest'
 import { verifyWebhook } from '@agent-core/webhooks'
 import type { FakeTurn } from '@agent-core/fake-llm'
-import { startStack } from './harness'
-import type { Stack } from './harness'
-import { registerShop } from './setup'
+import { startStack } from './support/harness'
+import type { Stack } from './support/harness'
+import { registerShop } from './support/setup'
 
 let stack: Stack | undefined
 afterEach(async () => {

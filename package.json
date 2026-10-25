@@ -18,7 +18,7 @@
     "dev": "tsx watch --env-file-if-exists=.env apps/service/src/main.ts",
     "start": "tsx --env-file-if-exists=.env apps/service/src/main.ts",
     "mock:shop": "tsx scripts/mock-shop.ts",
-    "eval": "tsx --env-file-if-exists=.env packages/evals/src/cli.ts",
+    "eval": "tsx --env-file-if-exists=.env packages/evals/src/cli/cli.ts",
     "smoke:live": "tsx --env-file-if-exists=.env scripts/smoke-live.ts",
     "models:check": "tsx --env-file-if-exists=.env scripts/models-check.ts"
   },

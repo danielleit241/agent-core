@@ -1,5 +1,5 @@
-import { startStack } from '../e2e/harness'
-import { registerShop } from '../e2e/setup'
+import { startStack } from '../e2e/support/harness'
+import { registerShop } from '../e2e/support/setup'
 
 // Uses the same OpenAI-compatible endpoint as the service (LLM_BASE_URL, LLM_API_KEY).
 const baseUrl = process.env.LLM_BASE_URL
