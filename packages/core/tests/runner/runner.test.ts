@@ -70,7 +70,7 @@ const AGENT: AgentDefinition = {
 type Step = {
   content?: string
   calls?: { name: string; args: Record<string, unknown>; argumentsError?: string }[]
-  stopReason: 'end' | 'tool_calls' | 'length'
+  stopReason: 'end' | 'tool_calls' | 'length' | 'filtered'
   throws?: Error
 }
 const callTool = (name: string, args: Record<string, unknown>): Step => ({
@@ -346,6 +346,20 @@ test('stopReason length without tool calls fails the run', async () => {
     message: 'LLM output truncated (length)',
     retryable: false,
   })
+  expect(projectRun(events, '').status).toBe('failed')
+})
+
+test('stopReason filtered fails the run with reason filtered', async () => {
+  const llm = scriptedLlm([say('', 'filtered')])
+  const { store, tools } = await setup()
+  expect(await advanceRun('r1', deps({ llm, store, tools }))).toBe('failed')
+  const events = await store.readEvents('r1')
+  expect(events.map((e) => e.type).slice(-3)).toEqual(['llm.responded', 'error.raised', 'run.state_changed'])
+  expect(events.find((e) => e.type === 'error.raised')!.payload).toEqual({
+    message: 'LLM response filtered by the provider',
+    retryable: false,
+  })
+  expect(events.at(-1)!.payload).toMatchObject({ to: 'failed', reason: 'filtered' })
   expect(projectRun(events, '').status).toBe('failed')
 })
 
