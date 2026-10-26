@@ -172,6 +172,12 @@ const payloadSchemas = {
     // ISO 8601; set when a run starts to sleep until a follow-up.
     wakeAt: z.string().optional(),
   }),
+  // A connection guard made the call wait; the call has not been sent. `retryAt` is ISO 8601.
+  'tool.deferred': z.object({
+    toolCallId: z.string(),
+    reason: z.enum(['rate', 'concurrency', 'breaker']),
+    retryAt: z.string(),
+  }),
   'limit.reached': z.object({ limit: LimitNameSchema, max: z.number(), value: z.number() }),
   'limit.continued': z.object({ limit: LimitNameSchema }),
   // What a human sends to a run that is not waiting for them: `message` steers it, `cancel` stops it before its next step.
@@ -205,6 +211,7 @@ export const NewEventSchema = z.discriminatedUnion('type', [
   eventSchema('limit.reached', payloadSchemas['limit.reached']),
   eventSchema('limit.continued', payloadSchemas['limit.continued']),
   eventSchema('input.received', payloadSchemas['input.received']),
+  eventSchema('tool.deferred', payloadSchemas['tool.deferred']),
 ])
 export type NewEvent = z.infer<typeof NewEventSchema>
 

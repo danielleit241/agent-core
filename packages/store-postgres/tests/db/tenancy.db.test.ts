@@ -21,9 +21,9 @@ afterAll(async () => {
 })
 
 const HASH = 'a'.repeat(64)
-const TABLES = ['tenants', 'api_keys', 'agents', 'connections', 'runs', 'events', 'queue', 'webhooks', 'webhook_deliveries', 'idempotency_keys']
+const TABLES = ['tenants', 'api_keys', 'agents', 'connections', 'runs', 'events', 'queue', 'webhooks', 'webhook_deliveries', 'idempotency_keys', 'connection_guards', 'connection_leases']
 /** Tables where agentcore_app holds DELETE. */
-const DELETABLE = ['queue', 'idempotency_keys']
+const DELETABLE = ['queue', 'idempotency_keys', 'connection_guards', 'connection_leases']
 /** One UPDATE per table where agentcore_app holds UPDATE; it matches every visible row. */
 const UPDATES: Record<string, string> = {
   agents: 'UPDATE agents SET version = version',
@@ -32,6 +32,8 @@ const UPDATES: Record<string, string> = {
   queue: 'UPDATE queue SET priority = priority',
   webhook_deliveries: 'UPDATE webhook_deliveries SET attempts = attempts',
   idempotency_keys: 'UPDATE idempotency_keys SET status_code = status_code',
+  connection_guards: 'UPDATE connection_guards SET failures = failures',
+  connection_leases: 'UPDATE connection_leases SET expires_at = expires_at',
 }
 
 async function seed(tenant: string): Promise<void> {
@@ -50,6 +52,8 @@ async function seed(tenant: string): Promise<void> {
     await c.query("INSERT INTO webhooks (tenant_id, id, url, secret, events) VALUES ($1, 'w1', 'http://x', 's', '{}')", [tenant])
     await c.query("INSERT INTO webhook_deliveries (id, tenant_id, webhook_id, event_id, type, body) VALUES ('d1', $1, 'w1', 'e1', 't', 'b')", [tenant])
     await c.query("INSERT INTO idempotency_keys (tenant_id, key, request_hash) VALUES ($1, 'k', $2)", [tenant, HASH])
+    await c.query("INSERT INTO connection_guards (tenant_id, connection_id, window_start) VALUES ($1, 'cn', now())", [tenant])
+    await c.query("INSERT INTO connection_leases (id, tenant_id, connection_id, expires_at) VALUES (gen_random_uuid(), $1, 'cn', now())", [tenant])
   })
 }
 

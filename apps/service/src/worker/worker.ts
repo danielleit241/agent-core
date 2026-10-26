@@ -1,8 +1,9 @@
 import { SecretDecryptError, advanceRun, expireWait, projectRun } from '@agent-core/core'
-import type { AgentDefinition, LLMPort, RunStatus, SecretBox, ToolDescriptor, ToolInvoker } from '@agent-core/core'
+import type { AgentDefinition, ConnectionGuard, ConnectionLimits, LLMPort, RunStatus, SecretBox, ToolDescriptor, ToolInvoker } from '@agent-core/core'
 import {
   ConfigRepo,
   LockLostError,
+  PgConnectionGuard,
   PgRunStore,
   StateConflictError,
   claim,
@@ -18,7 +19,12 @@ type Pool = ReturnType<typeof createPool>
 
 const startOfUtcDay = (d: Date): Date => new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()))
 
-export type RunContext = { agent: AgentDefinition; agentVersion: number; toolsByName: Record<string, ToolDescriptor> }
+export type RunContext = {
+  agent: AgentDefinition
+  agentVersion: number
+  toolsByName: Record<string, ToolDescriptor>
+  guard?: ConnectionGuard
+}
 
 export type RunWorkerDeps = {
   pool: Pool
@@ -56,6 +62,7 @@ async function loadContext(pool: Pool, secrets: SecretBox, runId: string, tenant
   if (!agent) throw new ConfigError(`agent not found: ${run.agentId}`)
   // No prototype: a tool named `toString` must not collide with inherited members.
   const toolsByName: Record<string, ToolDescriptor> = Object.create(null)
+  const limits: Record<string, Partial<ConnectionLimits> | undefined> = Object.create(null)
   for (const connectionId of agent.definition.connections) {
     let connection: Awaited<ReturnType<typeof config.getConnection>>
     try {
@@ -66,12 +73,13 @@ async function loadContext(pool: Pool, secrets: SecretBox, runId: string, tenant
       throw err
     }
     if (!connection) throw new ConfigError(`connection not found: ${connectionId}`)
+    limits[connectionId] = connection.limits ?? undefined
     for (const tool of connection.tools) {
       if (Object.hasOwn(toolsByName, tool.name)) throw new ConfigError(`duplicate tool name: ${tool.name}`)
       toolsByName[tool.name] = tool
     }
   }
-  return { agent: agent.definition, agentVersion: agent.version, toolsByName }
+  return { agent: agent.definition, agentVersion: agent.version, toolsByName, guard: new PgConnectionGuard(pool, tenantId, limits) }
 }
 
 /** Records the failure. Returns the settled status, or null when the failure could not be recorded. */
@@ -180,13 +188,14 @@ async function processJob(deps: RunWorkerDeps, job: { runId: string; tenantId: s
   }
   if (status === null) return // lock expires, the run is retried later
   if (status === 'running') {
-    // The run waits for an LLM retry. Put the job back, unlocked, for when the retry is due: no settle, no release.
+    // The run waits for an LLM retry or for a connection slot. Put the job back, unlocked, for when it is due: no settle, no release.
     try {
       const events = await new PgRunStore(deps.pool, tenantId, { lockedBy: deps.workerId }).readEvents(runId)
       const proj = projectRun(events, '')
       if (proj.status === 'running') {
         const now = Date.now()
-        const retryAt = proj.llmRetry.retryAt === null ? Number.NaN : new Date(proj.llmRetry.retryAt).getTime()
+        const due = proj.deferral?.retryAt ?? proj.llmRetry.retryAt
+        const retryAt = due === null ? Number.NaN : new Date(due).getTime()
         const dueAt = Number.isNaN(retryAt) ? now + RETRY_DELAY_MS : Math.max(retryAt, now + MIN_REQUEUE_DELAY_MS)
         await requeueIfHolder(deps.pool, runId, deps.workerId, new Date(dueAt))
         return

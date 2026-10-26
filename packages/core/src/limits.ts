@@ -52,3 +52,16 @@ export function resolveLimits(partial?: Partial<Limits>): Limits {
 export function limitsAboveDefault(partial?: Partial<Limits>): LimitName[] {
   return LIMIT_NAMES.filter((name) => partial?.[name] !== undefined && partial[name] > DEFAULT_LIMITS[name])
 }
+
+/** Per-connection limits, shared by every run and worker of the tenant. */
+export const ConnectionLimitsSchema = z.object({ calls_per_minute: count, concurrency: count }).partial().strict()
+export type ConnectionLimits = Required<z.infer<typeof ConnectionLimitsSchema>>
+
+export const DEFAULT_CONNECTION_LIMITS: ConnectionLimits = { calls_per_minute: 60, concurrency: 4 }
+
+/** The breaker opens after this many failed calls in a row, stays open for `openS`, then lets one trial call through. */
+export const BREAKER = { failures: 5, openS: 30 } as const
+
+export function resolveConnectionLimits(partial?: Partial<ConnectionLimits>): ConnectionLimits {
+  return { ...DEFAULT_CONNECTION_LIMITS, ...partial }
+}

@@ -36,6 +36,8 @@ export type RunProjection = {
   cancelRequested: boolean
   /** Messages from a human that arrived after the last LLM request. */
   unreadMessages: number
+  /** The guard deferrals in a row of the pending call, until it is requested or answered. */
+  deferral: { toolCallId: string; count: number; since: string; retryAt: string } | null
   /** Seq of the last event. */
   lastSeq: number
 }
@@ -76,6 +78,9 @@ export function projectRun(events: StoredEvent[], instructions: string): RunProj
   let wakeAt: string | null = null
   let followups = 0
   let cancelRequested = false
+  let deferral: RunProjection['deferral'] = null
+  // A deferred call waits on its connection, not on the run: that time is not run time.
+  let paused = false
   let unreadMessages = 0
   // A user message between an LLM request and its answer, or between a tool call and its result,
   // breaks the provider's turn order, so it waits until the turn closes.
@@ -89,6 +94,11 @@ export function projectRun(events: StoredEvent[], instructions: string): RunProj
   }
 
   for (const e of events) {
+    // A message does not end the wait; the call still waits on its connection.
+    if (paused && e.type !== 'tool.deferred' && e.type !== 'input.received') {
+      paused = false
+      if (status === 'running') runningSince = e.createdAt
+    }
     switch (e.type) {
       case 'run.state_changed':
         if (runningSince !== null) runningMs += Date.parse(e.createdAt) - Date.parse(runningSince)
@@ -127,12 +137,27 @@ export function projectRun(events: StoredEvent[], instructions: string): RunProj
         llmOpen = false
         flush()
         break
+      case 'tool.deferred':
+        if (runningSince !== null) runningMs += Date.parse(e.createdAt) - Date.parse(runningSince)
+        runningSince = null
+        paused = true
+        {
+          // Read through a typed local: TypeScript narrows the closure-assigned `deferral` to `never` here.
+          const prev = deferral as RunProjection['deferral']
+          deferral =
+            prev?.toolCallId === e.payload.toolCallId
+              ? { ...prev, count: prev.count + 1, retryAt: e.payload.retryAt }
+              : { toolCallId: e.payload.toolCallId, count: 1, since: e.createdAt, retryAt: e.payload.retryAt }
+        }
+        break
       case 'tool.responded':
+        if (deferral?.toolCallId === e.payload.toolCallId) deferral = null
         responded.add(e.payload.toolCallId)
         messages.push({ role: 'tool', toolCallId: e.payload.toolCallId, content: e.payload.content })
         flush()
         break
       case 'tool.requested':
+        if (deferral?.toolCallId === e.payload.toolCallId) deferral = null
         requested.add(e.payload.toolCallId)
         break
       case 'outcome.settled':
@@ -189,6 +214,7 @@ export function projectRun(events: StoredEvent[], instructions: string): RunProj
     followups,
     cancelRequested,
     unreadMessages,
+    deferral,
     lastSeq: events.at(-1)!.seq,
     output,
     principal: principal === undefined ? null : { id: principal.id, roles: principal.roles },

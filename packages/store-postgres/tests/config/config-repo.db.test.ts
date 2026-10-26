@@ -57,6 +57,7 @@ test('connection round trip keeps source and confirmed; upsert and miss', async 
     url: 'http://a/mcp',
     secret: null,
     tools: [{ ...tool, fingerprint: FINGERPRINT, changedSinceReview: false }],
+    limits: null,
   })
   await repo.putConnection({ id: 'shop', kind: 'mcp', url: 'http://b/mcp', tools: [] })
   expect(await repo.getConnection('shop')).toMatchObject({ url: 'http://b/mcp', tools: [] })

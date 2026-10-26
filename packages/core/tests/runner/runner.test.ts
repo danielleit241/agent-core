@@ -1,5 +1,5 @@
 import { GENESIS_HASH, hashEvent } from '../../src/events/hash'
-import { AppendConflictError, type LLMPort, type RunStore, type ToolInvoker } from '../../src/ports'
+import { AppendConflictError, type ConnectionGuard, type GuardDenial, type LLMPort, type RunStore, type ToolInvoker } from '../../src/ports'
 import { projectRun } from '../../src/events/projection'
 import { advanceRun, expireWait } from '../../src/runner/runner'
 import type { AgentDefinition, Limits, Message, NewEvent, RunStatus, StoredEvent, ToolDescriptor } from '../../src/types'
@@ -1399,5 +1399,193 @@ describe('follow-ups', () => {
       content: 'Follow-up limit reached: a run may schedule at most 10 follow-ups.',
       isError: true,
     })
+  })
+})
+
+describe('connection guard', () => {
+  const T0 = Date.parse('2026-10-26T10:00:00.000Z')
+  function clock() {
+    let ms = T0
+    return { now: () => new Date(ms), advance: (s: number) => void (ms += s * 1000), at: (s: number) => new Date(T0 + s * 1000).toISOString() }
+  }
+  /** Answers each acquire with the next denial in the list; grants once the list is used up. */
+  function fakeGuard(denials: GuardDenial[] = []) {
+    const acquired: string[] = []
+    const released: [string, 'ok' | 'failed' | 'unused'][] = []
+    const guard: ConnectionGuard & { acquired: string[]; released: typeof released } = {
+      acquired,
+      released,
+      async acquire(connectionId) {
+        acquired.push(connectionId)
+        const denied = denials.shift()
+        return denied === undefined ? { lease: `lease_${acquired.length}` } : { denied }
+      },
+      async release(lease, outcome) {
+        released.push([lease, outcome])
+      },
+    }
+    return guard
+  }
+  async function start(c: ReturnType<typeof clock>, steps: Step[], guard: ConnectionGuard, failWith?: Failures) {
+    const store = new MemoryRunStore(c.now)
+    await store.append('r1', [created()])
+    const llm = scriptedLlm(steps)
+    const tools = fakeTools(failWith)
+    return { store, llm, tools, d: { ...deps({ llm, store, tools, now: c.now }), guard } }
+  }
+  const lookup = callTool('orders.get', { order_id: '1042' })
+
+  test('a denied call is deferred to retryAt before it is requested; the run waits and does not fail', async () => {
+    const c = clock()
+    const guard = fakeGuard([{ reason: 'rate', retryAt: c.at(30) }])
+    const { store, tools, d } = await start(c, [lookup, say('done')], guard)
+    expect(await advanceRun('r1', d)).toBe('running')
+    const log = await store.readEvents('r1')
+    expect(log.at(-1)).toMatchObject({ type: 'tool.deferred', payload: { toolCallId: 'call_1', reason: 'rate', retryAt: c.at(30) } })
+    expect(types(log)).not.toContain('tool.requested')
+    expect(tools.calls).toEqual([])
+    expect(guard.acquired).toEqual(['shop'])
+
+    c.advance(29)
+    const before = log.length
+    expect(await advanceRun('r1', d)).toBe('running')
+    expect((await store.readEvents('r1')).length).toBe(before)
+    expect(guard.acquired).toHaveLength(1)
+
+    c.advance(1)
+    expect(await advanceRun('r1', d)).toBe('completed')
+    expect(tools.calls).toHaveLength(1)
+    expect(guard.released).toEqual([['lease_2', 'ok']])
+  })
+
+  test('a tool result with isError releases ok', async () => {
+    const c = clock()
+    const guard = fakeGuard()
+    const { d } = await start(c, [lookup, say('done')], guard)
+    expect(await advanceRun('r1', { ...d, tools: { call: async () => ({ content: 'not found', isError: true }) } })).toBe('completed')
+    expect(guard.released).toEqual([['lease_1', 'ok']])
+  })
+
+  test('a thrown error releases failed on every attempt', async () => {
+    const c = clock()
+    const guard = fakeGuard()
+    const { d } = await start(c, [lookup, say('done')], guard, new Error('boom'))
+    expect(await advanceRun('r1', d)).toBe('completed')
+    expect(guard.released).toEqual([
+      ['lease_1', 'failed'],
+      ['lease_2', 'failed'],
+      ['lease_3', 'failed'],
+    ])
+  })
+
+  test('a call denied for concurrency backs off 1, 2, 4 ... seconds, at most 10', async () => {
+    const c = clock()
+    const guard = fakeGuard(Array.from({ length: 7 }, () => ({ reason: 'concurrency' as const, retryAt: null })))
+    const { store, d } = await start(c, [lookup, say('done')], guard)
+    const waits: number[] = []
+    for (let i = 0; i < 7; i++) {
+      expect(await advanceRun('r1', d)).toBe('running')
+      const retryAt = ((await store.readEvents('r1')).at(-1)!.payload as { retryAt: string }).retryAt
+      waits.push((Date.parse(retryAt) - c.now().getTime()) / 1000)
+      c.advance(waits.at(-1)!)
+    }
+    expect(waits).toEqual([1, 2, 4, 8, 10, 10, 10])
+    expect(await advanceRun('r1', d)).toBe('completed')
+  })
+
+  test('a call deferred for more than an hour gets a tool error and the run continues', async () => {
+    const c = clock()
+    const guard = fakeGuard(Array.from({ length: 200 }, () => ({ reason: 'breaker' as const, retryAt: null })))
+    guard.acquire = async (connectionId) => {
+      guard.acquired.push(connectionId)
+      return { denied: { reason: 'breaker', retryAt: new Date(c.now().getTime() + 600_000).toISOString() } }
+    }
+    const { store, llm, d } = await start(c, [lookup, say('done')], guard)
+    for (let i = 0; i < 6; i++) {
+      expect(await advanceRun('r1', d)).toBe('running')
+      c.advance(600)
+    }
+    expect(await advanceRun('r1', d)).toBe('completed')
+    const result = (await store.readEvents('r1')).find((e) => e.type === 'tool.responded')!
+    expect(result.payload).toEqual({ toolCallId: 'call_1', content: 'Connection unavailable.', isError: true })
+    expect(llm.requests).toHaveLength(2)
+  })
+
+  test('the time a call waits on the guard is not run time', async () => {
+    const c = clock()
+    const guard = fakeGuard([{ reason: 'rate', retryAt: c.at(3000) }])
+    const { store, d } = await start(c, [lookup, say('done')], guard)
+    await advanceRun('r1', { ...d, agent: { ...AGENT, limits: { run_time_s: 60 } } })
+    c.advance(3000)
+    expect(await advanceRun('r1', { ...d, agent: { ...AGENT, limits: { run_time_s: 60 } } })).toBe('completed')
+    expect(projectRun(await store.readEvents('r1'), '').runningMs).toBe(0)
+  })
+
+  test('a sent write that waits on its connection for an hour waits for a human, as an unknown outcome', async () => {
+    const c = clock()
+    const store = new MemoryRunStore(c.now)
+    await store.append('r1', logAfterToolRequested('payments.capture'))
+    const guard = fakeGuard()
+    guard.acquire = async (connectionId) => {
+      guard.acquired.push(connectionId)
+      return { denied: { reason: 'breaker', retryAt: new Date(c.now().getTime() + 600_000).toISOString() } }
+    }
+    const tools = fakeTools()
+    const d = { ...capDeps({ llm: scriptedLlm([]), store, tools, now: c.now }), guard }
+    for (let i = 0; i < 6; i++) {
+      expect(await advanceRun('r1', d)).toBe('running')
+      c.advance(600)
+    }
+    expect(await advanceRun('r1', d)).toBe('waiting_human')
+    const log = await store.readEvents('r1')
+    expect(types(log)).not.toContain('tool.responded')
+    expect(log.at(-1)!.payload).toMatchObject({ to: 'waiting_human', reason: 'unknown_outcome' })
+    expect(tools.calls).toEqual([])
+  })
+
+  test('a guard that throws does not fail the run: the call is neither deferred nor sent, and is retried later', async () => {
+    const c = clock()
+    const guard = fakeGuard()
+    guard.acquire = async () => {
+      throw new Error('statement timeout')
+    }
+    const { store, d } = await start(c, [lookup, say('done')], guard)
+    expect(await advanceRun('r1', d)).toBe('running')
+    const logged = types(await store.readEvents('r1'))
+    expect(logged.filter((t) => t === 'tool.deferred' || t === 'tool.requested' || t === 'error.raised')).toEqual([])
+    expect(logged.at(-1)).toBe('rule.decided')
+  })
+
+  test('a lease is given back unused when the call cannot be recorded', async () => {
+    const c = clock()
+    const guard = fakeGuard()
+    const { store, d } = await start(c, [callTool('payments.refund', { order_id: '1042', amount: 100 })], guard)
+    const append = store.append.bind(store)
+    store.append = async (runId, events, opts) => {
+      if (events.some((e) => e.type === 'tool.requested')) throw new Error('lock lost')
+      return append(runId, events, opts)
+    }
+    await expect(advanceRun('r1', d)).rejects.toThrow('lock lost')
+    expect(guard.released).toEqual([['lease_1', 'unused']])
+  })
+
+  test('a message to a run whose call is deferred does not count as run time', async () => {
+    const c = clock()
+    const guard = fakeGuard([{ reason: 'rate', retryAt: c.at(3000) }])
+    const { store, d } = await start(c, [lookup, say('done')], guard)
+    await advanceRun('r1', d)
+    c.advance(10)
+    await store.append('r1', [{ type: 'input.received', payload: { action: 'message', text: 'hurry' }, labels: ['untrusted'] }])
+    c.advance(2990)
+    expect(await advanceRun('r1', d)).toBe('completed')
+    expect(projectRun(await store.readEvents('r1'), '').runningMs).toBe(0)
+  })
+
+  test('a built-in tool does not go through the guard', async () => {
+    const c = clock()
+    const guard = fakeGuard([{ reason: 'rate', retryAt: c.at(30) }])
+    const { d } = await start(c, [callTool('agent_core.schedule_followup', { after_seconds: 60, note: 'x' })], guard)
+    expect(await advanceRun('r1', { ...d, agent: { ...AGENT, allow: [{ tool: 'agent_core.schedule_followup' }] } })).toBe('sleeping')
+    expect(guard.acquired).toEqual([])
   })
 })

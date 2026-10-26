@@ -176,6 +176,7 @@ test('creating a connection stores the discovered tools and proposes their safet
   expect(res.json()).toEqual({
     id: 'shop',
     kind: 'mcp',
+    limits: { calls_per_minute: 60, concurrency: 4 },
     tools: [
       { name: 'orders.get', safety: strict, proposed: readProposal, needsConfirmation: ['effect', 'reachesOutside', 'outputLabel'], ...fresh },
     ],
@@ -339,6 +340,23 @@ test('registering an MCP connection over a webhook connection gives 409', async 
   expect(res.statusCode).toBe(409)
   expect(res.json().error).toMatchObject({ code: 'connection_kind_conflict', fix: expect.any(String) })
   expect((await new ConfigRepo(pool, 'default', box).getConnection('hook'))?.kind).toBe('webhook')
+})
+
+test('a connection takes optional limits; the response shows them with the defaults filled in', async () => {
+  const hook = await authed('POST', '/v1/connections', { ...webhookBody, limits: { calls_per_minute: 10 } })
+  expect(hook.statusCode).toBe(201)
+  expect(hook.json().limits).toEqual({ calls_per_minute: 10, concurrency: 4 })
+  expect((await new ConfigRepo(pool, 'default', box).getConnection('loyalty'))?.limits).toEqual({ calls_per_minute: 10 })
+  const mcp = await authed('POST', '/v1/connections', { id: 'shop', url: 'http://shop.test/mcp', limits: { concurrency: 2 } })
+  expect(mcp.json().limits).toEqual({ calls_per_minute: 60, concurrency: 2 })
+  // Registering again without limits keeps them: a refresh of the tools must not drop a protection.
+  const again = await authed('POST', '/v1/connections', { id: 'shop', url: 'http://shop.test/mcp' })
+  expect(again.json().limits).toEqual({ calls_per_minute: 60, concurrency: 2 })
+  const hookAgain = await authed('POST', '/v1/connections', webhookBody)
+  expect(hookAgain.json().limits).toEqual({ calls_per_minute: 10, concurrency: 4 })
+  for (const limits of [{ concurrency: 0 }, { calls_per_minute: 1.5 }, { burst: 3 }]) {
+    expect((await authed('POST', '/v1/connections', { ...webhookBody, limits })).statusCode).toBe(400)
+  }
 })
 
 test('a connection may not register a tool named with the built-in prefix agent_core.', async () => {

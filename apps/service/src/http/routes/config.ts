@@ -1,7 +1,7 @@
 import { randomBytes, randomUUID } from 'node:crypto'
 import type { FastifyInstance, FastifyRequest } from 'fastify'
 import { z } from 'zod'
-import { AgentDefinitionSchema, BUILTIN_PREFIX, DEFAULT_LIMITS, SupportSchema, limitsAboveDefault, ToolSafetySchema, resolveSafety, toolFingerprint } from '@agent-core/core'
+import { AgentDefinitionSchema, BUILTIN_PREFIX, ConnectionLimitsSchema, DEFAULT_LIMITS, resolveConnectionLimits, SupportSchema, limitsAboveDefault, ToolSafetySchema, resolveSafety, toolFingerprint } from '@agent-core/core'
 import type { SecretBox, ToolSafety } from '@agent-core/core'
 import { ConfigRepo, NO_REVIEW } from '@agent-core/store-postgres'
 import type { LoadedTool, StoredTool, createPool } from '@agent-core/store-postgres'
@@ -12,11 +12,12 @@ import { apiError, validationError } from '../errors'
 const WEBHOOK_EVENTS = ['run.completed', 'run.failed', 'approval.requested', 'run.waiting_human'] as const
 
 const httpUrl = z.url().refine((u) => /^https?:\/\//i.test(u), { message: 'must be an http(s) URL' })
-const ConnectionBody = z.object({ id: z.string().min(1), url: httpUrl })
+const ConnectionBody = z.object({ id: z.string().min(1), url: httpUrl, limits: ConnectionLimitsSchema.optional() })
 const WebhookConnectionBody = z.object({
   id: z.string().min(1),
   kind: z.literal('webhook'),
   url: httpUrl,
+  limits: ConnectionLimitsSchema.optional(),
   tools: z
     .array(
       z.object({
@@ -112,13 +113,19 @@ export function registerConfigRoutes(
         if (existing && existing.kind !== 'webhook') throw kindConflict(id, existing.kind, 'webhook')
         created = existing === null
         // Re-registration keeps the secret; a new connection gets one, returned once.
-        return { kind: 'webhook', url, secret: existing?.secret ?? randomBytes(32).toString('hex'), tools }
+        return { kind: 'webhook', url, secret: existing?.secret ?? randomBytes(32).toString('hex'), tools, limits: wh.data.limits ?? existing?.limits ?? null }
       })
-      return reply.code(201).send({ id, kind: 'webhook', tools: saved.tools.map(toView), ...(created ? { secret: saved.secret } : {}) })
+      return reply.code(201).send({
+        id,
+        kind: 'webhook',
+        tools: saved.tools.map(toView),
+        limits: resolveConnectionLimits(saved.limits ?? undefined),
+        ...(created ? { secret: saved.secret } : {}),
+      })
     }
     const parsed = ConnectionBody.safeParse(req.body)
     if (!parsed.success) throw validationError(parsed.error)
-    const { id, url } = parsed.data
+    const { id, url, limits } = parsed.data
     const before = await config.getConnection(id)
     // Checked again under the lock below; this only avoids a discovery that cannot be stored.
     if (before && before.kind !== 'mcp') throw kindConflict(id, before.kind, 'mcp')
@@ -152,9 +159,9 @@ export function registerConfigRoutes(
           reviewedFor: before?.reviewedFor ?? (existing ? NO_REVIEW : toolFingerprint({ ...tool, source })),
         }
       })
-      return { kind: 'mcp', url, tools }
+      return { kind: 'mcp', url, tools, limits: limits ?? existing?.limits ?? null }
     })
-    return reply.code(201).send({ id, kind: 'mcp', tools: saved.tools.map(toView) })
+    return reply.code(201).send({ id, kind: 'mcp', tools: saved.tools.map(toView), limits: resolveConnectionLimits(saved.limits ?? undefined) })
   })
 
   const notFound = (id: string) =>
