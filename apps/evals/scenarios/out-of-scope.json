@@ -12,12 +12,13 @@
     ]
   },
   "expect": {
+    "status": "waiting_human",
+    "waitingReason": "escalated",
     "toolsNotCalled": [
       "orders.get",
       "inventory.check",
       "payments.refund",
       "orders.change_size"
-    ],
-    "rubric": "The reply politely declines to write the poem and says what shop help it can give."
+    ]
   }
 }

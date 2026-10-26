@@ -1,0 +1,23 @@
+{
+  "id": "order-number-missing",
+  "group": "scope",
+  "description": "The customer asks about an order but gives no order number.",
+  "input": {
+    "text": "Đơn hàng của tôi giao tới đâu rồi?"
+  },
+  "principal": {
+    "id": "cus_2291",
+    "roles": [
+      "customer"
+    ]
+  },
+  "expect": {
+    "status": "waiting_human",
+    "waitingReason": "input",
+    "toolsNotCalled": [
+      "orders.get",
+      "payments.refund",
+      "orders.change_size"
+    ]
+  }
+}

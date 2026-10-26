@@ -200,7 +200,7 @@ test('read tool runs without approval and the run completes', async () => {
     'tool.requested', 'tool.responded', 'llm.requested', 'llm.responded', 'run.state_changed',
   ])
   expect(llm.requests[0]!.model).toBe('test-model')
-  expect(llm.requests[0]!.tools.map((t) => t.name)).toEqual(['orders.get', 'payments.refund'])
+  expect(llm.requests[0]!.tools.map((t) => t.name)).toEqual(['orders.get', 'payments.refund', 'agent_core.ask_human', 'agent_core.escalate'])
 })
 
 test('write tool over the limit waits for approval, then runs after approve', async () => {
@@ -1001,7 +1001,7 @@ test('a tool changed since review is hidden from the model until an owner review
   const { store, tools } = await setup()
   const d = { ...deps({ llm, store, tools }), toolsByName: changedTools() }
   expect(await advanceRun('r1', d)).toBe('completed')
-  expect(llm.requests[0]!.tools.map((t) => t.name)).toEqual(['orders.get'])
+  expect(llm.requests[0]!.tools.map((t) => t.name)).toEqual(['orders.get', 'agent_core.ask_human', 'agent_core.escalate'])
 })
 
 test('a long tool output is cut in the middle before it reaches the event log and the model', async () => {
@@ -1368,6 +1368,81 @@ describe('follow-ups', () => {
       content: 'Follow-up limit reached: a run may schedule at most 10 follow-ups.',
       isError: true,
     })
+  })
+})
+
+describe('ask_human and escalate', () => {
+  const ASK = 'agent_core.ask_human'
+  const ESCALATE = 'agent_core.escalate'
+
+  test('ask_human waits with reason input and records the question', async () => {
+    const { store, tools } = await setup()
+    const llm = scriptedLlm([callTool(ASK, { question: 'Which order?' })])
+    expect(await advanceRun('r1', deps({ llm, store, tools }))).toBe('waiting_human')
+    const log = await store.readEvents('r1')
+    const proj = projectRun(log, '')
+    expect(proj.waitingReason).toBe('input')
+    expect(proj.inFlight).toEqual(['call_1'])
+    expect(log.at(-1)!.payload).toMatchObject({ to: 'waiting_human', reason: 'input', question: 'Which order?' })
+    expect(tools.calls).toEqual([])
+  })
+
+  test('escalate waits with reason escalated and records the reason', async () => {
+    const { store, tools } = await setup()
+    const llm = scriptedLlm([callTool(ESCALATE, { reason: 'Out of scope' })])
+    expect(await advanceRun('r1', deps({ llm, store, tools }))).toBe('waiting_human')
+    const log = await store.readEvents('r1')
+    expect(projectRun(log, '').waitingReason).toBe('escalated')
+    // `reason` is the waiting reason; the agent's own reason goes under `escalation`.
+    expect(log.at(-1)!.payload).toMatchObject({ to: 'waiting_human', reason: 'escalated', escalation: 'Out of scope' })
+  })
+
+  test('ask_human with an empty question is a tool error and the run continues', async () => {
+    const { store, tools } = await setup()
+    const llm = scriptedLlm([callTool(ASK, { question: '' }), say('done')])
+    expect(await advanceRun('r1', deps({ llm, store, tools }))).toBe('completed')
+    const result = (await store.readEvents('r1')).find((e) => e.type === 'tool.responded')!
+    expect(result.payload).toMatchObject({ toolCallId: 'call_1', isError: true })
+  })
+
+  test('calls before ask_human run first', async () => {
+    const { store, tools } = await setup()
+    const llm = scriptedLlm([
+      callTools([
+        { name: 'orders.get', args: { order_id: '1042' } },
+        { name: ASK, args: { question: 'Which order?' } },
+      ]),
+    ])
+    expect(await advanceRun('r1', deps({ llm, store, tools }))).toBe('waiting_human')
+    const log = await store.readEvents('r1')
+    expect(tools.calls.map((c) => c.name)).toEqual(['orders.get'])
+    const responded = log.findIndex((e) => e.type === 'tool.responded')
+    const waited = log.findIndex((e) => e.type === 'run.state_changed' && (e.payload as { to: string }).to === 'waiting_human')
+    expect(responded).toBeGreaterThan(-1)
+    expect(responded).toBeLessThan(waited)
+    expect(projectRun(log, '').inFlight).toEqual(['call_2'])
+  })
+
+  test('an in-flight ask_human after a crash waits again without a second tool.requested', async () => {
+    const first = await setup()
+    await advanceRun('r1', deps({ llm: scriptedLlm([callTool(ASK, { question: 'Which order?' })]), store: first.store, tools: first.tools }))
+    const log = await first.store.readEvents('r1')
+    // The crash: everything up to `tool.requested` was written, the wait was not.
+    const crashed = await setupWithEvents(log.slice(0, -1).map(({ type, payload, labels }) => ({ type, payload, labels }) as NewEvent))
+    expect(types(await crashed.store.readEvents('r1')).filter((t) => t === 'tool.requested')).toHaveLength(1)
+    expect(await advanceRun('r1', deps({ llm: scriptedLlm([]), store: crashed.store, tools: crashed.tools }))).toBe('waiting_human')
+    const after = await crashed.store.readEvents('r1')
+    expect(types(after).filter((t) => t === 'tool.requested')).toHaveLength(1)
+    expect(projectRun(after, '').waitingReason).toBe('input')
+  })
+
+  test('every agent has ask_human and escalate; followup still needs an allow rule', async () => {
+    const { store, tools } = await setup()
+    const llm = scriptedLlm([say('done')])
+    await advanceRun('r1', deps({ llm, store, tools }))
+    const names = llm.lastRequest().tools.map((t) => t.name)
+    expect(names).toEqual(expect.arrayContaining([ASK, ESCALATE]))
+    expect(names).not.toContain('agent_core.schedule_followup')
   })
 })
 

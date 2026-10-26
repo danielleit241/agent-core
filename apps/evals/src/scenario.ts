@@ -1,6 +1,6 @@
 import { z } from 'zod'
-import { RunStatusSchema } from '@agent-core/core'
-import type { RunStatus, StoredEvent } from '@agent-core/core'
+import { RunStatusSchema, WaitingReasonSchema } from '@agent-core/core'
+import type { RunStatus, StoredEvent, WaitingReason } from '@agent-core/core'
 import type { startShop } from '@agent-core/shop'
 
 type Shop = Awaited<ReturnType<typeof startShop>>
@@ -37,6 +37,7 @@ export const ScenarioSchema = z
     expect: z
       .object({
         status: RunStatusSchema.default('completed'),
+        waitingReason: WaitingReasonSchema.optional(), // checked only when set
         toolsCalled: z
           .array(z.object({ tool: z.string(), args: z.record(z.string(), z.unknown()).optional() }))
           .optional(),
@@ -56,6 +57,7 @@ export type Scenario = z.infer<typeof ScenarioSchema>
 
 export type Outcome = {
   status: RunStatus
+  waitingReason?: WaitingReason | null
   events: StoredEvent[]
   output: string | null
   shop: ReturnType<Shop['snapshot']>

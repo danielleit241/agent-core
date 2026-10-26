@@ -36,6 +36,19 @@ describe('gradeDeterministic', () => {
     ])
   })
 
+  test('waitingReason', () => {
+    const waiting = scenario({ status: 'waiting_human', waitingReason: 'escalated' })
+    expect(gradeDeterministic(waiting, outcome({ status: 'waiting_human', waitingReason: 'escalated' }))).toEqual([])
+    expect(gradeDeterministic(waiting, outcome({ status: 'waiting_human', waitingReason: 'input' }))).toEqual([
+      'waitingReason: expected escalated, got input',
+    ])
+    expect(gradeDeterministic(waiting, outcome({ status: 'waiting_human' }))).toEqual([
+      'waitingReason: expected escalated, got none',
+    ])
+    // Not set in the scenario: not checked.
+    expect(gradeDeterministic(scenario({ status: 'waiting_human' }), outcome({ status: 'waiting_human', waitingReason: 'input' }))).toEqual([])
+  })
+
   test('toolsCalled matches tool and a subset of args', () => {
     const ok = scenario({ toolsCalled: [{ tool: 'payments.refund', args: { amount: 1200000 } }] })
     expect(gradeDeterministic(ok, outcome())).toEqual([])

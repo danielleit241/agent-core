@@ -16,6 +16,11 @@ describe('ScenarioSchema', () => {
     expect(ScenarioSchema.safeParse({ ...base, expect: { nope: 1 } }).success).toBe(false)
   })
 
+  test('accepts a waiting reason and rejects an unknown one', () => {
+    expect(ScenarioSchema.parse({ ...base, expect: { status: 'waiting_human', waitingReason: 'input' } }).expect.waitingReason).toBe('input')
+    expect(ScenarioSchema.safeParse({ ...base, expect: { waitingReason: 'bored' } }).success).toBe(false)
+  })
+
   test('rejects a bad id and empty input text', () => {
     expect(ScenarioSchema.safeParse({ ...base, id: 'Bad_Id' }).success).toBe(false)
     expect(ScenarioSchema.safeParse({ ...base, input: { text: '' } }).success).toBe(false)

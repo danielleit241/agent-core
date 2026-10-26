@@ -37,6 +37,7 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions exist
 - Follow-ups: the first built-in tool, `agent_core.schedule_followup`. The model sees it only when an `allow` rule of the agent names it. A call puts the run in the new `sleeping` state until `wakeAt`; the queue job stays due at that time, so a restart does not lose it. On waking the run gets `Follow-up at <time>. Note: <note>` as an `untrusted` tool result and continues. Sleep does not count as run time; a message does not wake the run. At most 10 follow-ups per run. A connection tool named with the prefix `agent_core.` gives `422 reserved_tool_name`.
 - Run input: `POST /v1/runs/{id}/input` carries every human action (`approve`, `reject`, `outcome_happened`, `outcome_not_happened`, `continue`, `cancel`) and a `message` that steers the run: it reaches the next LLM request as user text, labelled `untrusted`, and is never lost when it arrives during the final LLM call. `cancel` now also stops a running run, or one that waits for an LLM retry, before its next step (`input.received`, then `cancelled`). A message to an ended run gives `409 run_ended`.
 - Loop detection: the `loop` limit (default 3) stops a run before a fourth call with the same tool and the same arguments, and before an LLM call that follows 3 tool turns in a row whose every call and result repeat an earlier one. The run waits with `"waiting_reason":"limit"` and `limit.reached` names `loop`.
+- Built-in tools `agent_core.ask_human` and `agent_core.escalate`, on for every agent. `ask_human { question }` makes the run wait with `"waiting_reason":"input"`; `escalate { reason }` makes it wait with `"waiting_reason":"escalated"`. The state event carries the `question` or the agent's reason (`escalation`). New input action `answer` with `text` (1 to 32000 characters): it becomes the tool result of the open call, labelled `untrusted`, and the run continues. Allowed actions for both waits: `answer`, `cancel`. Eval scenario `order-number-missing`; `out-of-scope` now expects `escalated`.
 
 ### Fixed
 
@@ -65,6 +66,7 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions exist
 
 ### Changed
 
+- The waiting reason `needs_input` is now `input`, and `escalated` is new.
 - Confirmations stored before tool fingerprints existed no longer count: those tools run strict, behind approval, until confirmed again.
 - The runner, not the tool adapters, retries tool calls: reads and writes with an idempotency key get up to 3 attempts with the same key, and each failed attempt is logged as `error.raised`. A keyed write that still fails after it was sent waits on an unknown outcome.
 - A transient LLM error (network, timeout, 429, 5xx) no longer fails the run. The run stays `running` and is retried after 30, 60, 120, 240 and 300 seconds (±20%), or longer when the provider's `Retry-After` asks for it (a hint can only lengthen a wait, and no wait is over 5 minutes, so the last wait is 240 to 300 seconds); the sixth failure in a row fails it. `error.raised` gains `retryAt`.

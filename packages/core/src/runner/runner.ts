@@ -3,7 +3,7 @@ import { projectRun, type RunProjection } from '../events/projection'
 import { decide } from '../policy/rules'
 import { resolveLimits, type LimitName, type Limits } from '../limits'
 import { repeatedCalls, stalledTurns } from './loops'
-import { MAX_FOLLOWUPS, builtinTools, isBuiltin, parseFollowup } from './builtins'
+import { FOLLOWUP_TOOL, MAX_FOLLOWUPS, builtinTools, isBuiltin, parseFollowup, parseHumanWait } from './builtins'
 import type { AgentDefinition, NewEvent, RunStatus, StoredEvent, ToolCall, ToolDescriptor, WaitingReason } from '../types'
 
 export type RunnerDeps = {
@@ -71,9 +71,9 @@ const toolError = (toolCallId: string, content: string): NewEvent => ({
   labels: [],
 })
 
-export const waitHuman = (from: RunStatus, reason: WaitingReason, expiresAt: string): NewEvent => ({
+export const waitHuman = (from: RunStatus, reason: WaitingReason, expiresAt: string, extra: Record<string, string> = {}): NewEvent => ({
   type: 'run.state_changed',
-  payload: { from, to: 'waiting_human', reason, expiresAt },
+  payload: { from, to: 'waiting_human', reason, expiresAt, ...extra },
   labels: [],
 })
 
@@ -221,7 +221,7 @@ export async function handleToolCall(
       await append(...unknownOutcome(why, expiresAt(deps)))
       return 'waiting_human'
     }
-    if (isBuiltin(tool.name)) return scheduleFollowup(runId, deps, proj, call, false)
+    if (isBuiltin(tool.name)) return runBuiltin(runId, deps, proj, call, false)
     return execute(runId, deps, proj, call, tool, false)
   }
   if (call.argumentsError !== undefined) {
@@ -269,8 +269,30 @@ export async function handleToolCall(
     await append(...events)
     return 'waiting_human'
   }
-  if (isBuiltin(tool.name)) return scheduleFollowup(runId, deps, proj, call, true)
+  if (isBuiltin(tool.name)) return runBuiltin(runId, deps, proj, call, true)
   return execute(runId, deps, proj, call, tool, true)
+}
+
+/** Built-in tools do not go through the tool invoker; each one changes the run state itself. */
+function runBuiltin(runId: string, deps: RunnerDeps, proj: RunProjection, call: ToolCall, recordRequest: boolean): Promise<RunStatus | 'continue'> {
+  return call.name === FOLLOWUP_TOOL ? scheduleFollowup(runId, deps, proj, call, recordRequest) : waitForHuman(runId, deps, call, recordRequest)
+}
+
+const requested = (runId: string, call: ToolCall): NewEvent => ({
+  type: 'tool.requested',
+  payload: { toolCallId: call.id, tool: call.name, args: call.arguments, idempotencyKey: `${runId}:${call.id}` },
+  labels: [],
+})
+
+/** `ask_human` and `escalate`: the call stays open until a human answers; see the `answer` input action. */
+async function waitForHuman(runId: string, deps: RunnerDeps, call: ToolCall, recordRequest: boolean): Promise<RunStatus | 'continue'> {
+  const wait = parseHumanWait(call.name, call.arguments)
+  if (wait === null) {
+    await deps.store.append(runId, [toolError(call.id, 'Invalid arguments: send one non-empty string of at most 2000 characters, as the schema says.')])
+    return 'continue'
+  }
+  await deps.store.append(runId, [...(recordRequest ? [requested(runId, call)] : []), waitHuman('running', wait.reason, expiresAt(deps), wait.extra)])
+  return 'waiting_human'
 }
 
 /** Puts the run to sleep. The call stays open until the run wakes up; see `wakeUp`. */
@@ -294,9 +316,7 @@ async function scheduleFollowup(
   }
   const wakeAt = new Date(nowOf(deps).getTime() + args.data.after_seconds * 1000).toISOString()
   await deps.store.append(runId, [
-    ...(recordRequest
-      ? [{ type: 'tool.requested' as const, payload: { toolCallId: call.id, tool: call.name, args: call.arguments, idempotencyKey: `${runId}:${call.id}` }, labels: [] }]
-      : []),
+    ...(recordRequest ? [requested(runId, call)] : []),
     { type: 'run.state_changed', payload: { from: 'running', to: 'sleeping', wakeAt }, labels: [] },
   ])
   return 'sleeping'
@@ -304,7 +324,7 @@ async function scheduleFollowup(
 
 /** The result of the follow-up call that put the run to sleep. */
 function wakeUp(deps: RunnerDeps, proj: RunProjection): NewEvent[] {
-  const call = proj.pendingToolCalls.find((c) => isBuiltin(c.name) && proj.inFlight.includes(c.id))
+  const call = proj.pendingToolCalls.find((c) => c.name === FOLLOWUP_TOOL && proj.inFlight.includes(c.id))
   if (call === undefined) return []
   const note = typeof call.arguments.note === 'string' ? call.arguments.note : ''
   return [

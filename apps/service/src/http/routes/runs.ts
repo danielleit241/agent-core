@@ -19,11 +19,12 @@ const RunBody = z.object({
   // Bounded: the principal goes into the LLM context.
   principal: z.object({ id: z.string().max(200), roles: z.array(z.string().max(64)).max(20) }).optional(),
 })
-const ACTIONS = ['approve', 'reject', 'outcome_happened', 'outcome_not_happened', 'continue', 'cancel'] as const
+const ACTIONS = ['approve', 'reject', 'outcome_happened', 'outcome_not_happened', 'continue', 'answer', 'cancel'] as const
 type Action = (typeof ACTIONS)[number]
 /** Everything a human sends to a run. `message` steers it; the other actions answer a wait or cancel it. */
 const InputBody = z.union([
-  z.object({ action: z.enum(ACTIONS) }).strict(),
+  z.object({ action: z.enum(ACTIONS).exclude(['answer']) }).strict(),
+  z.object({ action: z.literal('answer'), text: z.string().min(1).max(32_000) }).strict(),
   z.object({ action: z.literal('message'), text: z.string().min(1).max(32_000) }).strict(),
 ])
 const ENDED: readonly RunStatus[] = ['completed', 'failed', 'cancelled']
@@ -34,6 +35,8 @@ const ALLOWED: Partial<Record<WaitingReason, readonly Action[]>> = {
   unknown_outcome: ['outcome_happened', 'outcome_not_happened', 'cancel'],
   limit: ['continue', 'cancel'],
   breaker: ['continue', 'cancel'],
+  input: ['answer', 'cancel'],
+  escalated: ['answer', 'cancel'],
 }
 const allowedFor = (reason: WaitingReason | null): readonly Action[] => (reason && ALLOWED[reason]) || ['cancel']
 
@@ -309,6 +312,14 @@ export function registerRunRoutes(app: FastifyInstance, deps: { pool: ReturnType
         ...proj.awaitingApproval.map(
           (toolCallId): NewEvent => ({ type: 'approval.resolved', payload: { toolCallId, action }, labels: ['trusted'] }),
         ),
+        stateTo('running'),
+      ]
+    } else if (body.action === 'answer') {
+      // `ask_human` and `escalate` stay in flight until now; the answer is their result.
+      const toolCallId = proj.inFlight[0]
+      if (toolCallId === undefined) throw notWaiting
+      events = [
+        { type: 'tool.responded', payload: { toolCallId, content: body.text, isError: false }, labels: ['untrusted'] },
         stateTo('running'),
       ]
     } else {
