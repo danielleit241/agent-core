@@ -1121,6 +1121,7 @@ test('a crash after any append never repeats a completed tool call or an unkeyed
   const boundaries = [1]
   const recording: RunStore = {
     readEvents: (id) => refStore.readEvents(id),
+    readEventsAfter: (id, after) => refStore.readEventsAfter(id, after),
     async append(id, events) {
       const stored = await refStore.append(id, events)
       boundaries.push((await refStore.readEvents(id)).length)

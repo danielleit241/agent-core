@@ -45,7 +45,7 @@ const HAPPENED_TEXT = 'A human confirmed that this action happened. Its result i
 const notCancellable = (fix: string) => apiError('run_not_cancellable', 'The run cannot be cancelled in its current state.', fix, 409)
 const runEnded = () => apiError('run_ended', 'The run has ended and takes no more input.', 'Start a new run with POST /v1/runs.', 409)
 
-const runNotFound = (id: string) =>
+export const runNotFound = (id: string) =>
   apiError('run_not_found', `Run "${id}" does not exist.`, 'Check the run id returned by POST /v1/runs.', 404)
 
 /** Parses `wait` as `N` or `Ns`, 1 to 30. Returns seconds, or undefined when absent. */

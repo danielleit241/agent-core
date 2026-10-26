@@ -35,6 +35,8 @@ export class AppendConflictError extends Error {
  */
 export interface RunStore {
   readEvents(runId: string): Promise<StoredEvent[]>
+  /** The events with `seq` above `afterSeq`, in order. */
+  readEventsAfter(runId: string, afterSeq: number): Promise<StoredEvent[]>
   append(runId: string, events: NewEvent[], opts?: { expect?: { lastSeq: number } }): Promise<StoredEvent[]>
 }
 

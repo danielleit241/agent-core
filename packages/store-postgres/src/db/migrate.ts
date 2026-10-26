@@ -1,6 +1,7 @@
 import { readdir, readFile } from 'node:fs/promises'
 import { fileURLToPath } from 'node:url'
 import type pg from 'pg'
+import { withService } from './scope'
 
 const migrationsUrl = new URL('./migrations/', import.meta.url)
 
@@ -22,6 +23,23 @@ async function withMigrationLock(pool: pg.Pool, fn: (client: pg.PoolClient) => P
   }
 }
 
+async function migrationFiles(): Promise<string[]> {
+  return (await readdir(fileURLToPath(migrationsUrl))).filter((f) => f.endsWith('.sql')).sort()
+}
+
+/** Migration files that have no row in `schema_migrations`. Reads as `agentcore_app`, so it needs no migrator rights. */
+export async function pendingMigrations(pool: pg.Pool): Promise<string[]> {
+  const files = await migrationFiles()
+  let done: Set<string>
+  try {
+    done = new Set((await withService(pool, (client) => client.query<{ name: string }>('SELECT name FROM schema_migrations'))).rows.map((r) => r.name))
+  } catch (err) {
+    if ((err as { code?: string }).code !== '42P01') throw err // 42P01: the table does not exist yet, so all are pending
+    done = new Set()
+  }
+  return files.filter((f) => !done.has(f))
+}
+
 /** The login user named in a connection URL, decoded. */
 export function runtimeUserOf(url: string): string {
   return decodeURIComponent(new URL(url).username)
@@ -34,7 +52,7 @@ export async function runMigrations(pool: pg.Pool, opts: { runtimeUser?: string 
   await withMigrationLock(pool, async (client) => {
     await client.query('CREATE TABLE IF NOT EXISTS schema_migrations (name text PRIMARY KEY)')
   })
-  const files = (await readdir(fileURLToPath(migrationsUrl))).filter((f) => f.endsWith('.sql')).sort()
+  const files = await migrationFiles()
   for (const name of files) {
     const sql = await readFile(new URL(name, migrationsUrl), 'utf8')
     await withMigrationLock(pool, async (client) => {

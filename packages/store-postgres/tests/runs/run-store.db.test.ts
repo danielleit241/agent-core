@@ -13,6 +13,7 @@ import {
   createRun,
   claim,
   createRunWithEvent,
+  createTenant,
   enqueue,
   getRun,
   getRunHead,
@@ -62,6 +63,17 @@ test('append assigns consecutive seq and a valid chain', async () => {
   expect(events.map((e) => e.seq)).toEqual([1, 2, 3])
   expect(verifyChain(events)).toEqual({ valid: true })
   expect((await getRun(pool, 'default', 'r1'))?.status).toBe('running')
+})
+
+test('readEventsAfter returns only events with seq > afterSeq, in order, for the tenant', async () => {
+  await createRun(pool, { tenantId: 'default', runId: 'r-after', agentId: 'a', agentVersion: 1, input: { text: 'hi' } })
+  const store = new PgRunStore(pool, 'default')
+  await store.append('r-after', [ev.runCreated(), ev.llmRequested(), ev.llmRequested()])
+  expect((await store.readEventsAfter('r-after', 1)).map((e) => e.seq)).toEqual([2, 3])
+  expect(await store.readEventsAfter('r-after', 3)).toEqual([])
+  expect((await store.readEventsAfter('r-after', 0)).map((e) => e.seq)).toEqual([1, 2, 3])
+  await createTenant(pool, 'other')
+  expect(await new PgRunStore(pool, 'other').readEventsAfter('r-after', 0)).toEqual([])
 })
 
 test('concurrent appends to one run never duplicate seq', async () => {

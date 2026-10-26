@@ -3,6 +3,9 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
+  "bin": {
+    "agent-core": "./src/cli/main.ts"
+  },
   "exports": {
     ".": "./src/index.ts"
   },

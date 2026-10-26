@@ -9,10 +9,13 @@ import { ApiError, apiError } from './errors'
 import { registerIdempotency } from './idempotency'
 import { registerConfigRoutes } from './routes/config'
 import { registerHealthRoutes } from './routes/health'
+import { registerMetricsRoutes } from './routes/metrics'
 import { registerModelRoutes } from './routes/models'
 import type { ProbeResult } from './routes/models'
 import { registerRunRoutes } from './routes/runs'
+import { registerStreamRoutes } from './routes/stream'
 import { registerTenantRoutes } from './routes/tenants'
+import { metrics } from '../metrics'
 
 export type AppDeps = {
   pool: ReturnType<typeof createPool>
@@ -58,7 +61,12 @@ export function buildApp(deps: AppDeps): FastifyInstance {
     return reply.code(404).send({ error: { code: e.code, message: e.message, fix: e.fix } })
   })
 
+  app.addHook('onResponse', async (req, reply) => {
+    metrics.httpRequest(req.method, reply.statusCode)
+  })
+
   registerHealthRoutes(app, deps.pool)
+  registerMetricsRoutes(app, deps.pool)
   // The auth hook is bound to this plugin's routes, not to the URL text, so path encoding cannot bypass it.
   void app.register(async (v1) => {
     v1.decorateRequest('auth')
@@ -75,6 +83,7 @@ export function buildApp(deps: AppDeps): FastifyInstance {
     registerTenantRoutes(v1, { pool: deps.pool })
     registerModelRoutes(v1, { pool: deps.pool, models: deps.models ?? {}, probe: deps.probe })
     registerRunRoutes(v1, { pool: deps.pool, secrets: deps.secrets, closing: closing.signal })
+    registerStreamRoutes(v1, { pool: deps.pool, closing: closing.signal })
   })
   return app
 }
