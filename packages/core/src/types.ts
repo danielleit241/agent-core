@@ -1,4 +1,7 @@
 import { z } from 'zod'
+import { LimitNameSchema, LimitsSchema } from './limits'
+
+export * from './limits'
 
 export const LabelSchema = z.enum(['trusted', 'internal', 'untrusted', 'confidential'])
 export type Label = z.infer<typeof LabelSchema>
@@ -90,6 +93,7 @@ export const AgentDefinitionSchema = z
     autonomy: z.literal('supervised'),
     allow: z.array(RuleSchema),
     model: z.string().default('default'),
+    limits: LimitsSchema.optional(),
   })
   .strict()
 export type AgentDefinition = z.infer<typeof AgentDefinitionSchema>
@@ -105,7 +109,8 @@ export const RunStatusSchema = z.enum([
 ])
 export type RunStatus = z.infer<typeof RunStatusSchema>
 
-export const WaitingReasonSchema = z.enum(['approval', 'unknown_outcome', 'breaker', 'handoff', 'needs_input'])
+// `breaker` is the old name of an `llm_calls` breach; only old logs carry it.
+export const WaitingReasonSchema = z.enum(['approval', 'unknown_outcome', 'limit', 'breaker', 'handoff', 'needs_input'])
 export type WaitingReason = z.infer<typeof WaitingReasonSchema>
 
 export const UsageSchema = z.object({
@@ -162,7 +167,11 @@ const payloadSchemas = {
     from: RunStatusSchema,
     to: RunStatusSchema,
     reason: z.string().optional(), // a WaitingReason or free text
+    // ISO 8601; set when a run starts to wait for a human. A wait without it never expires.
+    expiresAt: z.string().optional(),
   }),
+  'limit.reached': z.object({ limit: LimitNameSchema, max: z.number(), value: z.number() }),
+  'limit.continued': z.object({ limit: LimitNameSchema }),
   // `retryAt` (ISO 8601) is set only by an LLM retry wait.
   'error.raised': z.object({ message: z.string(), retryable: z.boolean(), retryAt: z.string().optional() }),
 } as const
@@ -186,6 +195,8 @@ export const NewEventSchema = z.discriminatedUnion('type', [
   eventSchema('outcome.settled', payloadSchemas['outcome.settled']),
   eventSchema('run.state_changed', payloadSchemas['run.state_changed']),
   eventSchema('error.raised', payloadSchemas['error.raised']),
+  eventSchema('limit.reached', payloadSchemas['limit.reached']),
+  eventSchema('limit.continued', payloadSchemas['limit.continued']),
 ])
 export type NewEvent = z.infer<typeof NewEventSchema>
 
