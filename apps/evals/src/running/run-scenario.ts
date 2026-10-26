@@ -40,7 +40,7 @@ async function stopRun(stack: EvalStack, id: string, limitMs: number): Promise<v
   for (;;) {
     const res = await stack.api('GET', `/v1/runs/${id}`)
     const status = (res.body as View).status
-    if (status === 'waiting_human' || status === 'queued') await stack.api('POST', `/v1/runs/${id}/cancel`)
+    if (status === 'waiting_human' || status === 'queued') await stack.api('POST', `/v1/runs/${id}/input`, { action: 'cancel' })
     else if (!isActive(status)) return
     if (Date.now() >= deadline) throw new StackUnsafeError(`run ${id} is still ${status} ${limitMs / 1000}s after its scenario ended`)
     await sleep(POLL_MS)
@@ -69,8 +69,8 @@ export async function runScenario(
     if (view.status === 'waiting_human' && view.waiting_reason === 'approval') {
       const tool = view.pending_approval?.tool
       const action = (tool !== undefined && s.approvals[tool]) || 'reject'
-      const res = await stack.api('POST', `/v1/runs/${view.id}/resolve`, { action })
-      if (res.status !== 202) throw new Error(`resolve failed: ${res.status} ${JSON.stringify(res.body)}`)
+      const res = await stack.api('POST', `/v1/runs/${view.id}/input`, { action })
+      if (res.status !== 202) throw new Error(`input failed: ${res.status} ${JSON.stringify(res.body)}`)
     } else if (view.status !== 'queued' && view.status !== 'running') {
       break // terminal, or waiting for something other than an approval
     }

@@ -1,5 +1,5 @@
 import pg from 'pg'
-import { GENESIS_HASH, NewEventSchema, hashEvent } from '@agent-core/core'
+import { AppendConflictError, GENESIS_HASH, NewEventSchema, hashEvent } from '@agent-core/core'
 import type { NewEvent, RunStatus, RunStore, StoredEvent, WaitingReason } from '@agent-core/core'
 import { withTenant } from '../db/scope'
 import { enqueueWith } from './queue'
@@ -103,7 +103,7 @@ function toStored(row: Record<string, unknown>): StoredEvent {
 }
 
 /** Thrown by `append` when the run is not in the status the caller expected. Nothing was written. */
-export class StateConflictError extends Error {
+export class StateConflictError extends AppendConflictError {
   constructor(message: string) {
     super(message)
     this.name = 'StateConflictError'
@@ -138,7 +138,7 @@ function sanitize(v: unknown): unknown {
   return v
 }
 
-type AppendOpts = { expect?: { status: RunStatus; waitingReason?: string; lastSeq?: number }; enqueue?: boolean }
+type AppendOpts = { expect?: { status?: RunStatus; waitingReason?: string; lastSeq?: number }; enqueue?: boolean }
 
 /** Appends inside the caller's transaction: row lock, chain, status, log head and optional queue row. */
 async function appendInTransaction(
@@ -169,7 +169,7 @@ async function appendInTransaction(
   const expect = opts?.expect
   if (
     expect &&
-    (run.rows[0]!.status !== expect.status ||
+    ((expect.status !== undefined && run.rows[0]!.status !== expect.status) ||
       (expect.waitingReason !== undefined && run.rows[0]!.waiting_reason !== expect.waitingReason) ||
       (expect.lastSeq !== undefined && run.rows[0]!.last_seq !== expect.lastSeq))
   ) {

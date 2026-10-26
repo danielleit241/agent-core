@@ -19,12 +19,21 @@ export interface ToolInvoker {
   ): Promise<{ content: string; isError: boolean }>
 }
 
+/** Thrown by `RunStore.append` when the run is not in the state the caller expected. Nothing was written. */
+export class AppendConflictError extends Error {
+  constructor(message: string) {
+    super(message)
+    this.name = 'AppendConflictError'
+  }
+}
+
 /**
  * `append` must assign consecutive `seq`, compute `prevHash`/`hash`, and, when a
  * `run.state_changed` event is present, update `runs.status` and `runs.waiting_reason`
- * in the same transaction.
+ * in the same transaction. With `expect.lastSeq` it writes only when the log still ends
+ * at that seq, and throws `AppendConflictError` otherwise.
  */
 export interface RunStore {
   readEvents(runId: string): Promise<StoredEvent[]>
-  append(runId: string, events: NewEvent[]): Promise<StoredEvent[]>
+  append(runId: string, events: NewEvent[], opts?: { expect?: { lastSeq: number } }): Promise<StoredEvent[]>
 }

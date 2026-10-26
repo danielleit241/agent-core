@@ -78,7 +78,7 @@ test('tenant a data is invisible to tenant b and to the admin key', async () => 
   for (const key of [keyB, ADMIN_KEY]) {
     expect((await call(key, 'GET', `/v1/runs/${runId}`)).statusCode).toBe(404)
     expect((await call(key, 'GET', `/v1/runs/${runId}/events`)).statusCode).toBe(404)
-    expect((await call(key, 'POST', `/v1/runs/${runId}/cancel`)).statusCode).toBe(404)
+    expect((await call(key, 'POST', `/v1/runs/${runId}/input`, { action: 'cancel' })).statusCode).toBe(404)
     expect((await call(key, 'GET', '/v1/connections/shop/tools')).statusCode).toBe(404)
     const other = await call(key, 'POST', '/v1/runs', { agent: 'helper', input: { text: 'hi' } })
     expect(other.statusCode).toBe(422)

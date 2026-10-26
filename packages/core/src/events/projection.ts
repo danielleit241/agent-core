@@ -28,6 +28,12 @@ export type RunProjection = {
   runningSince: string | null
   waitStartedAt: string | null
   waitExpiresAt: string | null
+  /** A human asked to cancel the run while it was running. */
+  cancelRequested: boolean
+  /** Messages from a human that arrived after the last LLM request. */
+  unreadMessages: number
+  /** Seq of the last event. */
+  lastSeq: number
 }
 
 /** Recomputes the whole run state from its event log. The log is the only source of truth. */
@@ -63,6 +69,18 @@ export function projectRun(events: StoredEvent[], instructions: string): RunProj
   let runningSince: string | null = null
   let waitStartedAt: string | null = null
   let waitExpiresAt: string | null = null
+  let cancelRequested = false
+  let unreadMessages = 0
+  // A user message between an LLM request and its answer, or between a tool call and its result,
+  // breaks the provider's turn order, so it waits until the turn closes.
+  let held: Message[] = []
+  let llmOpen = false
+  const callsOpen = () => lastToolCalls.some((c) => !responded.has(c.id))
+  const flush = () => {
+    if (llmOpen || callsOpen()) return
+    messages.push(...held)
+    held = []
+  }
 
   for (const e of events) {
     switch (e.type) {
@@ -77,6 +95,19 @@ export function projectRun(events: StoredEvent[], instructions: string): RunProj
       case 'limit.continued':
         limitGrants[e.payload.limit]++
         break
+      case 'input.received':
+        if (e.payload.action === 'cancel') {
+          cancelRequested = true
+          break
+        }
+        unreadMessages++
+        held.push({ role: 'user', content: e.payload.text })
+        flush()
+        break
+      case 'llm.requested':
+        unreadMessages = 0
+        llmOpen = true
+        break
       case 'llm.responded':
         llmCalls++
         tokens += e.payload.usage.inputTokens + e.payload.usage.outputTokens
@@ -85,10 +116,13 @@ export function projectRun(events: StoredEvent[], instructions: string): RunProj
         messages.push(e.payload.message)
         lastToolCalls = e.payload.message.toolCalls ?? []
         output = e.payload.stopReason === 'end' ? e.payload.message.content : null
+        llmOpen = false
+        flush()
         break
       case 'tool.responded':
         responded.add(e.payload.toolCallId)
         messages.push({ role: 'tool', toolCallId: e.payload.toolCallId, content: e.payload.content })
+        flush()
         break
       case 'tool.requested':
         requested.add(e.payload.toolCallId)
@@ -113,6 +147,11 @@ export function projectRun(events: StoredEvent[], instructions: string): RunProj
         break
       case 'error.raised':
         if (e.payload.retryAt !== undefined) llmRetry = { attempts: llmRetry.attempts + 1, retryAt: e.payload.retryAt }
+        // Only an LLM call that failed is open here; a tool error never closes the LLM turn.
+        if (llmOpen && !callsOpen()) {
+          llmOpen = false
+          flush()
+        }
         break
       default:
         break
@@ -138,6 +177,9 @@ export function projectRun(events: StoredEvent[], instructions: string): RunProj
     runningSince,
     waitStartedAt,
     waitExpiresAt,
+    cancelRequested,
+    unreadMessages,
+    lastSeq: events.at(-1)!.seq,
     output,
     principal: principal === undefined ? null : { id: principal.id, roles: principal.roles },
   }

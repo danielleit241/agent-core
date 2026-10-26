@@ -71,12 +71,24 @@ export async function heartbeat(pool: pg.Pool, runId: string, workerId: string):
   return (res.rowCount ?? 0) > 0
 }
 
-/** Unlocks the job and makes it due at `availableAt` (default now), but only while this worker still holds the lock. */
+/**
+ * Unlocks the job and makes it due at `availableAt` (default now), but only while this worker still holds the lock.
+ * A job nudged by `makeDue` while held becomes due now, so input sent meanwhile is not left waiting.
+ */
 export async function requeueIfHolder(pool: pg.Pool, runId: string, workerId: string, availableAt?: Date): Promise<void> {
   await withClaim(pool, (client) =>
     client.query(
-      'UPDATE queue SET available_at = COALESCE($3, now()), locked_by = NULL, locked_at = NULL WHERE run_id = $1 AND locked_by = $2',
+      `UPDATE queue SET available_at = CASE WHEN nudged_at > locked_at THEN now() ELSE COALESCE($3, now()) END,
+         locked_by = NULL, locked_at = NULL
+       WHERE run_id = $1 AND locked_by = $2`,
       [runId, workerId, availableAt ?? null],
     ),
+  )
+}
+
+/** Makes the run's job due now without touching its lock: a worker that holds it keeps it. */
+export async function makeDue(pool: pg.Pool, tenantId: string, runId: string): Promise<void> {
+  await withTenant(pool, tenantId, (client) =>
+    client.query('UPDATE queue SET available_at = now(), nudged_at = now() WHERE run_id = $1', [runId]),
   )
 }

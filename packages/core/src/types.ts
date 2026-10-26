@@ -172,6 +172,11 @@ const payloadSchemas = {
   }),
   'limit.reached': z.object({ limit: LimitNameSchema, max: z.number(), value: z.number() }),
   'limit.continued': z.object({ limit: LimitNameSchema }),
+  // What a human sends to a run that is not waiting for them: `message` steers it, `cancel` stops it before its next step.
+  'input.received': z.union([
+    z.object({ action: z.literal('cancel') }).strict(),
+    z.object({ action: z.literal('message'), text: z.string().min(1).max(32_000) }).strict(),
+  ]),
   // `retryAt` (ISO 8601) is set only by an LLM retry wait.
   'error.raised': z.object({ message: z.string(), retryable: z.boolean(), retryAt: z.string().optional() }),
 } as const
@@ -197,6 +202,7 @@ export const NewEventSchema = z.discriminatedUnion('type', [
   eventSchema('error.raised', payloadSchemas['error.raised']),
   eventSchema('limit.reached', payloadSchemas['limit.reached']),
   eventSchema('limit.continued', payloadSchemas['limit.continued']),
+  eventSchema('input.received', payloadSchemas['input.received']),
 ])
 export type NewEvent = z.infer<typeof NewEventSchema>
 
