@@ -39,6 +39,12 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions exist
 - Loop detection: the `loop` limit (default 3) stops a run before a fourth call with the same tool and the same arguments, and before an LLM call that follows 3 tool turns in a row whose every call and result repeat an earlier one. The run waits with `"waiting_reason":"limit"` and `limit.reached` names `loop`.
 - Built-in tools `agent_core.ask_human` and `agent_core.escalate`, on for every agent. `ask_human { question }` makes the run wait with `"waiting_reason":"input"`; `escalate { reason }` makes it wait with `"waiting_reason":"escalated"`. The state event carries the `question` or the agent's reason (`escalation`). New input action `answer` with `text` (1 to 32000 characters): it becomes the tool result of the open call, labelled `untrusted`, and the run continues. Allowed actions for both waits: `answer`, `cancel`. Eval scenario `order-number-missing`; `out-of-scope` now expects `escalated`.
 - `GET /v1/runs/{id}/stream`: server-sent events of a run (`id` is the seq; resume with `Last-Event-ID` or `?after=`). The stream ends when the run ends. `GET /readyz` (database and migrations) and `GET /metrics` (Prometheus text) need no auth. `agent-core log verify <run-id>` (`pnpm cli log verify`) recomputes the hash chain of a run's log.
+- Start without setup: only `DATABASE_URL` and `MIGRATOR_DATABASE_URL` are required. Without `AGENT_CORE_ADMIN_KEY` the service generates an admin key on first start, prints it once and stores only its SHA-256 (`service_settings`). Without `AGENT_CORE_MASTER_KEY` it reads or creates `master.key` in `AGENT_CORE_DATA_DIR` (default `./.data`). Without `LLM_BASE_URL` or `LLM_MODEL_DEFAULT` it still starts: `/readyz` reports `llm_not_configured` and `POST /v1/runs` answers 503.
+- A built-in `default` agent (no connections, no tools but the built-ins) serves `POST /v1/runs` when `agent` is left out. The id `default` is reserved (422 `reserved_agent_id`); a `workflow` without `agent` is 422 `agent_required`.
+
+### Changed
+
+- `/readyz` also reports the `llm` and `master_key` checks.
 
 ### Fixed
 

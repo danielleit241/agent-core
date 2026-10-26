@@ -4,23 +4,22 @@ export type ServiceConfig = {
   ok: true
   databaseUrl: string
   migratorUrl: string
-  adminKey: string
-  masterKey: Buffer
-  llmBaseUrl: string
-  llmApiKey: string
-  /** Alias to real model id. */
-  models: Record<string, string>
+  /** From the environment; null means the service generates one at start. */
+  adminKey: string | null
+  /** From the environment; null means the service reads or creates `master.key` in `dataDir`. */
+  masterKey: Buffer | null
+  /** Null when `LLM_BASE_URL` or `LLM_MODEL_DEFAULT` is missing: the service starts but cannot run agents. */
+  llm: {
+    baseUrl: string
+    apiKey: string
+    /** Alias to real model id. */
+    models: Record<string, string>
+  } | null
+  dataDir: string
   port: number
 }
 
-const REQUIRED = [
-  'DATABASE_URL',
-  'MIGRATOR_DATABASE_URL',
-  'AGENT_CORE_ADMIN_KEY',
-  'AGENT_CORE_MASTER_KEY',
-  'LLM_BASE_URL',
-  'LLM_MODEL_DEFAULT',
-] as const
+const REQUIRED = ['DATABASE_URL', 'MIGRATOR_DATABASE_URL'] as const
 
 /** Reads and checks the environment. Messages name the variable only, never its value. */
 export function readServiceConfig(env: NodeJS.ProcessEnv): ServiceConfig | { ok: false; error: string } {
@@ -38,24 +37,32 @@ export function readServiceConfig(env: NodeJS.ProcessEnv): ServiceConfig | { ok:
     }
     if (name === 'DATABASE_URL' && username === '') return { ok: false, error: `${name} must be a valid postgres URL with a user name` }
   }
-  let masterKey: Buffer
-  try {
-    masterKey = parseMasterKey(env.AGENT_CORE_MASTER_KEY!)
-  } catch {
-    return { ok: false, error: 'AGENT_CORE_MASTER_KEY must be 32 bytes encoded in base64' }
+  let masterKey: Buffer | null = null
+  if (env.AGENT_CORE_MASTER_KEY) {
+    try {
+      masterKey = parseMasterKey(env.AGENT_CORE_MASTER_KEY)
+    } catch {
+      return { ok: false, error: 'AGENT_CORE_MASTER_KEY must be 32 bytes encoded in base64' }
+    }
   }
   return {
     ok: true,
     databaseUrl: env.DATABASE_URL!,
     migratorUrl: env.MIGRATOR_DATABASE_URL!,
-    adminKey: env.AGENT_CORE_ADMIN_KEY!,
+    adminKey: env.AGENT_CORE_ADMIN_KEY || null,
     masterKey,
-    llmBaseUrl: env.LLM_BASE_URL!,
-    llmApiKey: env.LLM_API_KEY ?? '',
-    models: {
-      default: env.LLM_MODEL_DEFAULT!,
-      ...(env.LLM_MODEL_SMART ? { smart: env.LLM_MODEL_SMART } : {}),
-    },
+    llm:
+      env.LLM_BASE_URL && env.LLM_MODEL_DEFAULT
+        ? {
+            baseUrl: env.LLM_BASE_URL,
+            apiKey: env.LLM_API_KEY ?? '',
+            models: {
+              default: env.LLM_MODEL_DEFAULT,
+              ...(env.LLM_MODEL_SMART ? { smart: env.LLM_MODEL_SMART } : {}),
+            },
+          }
+        : null,
+    dataDir: env.AGENT_CORE_DATA_DIR || './.data',
     port,
   }
 }

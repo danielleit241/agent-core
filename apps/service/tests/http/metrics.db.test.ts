@@ -1,3 +1,4 @@
+import { hashAdminKey } from '../../src/bootstrap'
 import { afterAll, beforeAll, beforeEach, expect, test } from 'vitest'
 import { createSecretBox } from '@agent-core/core'
 import type { LLMPort } from '@agent-core/core'
@@ -36,7 +37,7 @@ test('/metrics is Prometheus text, counts runs and LLM calls, and has no tenant 
   const llm: LLMPort = {
     complete: async () => ({ message: { role: 'assistant', content: 'done' }, usage: { inputTokens: 5, outputTokens: 3 }, stopReason: 'end' }),
   }
-  const stack = createServiceStack({ pool, adminKey: ADMIN_KEY, secrets: box, llm, workerId: 'w1', runPollMs: 20, deliveryPollMs: 20 })
+  const stack = createServiceStack({ pool, adminKeyHash: hashAdminKey(ADMIN_KEY), secrets: box, llm, workerId: 'w1', runPollMs: 20, deliveryPollMs: 20 })
   try {
     await createTenant(pool, 'acme-secret-tenant')
     await new ConfigRepo(pool, 'default', box).putAgent({ id: 'helper', instructions: 'help', connections: [], autonomy: 'supervised', allow: [], model: 'default' })

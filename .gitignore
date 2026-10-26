@@ -25,3 +25,5 @@ Thumbs.db
 *.log
 docs/adr/
 docs/learning/
+
+.data/

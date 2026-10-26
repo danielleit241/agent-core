@@ -36,16 +36,18 @@ Prerequisites: Node.js 24, pnpm 10 and Docker.
 
 ```bash
 pnpm install
-cp .env.example .env     # set LLM_API_KEY, LLM_MODEL_DEFAULT and AGENT_CORE_MASTER_KEY (openssl rand -base64 32); any OpenAI-compatible endpoint works
+cp .env.example .env     # set LLM_BASE_URL, LLM_API_KEY and LLM_MODEL_DEFAULT; any OpenAI-compatible endpoint works
 pnpm db:up               # Postgres on localhost:5433
 pnpm mock:shop           # terminal 2: mock shop MCP server on http://127.0.0.1:7400/mcp
 pnpm dev                 # terminal 1: agent-core on http://localhost:7300
 ```
 
-Then connect the shop, create an agent and start a run. The key is `AGENT_CORE_ADMIN_KEY` from `.env`.
+On the first start, without `AGENT_CORE_ADMIN_KEY`, the service prints a generated admin key once (`ak_admin.…`). Store it: only its hash is kept. To use your own key, or if you lose it, set `AGENT_CORE_ADMIN_KEY` and restart. Without `AGENT_CORE_MASTER_KEY` the service creates `master.key` in `AGENT_CORE_DATA_DIR` (default `./.data`); back it up, or set the variable for production. Without LLM settings the service still starts, and `GET /readyz` reports `llm_not_configured`.
+
+A run that names no `agent` uses the built-in `default` agent. Then connect the shop, create an agent and start a run. Put the admin key in `AUTH` below.
 
 ```bash
-AUTH="Authorization: Bearer change-me"
+AUTH="Authorization: Bearer <your admin key>"
 JSON="Content-Type: application/json"
 
 # 1. Connect the mock shop, then confirm the safety the service proposes for each tool.

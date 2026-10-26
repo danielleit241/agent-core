@@ -19,12 +19,17 @@ import { metrics } from '../metrics'
 
 export type AppDeps = {
   pool: ReturnType<typeof createPool>
-  adminKey: string
+  /** SHA-256 of the admin key. */
+  adminKeyHash: Buffer
   secrets: SecretBox
   discoverTools?: typeof discoverMcpTools
   /** Alias to real model id. */
   models?: Record<string, string>
   probe?: (model: string) => Promise<ProbeResult>
+  /** False when the LLM settings are missing: runs cannot start. Default true. */
+  llmConfigured?: boolean
+  /** Where the master key came from. Default `env`. */
+  masterKeySource?: 'env' | 'file'
 }
 
 export function buildApp(deps: AppDeps): FastifyInstance {
@@ -65,13 +70,14 @@ export function buildApp(deps: AppDeps): FastifyInstance {
     metrics.httpRequest(req.method, reply.statusCode)
   })
 
-  registerHealthRoutes(app, deps.pool)
+  const llmConfigured = deps.llmConfigured ?? true
+  registerHealthRoutes(app, deps.pool, { llmConfigured, masterKeySource: deps.masterKeySource ?? 'env' })
   registerMetricsRoutes(app, deps.pool)
   // The auth hook is bound to this plugin's routes, not to the URL text, so path encoding cannot bypass it.
   void app.register(async (v1) => {
     v1.decorateRequest('auth')
     v1.addHook('onRequest', async (req) => {
-      const auth = await authenticate(req.headers.authorization, deps.adminKey, (key) => resolveApiKey(deps.pool, key))
+      const auth = await authenticate(req.headers.authorization, deps.adminKeyHash, (key) => resolveApiKey(deps.pool, key))
       // Resolved here, before the idempotency hook, so idempotency rows live in the target tenant.
       req.auth = await applyTenantHeader(auth, req.headers['x-tenant-id'], req.routeOptions.url ?? req.url, async (id) => {
         const found = await withTenant(deps.pool, id, (client) => client.query('SELECT 1 FROM tenants WHERE id = $1', [id]))
@@ -82,7 +88,7 @@ export function buildApp(deps: AppDeps): FastifyInstance {
     registerConfigRoutes(v1, { pool: deps.pool, secrets: deps.secrets, discoverTools: deps.discoverTools ?? discoverMcpTools })
     registerTenantRoutes(v1, { pool: deps.pool })
     registerModelRoutes(v1, { pool: deps.pool, models: deps.models ?? {}, probe: deps.probe })
-    registerRunRoutes(v1, { pool: deps.pool, secrets: deps.secrets, closing: closing.signal })
+    registerRunRoutes(v1, { pool: deps.pool, secrets: deps.secrets, closing: closing.signal, llmConfigured })
     registerStreamRoutes(v1, { pool: deps.pool, closing: closing.signal })
   })
   return app

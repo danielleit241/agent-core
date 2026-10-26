@@ -6,13 +6,15 @@ import type { NewEvent, RunStatus, SecretBox, StoredEvent, WaitingReason } from 
 import { ConfigRepo, PgRunStore, StateConflictError, childRunIds, createRunWithEvent, getRun, getRunHead, makeDue } from '@agent-core/store-postgres'
 import type { createPool } from '@agent-core/store-postgres'
 import { ApiError, apiError, validationError } from '../errors'
+import { DEFAULT_AGENT, resolveAgent } from '../../default-agent'
 import { getRunView } from '../../runs/views'
 import { keyReused, readIdempotencyKey, requestHash } from '../idempotency'
 
 const POLL_MS = 100
 
 const RunBody = z.object({
-  agent: z.string().min(1),
+  /** Without it the run uses the built-in default agent. */
+  agent: z.string().min(1).optional(),
   /** A workflow of the agent; without it the run is an agent run. */
   workflow: z.string().min(1).optional(),
   input: z.object({ text: z.string().min(1) }),
@@ -78,7 +80,7 @@ export function checkChain(
   return { valid: true }
 }
 
-export function registerRunRoutes(app: FastifyInstance, deps: { pool: ReturnType<typeof createPool>; secrets: SecretBox; closing: AbortSignal }): void {
+export function registerRunRoutes(app: FastifyInstance, deps: { pool: ReturnType<typeof createPool>; secrets: SecretBox; closing: AbortSignal; llmConfigured: boolean }): void {
   const { pool } = deps
   const configFor = (req: FastifyRequest) => new ConfigRepo(pool, req.auth.tenantId, deps.secrets)
   const storeFor = (req: FastifyRequest) => new PgRunStore(pool, req.auth.tenantId)
@@ -96,6 +98,9 @@ export function registerRunRoutes(app: FastifyInstance, deps: { pool: ReturnType
 
   app.post<{ Querystring: { wait?: string } }>('/v1/runs', async (req, reply) => {
     const { tenantId } = req.auth
+    if (!deps.llmConfigured) {
+      throw apiError('llm_not_configured', 'The LLM is not configured, so no run can start.', 'Set LLM_BASE_URL and LLM_MODEL_DEFAULT, then restart.', 503)
+    }
     const config = configFor(req)
     const wait = parseWait(req.query.wait)
     const key = readIdempotencyKey(req)
@@ -110,11 +115,15 @@ export function registerRunRoutes(app: FastifyInstance, deps: { pool: ReturnType
     const parsed = RunBody.safeParse(req.body)
     if (!parsed.success) throw validationError(parsed.error)
     const body = parsed.data
-    const agent = await config.getAgent(body.agent)
+    if (body.agent === undefined && body.workflow !== undefined) {
+      throw apiError('agent_required', 'A workflow run needs an agent.', 'Add "agent" with the agent that defines the workflow.', 422)
+    }
+    const agentId = body.agent ?? DEFAULT_AGENT.id
+    const agent = await resolveAgent(config, agentId)
     if (!agent) {
       throw apiError(
         'unknown_agent',
-        `Agent "${body.agent}" does not exist.`,
+        `Agent "${agentId}" does not exist.`,
         'Create the agent with POST /v1/agents first.',
         422,
       )
@@ -125,7 +134,7 @@ export function registerRunRoutes(app: FastifyInstance, deps: { pool: ReturnType
     if (body.workflow !== undefined && definition === undefined) {
       throw apiError(
         'unknown_workflow',
-        `Agent "${body.agent}" has no workflow "${body.workflow}".`,
+        `Agent "${agentId}" has no workflow "${body.workflow}".`,
         "Name a workflow from the agent's \"workflows\", or leave \"workflow\" out for an agent run.",
         422,
       )
@@ -134,14 +143,14 @@ export function registerRunRoutes(app: FastifyInstance, deps: { pool: ReturnType
     const created = await createRunWithEvent(pool, {
       tenantId,
       runId: `run_${randomUUID()}`,
-      agentId: body.agent,
+      agentId,
       agentVersion: agent.version,
       idempotencyKey: key,
       requestHash: key === undefined ? undefined : requestHash(req),
       created: {
         type: 'run.created',
         payload: {
-          agentId: body.agent,
+          agentId,
           input: body.input,
           ...(body.principal ? { principal: body.principal } : {}),
           ...(definition === undefined ? {} : { workflow: { name: body.workflow!, definition } }),

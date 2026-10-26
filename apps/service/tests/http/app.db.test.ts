@@ -1,3 +1,4 @@
+import { hashAdminKey } from '../../src/bootstrap'
 import type { FastifyInstance } from 'fastify'
 import { afterAll, beforeAll, beforeEach, expect, test } from 'vitest'
 import { projectRun, toolFingerprint } from '@agent-core/core'
@@ -41,7 +42,7 @@ beforeAll(() => {
 beforeEach(async () => {
   await migrator.query('DROP SCHEMA public CASCADE; CREATE SCHEMA public')
   await runMigrations(migrator, { runtimeUser: 'agentcore_runtime' })
-  app = buildApp({ secrets: box, pool, adminKey: ADMIN_KEY, discoverTools })
+  app = buildApp({ secrets: box, pool, adminKeyHash: hashAdminKey(ADMIN_KEY), discoverTools })
 })
 afterAll(async () => {
   await pool.end()
@@ -151,7 +152,7 @@ test('healthz needs no key', async () => {
 
 test('healthz reports 503 when the database is down', async () => {
   const dead = createPool('postgres://agentcore:agentcore@localhost:1/none')
-  const res = await buildApp({ secrets: box, pool: dead, adminKey: ADMIN_KEY }).inject({ method: 'GET', url: '/healthz' })
+  const res = await buildApp({ secrets: box, pool: dead, adminKeyHash: hashAdminKey(ADMIN_KEY) }).inject({ method: 'GET', url: '/healthz' })
   await dead.end()
   expect(res.statusCode).toBe(503)
   expect(res.json()).toEqual({ status: 'degraded', db: 'error' })
@@ -256,7 +257,7 @@ const changedApp = (change: Partial<ToolDescriptor>) =>
   buildApp({
     secrets: box,
     pool,
-    adminKey: ADMIN_KEY,
+    adminKeyHash: hashAdminKey(ADMIN_KEY),
     discoverTools: async (id: string) => (await discoverTools(id)).map((d) => ({ ...d, tool: { ...d.tool, ...change } })),
   })
 const register = (a: FastifyInstance) =>
@@ -311,7 +312,7 @@ test('a tool added when a connection is registered again waits for review', asyn
   const renamed = buildApp({
     secrets: box,
     pool,
-    adminKey: ADMIN_KEY,
+    adminKeyHash: hashAdminKey(ADMIN_KEY),
     discoverTools: async (id: string) => (await discoverTools(id)).map((d) => ({ ...d, tool: { ...d.tool, name: 'orders.list' } })),
   })
   const res = await renamed.inject({
@@ -368,7 +369,7 @@ test('a connection may not register a tool named with the built-in prefix agent_
   const mcp = buildApp({
     secrets: box,
     pool,
-    adminKey: ADMIN_KEY,
+    adminKeyHash: hashAdminKey(ADMIN_KEY),
     discoverTools: async (id: string) => (await discoverTools(id)).map((d) => ({ ...d, tool: { ...d.tool, name: 'agent_core.escalate' } })),
   })
   const res = await mcp.inject({
@@ -388,7 +389,7 @@ test('an unreachable connection gives 422 and a non-http url gives 400', async (
   const failing = buildApp({
     secrets: box,
     pool,
-    adminKey: ADMIN_KEY,
+    adminKeyHash: hashAdminKey(ADMIN_KEY),
     discoverTools: async () => {
       throw new Error('connection_unreachable: boom')
     },
@@ -665,7 +666,7 @@ test('connection responses never contain url credentials', async () => {
   const failing = buildApp({
     secrets: box,
     pool,
-    adminKey: ADMIN_KEY,
+    adminKeyHash: hashAdminKey(ADMIN_KEY),
     discoverTools: async () => {
       throw new Error('connection_unreachable: http://user:pass@host.test/mcp')
     },

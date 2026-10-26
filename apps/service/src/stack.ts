@@ -12,9 +12,12 @@ import { startRunWorker } from './worker/worker'
 
 export type ServiceStackDeps = {
   pool: ReturnType<typeof createPool>
-  adminKey: string
+  /** SHA-256 of the admin key. */
+  adminKeyHash: Buffer
   secrets: SecretBox
-  llm: LLMPort
+  /** Null when the LLM is not configured: runs are refused and the run worker fails any run it finds. */
+  llm: LLMPort | null
+  masterKeySource?: 'env' | 'file'
   /** Alias to real model id. */
   models?: Record<string, string>
   probe?: (model: string) => Promise<ProbeResult>
@@ -30,6 +33,7 @@ export function createServiceStack(deps: ServiceStackDeps) {
   const llm: LLMPort = {
     async complete(req) {
       try {
+        if (deps.llm === null) throw new Error('the LLM is not configured')
         const res = await deps.llm.complete(req)
         metrics.llmCall('ok', { input: res.usage.inputTokens, output: res.usage.outputTokens })
         return res
@@ -40,7 +44,15 @@ export function createServiceStack(deps: ServiceStackDeps) {
     },
   }
   const tools = createToolRouters(pool, deps.secrets)
-  const app = buildApp({ pool, adminKey: deps.adminKey, secrets: deps.secrets, models: deps.models, probe: deps.probe })
+  const app = buildApp({
+    pool,
+    adminKeyHash: deps.adminKeyHash,
+    secrets: deps.secrets,
+    models: deps.models,
+    probe: deps.probe,
+    llmConfigured: deps.llm !== null,
+    masterKeySource: deps.masterKeySource,
+  })
   const runWorker = startRunWorker({
     pool,
     secrets: deps.secrets,

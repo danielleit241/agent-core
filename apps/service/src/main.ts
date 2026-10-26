@@ -2,6 +2,7 @@ import { hostname } from 'node:os'
 import { DEFAULT_MODEL_PROFILE, createSecretBox } from '@agent-core/core'
 import { createOpenAICompatible, probeModel } from '@agent-core/llm'
 import { ModelProfileRepo, createPool, runMigrations, runtimeUserOf } from '@agent-core/store-postgres'
+import { ensureAdminKeyHash, ensureMasterKey } from './bootstrap'
 import { readServiceConfig } from './config'
 import { createServiceStack } from './stack'
 
@@ -11,36 +12,43 @@ async function main(): Promise<void> {
     console.error(`agent-core: ${config.error}`)
     process.exit(1)
   }
-  const { port, llmBaseUrl: baseUrl, llmApiKey: apiKey, models } = config
+  const { port, llm: llmConfig } = config
   const migrator = createPool(config.migratorUrl)
+  let adminKeyHash: Buffer
   try {
     await runMigrations(migrator, { runtimeUser: runtimeUserOf(config.databaseUrl) })
+    adminKeyHash = (await ensureAdminKeyHash(migrator, config.adminKey, console.log)).hash
   } finally {
     await migrator.end()
   }
+  const master = ensureMasterKey(config.masterKey, config.dataDir, console.warn)
   const pool = createPool(config.databaseUrl)
 
   const profiles = new ModelProfileRepo(pool)
-  const llm = createOpenAICompatible({
-    baseUrl,
-    apiKey,
-    models,
-    profile: async (model) => {
-      try {
-        return (await profiles.get(model))?.profile ?? DEFAULT_MODEL_PROFILE
-      } catch (err) {
-        console.error(`agent-core: could not read the model profile, using the default profile (${err instanceof Error ? err.name : 'error'})`)
-        return DEFAULT_MODEL_PROFILE
-      }
-    },
-  })
+  const llm = llmConfig
+    ? createOpenAICompatible({
+        baseUrl: llmConfig.baseUrl,
+        apiKey: llmConfig.apiKey,
+        models: llmConfig.models,
+        profile: async (model) => {
+          try {
+            return (await profiles.get(model))?.profile ?? DEFAULT_MODEL_PROFILE
+          } catch (err) {
+            console.error(`agent-core: could not read the model profile, using the default profile (${err instanceof Error ? err.name : 'error'})`)
+            return DEFAULT_MODEL_PROFILE
+          }
+        },
+      })
+    : null
+  if (llm === null) console.warn('agent-core: LLM_BASE_URL or LLM_MODEL_DEFAULT is not set; runs are refused until both are set and the service restarts.')
   const stack = createServiceStack({
     pool,
-    adminKey: config.adminKey,
-    secrets: createSecretBox(config.masterKey),
+    adminKeyHash,
+    secrets: createSecretBox(master.key),
+    masterKeySource: master.source,
     llm,
-    models,
-    probe: (model) => probeModel({ baseUrl, apiKey, model }),
+    models: llmConfig?.models,
+    probe: llmConfig ? (model) => probeModel({ baseUrl: llmConfig.baseUrl, apiKey: llmConfig.apiKey, model }) : undefined,
     workerId: `${hostname()}:${process.pid}`,
   })
   const { app } = stack

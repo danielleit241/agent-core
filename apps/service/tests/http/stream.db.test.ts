@@ -1,3 +1,4 @@
+import { hashAdminKey } from '../../src/bootstrap'
 import type { AddressInfo } from 'node:net'
 import type { FastifyInstance } from 'fastify'
 import { afterAll, beforeAll, beforeEach, expect, test } from 'vitest'
@@ -22,7 +23,7 @@ beforeAll(() => {
 beforeEach(async () => {
   await migrator.query('DROP SCHEMA public CASCADE; CREATE SCHEMA public')
   await runMigrations(migrator, { runtimeUser: 'agentcore_runtime' })
-  app = buildApp({ secrets: box, pool, adminKey: ADMIN_KEY })
+  app = buildApp({ secrets: box, pool, adminKeyHash: hashAdminKey(ADMIN_KEY) })
   await app.listen({ port: 0, host: '127.0.0.1' })
   base = `http://127.0.0.1:${(app.server.address() as AddressInfo).port}`
 })

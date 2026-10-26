@@ -6,6 +6,7 @@ import type { SecretBox, ToolSafety } from '@agent-core/core'
 import { ConfigRepo, NO_REVIEW } from '@agent-core/store-postgres'
 import type { LoadedTool, StoredTool, createPool } from '@agent-core/store-postgres'
 import type { discoverMcpTools } from '@agent-core/tools'
+import { DEFAULT_AGENT } from '../../default-agent'
 import { requireAdmin } from '../auth'
 import { apiError, validationError } from '../errors'
 
@@ -225,6 +226,9 @@ export function registerConfigRoutes(
     }
     const parsed = AgentDefinitionSchema.safeParse(req.body)
     if (!parsed.success) throw validationError(parsed.error)
+    if (parsed.data.id === DEFAULT_AGENT.id) {
+      throw apiError('reserved_agent_id', `The agent id "${DEFAULT_AGENT.id}" is reserved.`, 'Use another id. The built-in default agent cannot be replaced.', 422)
+    }
     const problems = workflowProblems(parsed.data)
     if (problems.length > 0) {
       throw apiError(
