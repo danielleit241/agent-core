@@ -10,6 +10,7 @@ test('defaults are the conservative values', () => {
     run_time_s: 1800,
     wait_human_s: 86_400,
     tool_output_chars: 48_000,
+    loop: 3,
   })
 })
 

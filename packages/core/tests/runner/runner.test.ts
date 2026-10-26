@@ -274,8 +274,9 @@ test('returns a tool error for an unknown tool', async () => {
 
 const lastLimit = async (store: RunStore) =>
   (await store.readEvents('r1')).filter((e) => e.type === 'limit.reached').at(-1)?.payload
+// Each lookup asks for a different order, so the loop limit stays out of the way.
 const lookups = (n: number, usage?: Step['usage']): Step[] =>
-  Array.from({ length: n }, () => ({ ...callTool('orders.get', { order_id: '1042' }), ...(usage ? { usage } : {}) }))
+  Array.from({ length: n }, (_, i) => ({ ...callTool('orders.get', { order_id: String(1042 + i) }), ...(usage ? { usage } : {}) }))
 
 test('llm_calls stops the run at the limit and waits with reason limit', async () => {
   const llm = scriptedLlm(lookups(5))
@@ -362,6 +363,26 @@ test('a grant lets the run take one more full allowance, then it stops again', a
   expect(await advanceRun('r1', deps({ llm, store, tools, limits: { llm_calls: 3 } }))).toBe('waiting_human')
   expect(llm.requests).toHaveLength(6)
   expect(await lastLimit(store)).toEqual({ limit: 'llm_calls', max: 6, value: 6 })
+})
+
+test('loop stops the fourth identical tool call and waits with reason limit', async () => {
+  const llm = scriptedLlm([...Array.from({ length: 4 }, () => callTool('orders.get', { order_id: '1042' })), say('done')])
+  const { store, tools } = await setup()
+  expect(await advanceRun('r1', deps({ llm, store, tools }))).toBe('waiting_human')
+  expect(projectRun(await store.readEvents('r1'), '').waitingReason).toBe('limit')
+  expect(await lastLimit(store)).toEqual({ limit: 'loop', max: 3, value: 3 })
+  expect(tools.calls).toHaveLength(3)
+})
+
+test('loop stops a run whose turns add no new tool result, before the next LLM call', async () => {
+  const a = { name: 'orders.get', args: { order_id: '1' } }
+  const b = { name: 'orders.get', args: { order_id: '2' } }
+  const llm = scriptedLlm([callTools([a, b]), callTools([a]), callTools([b]), callTools([a]), say('done')])
+  const { store, tools } = await setup()
+  expect(await advanceRun('r1', deps({ llm, store, tools }))).toBe('waiting_human')
+  expect(await lastLimit(store)).toEqual({ limit: 'loop', max: 3, value: 3 })
+  expect(llm.requests).toHaveLength(4)
+  expect(tools.calls).toHaveLength(5)
 })
 
 test('every wait for a human carries expiresAt = now + wait_human_s', async () => {

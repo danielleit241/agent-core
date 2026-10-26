@@ -2,6 +2,7 @@ import type { LLMPort, RunStore, ToolInvoker } from '../ports'
 import { projectRun, type RunProjection } from '../events/projection'
 import { decide } from '../policy/rules'
 import { resolveLimits, type LimitName, type Limits } from '../limits'
+import { repeatedCalls, stalledTurns } from './loops'
 import type { AgentDefinition, NewEvent, RunStatus, StoredEvent, ToolCall, ToolDescriptor, WaitingReason } from '../types'
 
 export type RunnerDeps = {
@@ -80,18 +81,23 @@ function breach(proj: RunProjection, limits: Limits, limit: LimitName, value: nu
   return value >= max ? { limit, max, value } : null
 }
 
-/** Checks the run limits before a step. The tenant cost is read only before an LLM step. */
-async function checkRunLimits(deps: RunnerDeps, proj: RunProjection, llmStep: boolean): Promise<Breach | null> {
+/**
+ * Checks the run limits before a step: before a tool call when `call` is set, else before an LLM step.
+ * The tenant cost is read only before an LLM step.
+ */
+async function checkRunLimits(deps: RunnerDeps, proj: RunProjection, call: ToolCall | undefined): Promise<Breach | null> {
   const limits = limitsOf(deps)
   const now = nowOf(deps).getTime()
   const runningMs = proj.runningMs + (proj.runningSince === null ? 0 : now - Date.parse(proj.runningSince))
   const time = breach(proj, limits, 'run_time_s', Math.floor(runningMs / 1000))
-  if (time !== null || !llmStep) return time
+  if (time !== null) return time
+  if (call !== undefined) return breach(proj, limits, 'loop', repeatedCalls(proj.messages, call))
   return (
     breach(proj, limits, 'llm_calls', proj.llmCalls) ??
     breach(proj, limits, 'tokens', proj.tokens) ??
     breach(proj, limits, 'cost_usd', proj.costUsd) ??
-    breach(proj, limits, 'tenant_cost_usd_per_day', await deps.tenantCostToday())
+    breach(proj, limits, 'tenant_cost_usd_per_day', await deps.tenantCostToday()) ??
+    breach(proj, limits, 'loop', stalledTurns(proj.messages))
   )
 }
 
@@ -153,7 +159,7 @@ export async function advanceRun(runId: string, deps: RunnerDeps): Promise<RunSt
     const call = proj.pendingToolCalls[0]
     // A call in flight finishes first: stopping there would leave its outcome unknown.
     if (call === undefined || !proj.inFlight.includes(call.id)) {
-      const b = await checkRunLimits(deps, proj, call === undefined)
+      const b = await checkRunLimits(deps, proj, call)
       if (b !== null) {
         await deps.store.append(runId, [limitReached(b), waitHuman('running', 'limit', expiresAt(deps))])
         return 'waiting_human'

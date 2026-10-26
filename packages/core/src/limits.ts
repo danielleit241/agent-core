@@ -8,6 +8,7 @@ export const LIMIT_NAMES = [
   'run_time_s',
   'wait_human_s',
   'tool_output_chars',
+  'loop',
 ] as const
 export const LimitNameSchema = z.enum(LIMIT_NAMES)
 export type LimitName = z.infer<typeof LimitNameSchema>
@@ -24,6 +25,7 @@ export const LimitsSchema = z
     run_time_s: count,
     wait_human_s: count,
     tool_output_chars: count,
+    loop: count,
   })
   .partial()
   .strict()
@@ -39,6 +41,8 @@ export const DEFAULT_LIMITS: Limits = {
   wait_human_s: 86_400,
   // About 12k tokens: a large tool output would fill the LLM context and every later request.
   tool_output_chars: 48_000,
+  // The same call allowed 3 times; also 3 tool turns in a row that bring nothing new.
+  loop: 3,
 }
 
 export function resolveLimits(partial?: Partial<Limits>): Limits {
