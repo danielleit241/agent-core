@@ -47,6 +47,32 @@ function salesExport(month: string): string {
   return rows.join('\n')
 }
 
+const SHIPMENT_IDS = { first: 2001, last: 2100 }
+/** Spread out on purpose: a run that checks one by one meets them far apart. */
+const LOST_SHIPMENTS = new Set([2017, 2058, 2093])
+
+/** A deterministic, verbose tracking record of about 2,500 characters. Only three shipments are lost. */
+function shipmentRecord(id: number): string {
+  const lost = LOST_SHIPMENTS.has(id)
+  const scans = ['Nhận hàng từ người gửi', 'Nhập kho tổng', 'Phân loại theo tuyến', 'Xuất kho tổng', 'Đến trạm trung chuyển', 'Rời trạm trung chuyển', 'Nhập kho khu vực', 'Giao cho nhân viên giao hàng']
+  const events = scans.map((description, i) => ({
+    at: `2026-09-${String(1 + (id % 20)).padStart(2, '0')}T${String(6 + i).padStart(2, '0')}:${String((id * 7 + i * 13) % 60).padStart(2, '0')}:00Z`,
+    location: `Trạm ${((id + i * 5) % 40) + 1}, quận ${((id + i) % 12) + 1}, Hà Nội`,
+    description,
+    operator: `nv_${(id * 31 + i * 17) % 900 + 100}`,
+    note: 'Kiện hàng nguyên vẹn, niêm phong còn đủ, đã đối chiếu số lượng với phiếu gửi hàng của người gửi.',
+  }))
+  return JSON.stringify({
+    id: String(id),
+    status: lost ? 'lost' : id % 2 === 0 ? 'delivered' : 'in_transit',
+    carrier: `Đơn vị vận chuyển ${(id % 4) + 1}`,
+    weight_kg: 1 + (id % 9) / 2,
+    declared_value: 250_000 + (id % 17) * 50_000,
+    recipient: { name: `Khách hàng ${id}`, address: `Số ${id % 200}, ngõ ${(id % 40) + 1}, đường ${(id % 15) + 1}, Hà Nội`, phone: `09${String(10_000_000 + id * 37).slice(-8)}` },
+    events: lost ? [...events.slice(0, 7), { ...events[7]!, description: 'Mất liên lạc với kiện hàng, không có quét nào sau đó' }] : events,
+  })
+}
+
 export async function startShop(
   seed?: ShopSeed,
   port = 0,
@@ -54,6 +80,8 @@ export async function startShop(
   url: string
   /** A second MCP endpoint with the warehouse tools. */
   warehouseUrl: string
+  /** A third MCP endpoint with the shipment tracking tool (`shipments.get`). */
+  logisticsUrl: string
   state: { refunds: { orderId: string; amount: number }[]; sizeChanges: SizeChange[]; initializeCount: number }
   /** Replaces orders and inventory with a deep copy of the seed (default seed when omitted); clears refunds and size changes. */
   reset(seed?: ShopSeed): void
@@ -178,10 +206,31 @@ export async function startShop(
     return server
   }
 
+  function buildLogistics(): McpServer {
+    const server = new McpServer({ name: 'mock-logistics', version: '0.0.0' })
+    server.registerTool(
+      'shipments.get',
+      {
+        description: 'Get the tracking record of a shipment: status, carrier, recipient and every scan.',
+        inputSchema: { id: z.string() },
+        annotations: { readOnlyHint: true, openWorldHint: false },
+      },
+      async ({ id }) => {
+        const n = /^\d+$/.test(id) ? Number(id) : NaN
+        if (!(n >= SHIPMENT_IDS.first && n <= SHIPMENT_IDS.last)) {
+          return { isError: true, content: [{ type: 'text', text: `Shipment not found: ${id}` }] }
+        }
+        return { content: [{ type: 'text', text: shipmentRecord(n) }] }
+      },
+    )
+    return server
+  }
+
   const http = createServer((req, res) => {
     const path = req.url
-    if ((path !== '/mcp' && path !== '/warehouse/mcp') || req.method !== 'POST') {
-      res.writeHead(path === '/mcp' || path === '/warehouse/mcp' ? 405 : 404).end()
+    const known = path === '/mcp' || path === '/warehouse/mcp' || path === '/logistics/mcp'
+    if (!known || req.method !== 'POST') {
+      res.writeHead(known ? 405 : 404).end()
       return
     }
     // Stateless mode: a fresh server and transport per request.
@@ -196,7 +245,7 @@ export async function startShop(
         return
       }
       if ((body as { method?: unknown } | null)?.method === 'initialize' && path === '/mcp') state.initializeCount++
-      const server = path === '/mcp' ? buildServer(req.socket) : buildWarehouse()
+      const server = path === '/mcp' ? buildServer(req.socket) : path === '/warehouse/mcp' ? buildWarehouse() : buildLogistics()
       const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined })
       res.on('close', () => {
         void transport.close()
@@ -217,6 +266,7 @@ export async function startShop(
   return {
     url: `http://127.0.0.1:${boundPort}/mcp`,
     warehouseUrl: `http://127.0.0.1:${boundPort}/warehouse/mcp`,
+    logisticsUrl: `http://127.0.0.1:${boundPort}/logistics/mcp`,
     state,
     reset,
     snapshot: () =>

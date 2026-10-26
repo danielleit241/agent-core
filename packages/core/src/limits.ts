@@ -8,6 +8,7 @@ export const LIMIT_NAMES = [
   'run_time_s',
   'wait_human_s',
   'tool_output_chars',
+  'context_tokens',
   'loop',
 ] as const
 export const LimitNameSchema = z.enum(LIMIT_NAMES)
@@ -25,6 +26,7 @@ export const LimitsSchema = z
     run_time_s: count,
     wait_human_s: count,
     tool_output_chars: count,
+    context_tokens: count,
     loop: count,
   })
   .partial()
@@ -41,6 +43,8 @@ export const DEFAULT_LIMITS: Limits = {
   wait_human_s: 86_400,
   // Content longer than this is offloaded: the context holds a preview and a handle (about 2,000 tokens at most).
   tool_output_chars: 8_000,
+  // A target, not a breach: old tool outputs are cleared when the next request would pass it (see `planCompaction`).
+  context_tokens: 64_000,
   // The same call allowed 3 times; also 3 tool turns in a row that bring nothing new.
   loop: 3,
 }

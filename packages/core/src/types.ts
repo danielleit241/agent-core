@@ -178,6 +178,13 @@ const payloadSchemas = {
     usage: UsageSchema,
     stopReason: z.enum(['end', 'tool_calls', 'length', 'filtered']),
   }),
+  // Old tool outputs were cleared from the context; the projection shows each as a stub with its handle.
+  'context.compacted': z.object({
+    estimatedBefore: z.number(),
+    estimatedAfter: z.number(),
+    threshold: z.number(),
+    cleared: z.array(z.object({ toolCallId: z.string(), handle: z.string(), hash: z.string(), chars: z.number().int() })),
+  }),
   'rule.decided': z.object({
     toolCallId: z.string(),
     tool: z.string(),
@@ -262,6 +269,7 @@ export const NewEventSchema = z.discriminatedUnion('type', [
   eventSchema('run.created', payloadSchemas['run.created']),
   eventSchema('llm.requested', payloadSchemas['llm.requested']),
   eventSchema('llm.responded', payloadSchemas['llm.responded']),
+  eventSchema('context.compacted', payloadSchemas['context.compacted']),
   eventSchema('rule.decided', payloadSchemas['rule.decided']),
   eventSchema('approval.requested', payloadSchemas['approval.requested']),
   eventSchema('approval.resolved', payloadSchemas['approval.resolved']),

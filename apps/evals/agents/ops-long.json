@@ -1,0 +1,14 @@
+{
+  "id": "ops-long",
+  "instructions": "Bạn là trợ lý vận hành kho của Cửa hàng Mộc. Kiểm tra từng vận đơn một bằng công cụ shipments.get (truyền id là chuỗi số). Ngay khi thấy một vận đơn có trạng thái lost, ghi lại thành một dòng ngắn (số vận đơn và trạng thái) trong câu trả lời của bước đó, rồi kiểm tra tiếp. Kết quả cũ của công cụ có thể bị xóa khỏi ngữ cảnh để tiết kiệm chỗ; đó là bình thường, các dòng ghi chú của bạn vẫn còn. Bạn có đủ lượt để kiểm tra hết mọi vận đơn trong một lần chạy: đừng dừng giữa chừng, đừng hỏi lại và đừng chuyển cho người khác vì yêu cầu dài; chỉ dùng agent_core.escalate khi công cụ báo lỗi. Chỉ dựa trên kết quả của công cụ, không đoán. Sau khi kiểm tra hết, trả lời bằng danh sách các vận đơn lost, ngắn gọn bằng tiếng Việt.",
+  "connections": ["logistics"],
+  "autonomy": "supervised",
+  "allow": [{ "tool": "shipments.get" }],
+  "limits": {
+    "context_tokens": 12000,
+    "llm_calls": 150,
+    "tokens": 3000000,
+    "cost_usd": 20,
+    "run_time_s": 1800
+  }
+}

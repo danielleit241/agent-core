@@ -212,3 +212,91 @@ test('a handle seen in several events has the union of their labels', () => {
   ]
   expect(projectRun(stored(events), 'sys').handles.get('out_a')).toEqual({ hash: 'hasha', labels: ['internal', 'untrusted'], chars: 9_000 })
 })
+
+describe('context compaction', () => {
+  const call = (id: string): NewEvent => ({
+    type: 'llm.responded',
+    payload: {
+      message: { role: 'assistant', content: '', toolCalls: [{ id, name: 'shipments.get', arguments: { id } }] },
+      usage: { inputTokens: 1, outputTokens: 1 },
+      stopReason: 'tool_calls',
+    },
+    labels: [],
+  })
+  const result = (id: string, content: string, labels: NewEvent['labels'] = ['internal'], offload?: { handle: string; hash: string; chars: number; lines: number }): NewEvent => ({
+    type: 'tool.responded',
+    payload: { toolCallId: id, content, isError: false, ...(offload === undefined ? {} : { offload }) },
+    labels,
+  })
+  const compacted = (cleared: { toolCallId: string; handle: string; hash: string; chars: number }[], estimatedAfter = 100): NewEvent => ({
+    type: 'context.compacted',
+    payload: { estimatedBefore: 1000, estimatedAfter, threshold: 800, cleared },
+    labels: [],
+  })
+  const stub = (handle: string, chars: number) =>
+    `[Output cleared to keep the context small: ${handle}, ${chars.toLocaleString('en-US')} characters. Read it again with agent_core.read_output.]`
+
+  test('a cleared inline output reads as its stub, and the stub handle resolves with the labels of the original', () => {
+    const hash = 'a'.repeat(64)
+    const proj = projectRun(
+      stored([created, running, call('c1'), result('c1', 'x'.repeat(500), ['confidential']), call('c2'), result('c2', 'y'), compacted([{ toolCallId: 'c1', handle: 'out_aaaaaaaaaaaa', hash, chars: 500 }])]),
+      '',
+    )
+    expect(proj.messages.filter((m) => m.role === 'tool').map((m) => m.content)).toEqual([stub('out_aaaaaaaaaaaa', 500), 'y'])
+    expect(proj.handles.get('out_aaaaaaaaaaaa')).toEqual({ hash, labels: ['confidential'], chars: 500 })
+    expect(proj.toolOutputs.get('c1')?.stubbed).toBe(true)
+    expect(proj.toolOutputs.get('c2')?.stubbed).toBe(false)
+  })
+
+  test('an offloaded output keeps its own handle and registry entry when it is cleared', () => {
+    const offload = { handle: 'out_bbbbbbbbbbbb', hash: 'b'.repeat(64), chars: 9000, lines: 3 }
+    const proj = projectRun(
+      stored([created, running, call('c1'), result('c1', 'preview', ['untrusted'], offload), compacted([{ toolCallId: 'c1', handle: offload.handle, hash: offload.hash, chars: 9000 }])]),
+      '',
+    )
+    expect(proj.messages.at(-1)!.content).toBe(stub('out_bbbbbbbbbbbb', 9000))
+    expect([...proj.handles.keys()]).toEqual(['out_bbbbbbbbbbbb'])
+    expect(proj.handles.get(offload.handle)).toEqual({ hash: offload.hash, labels: ['untrusted'], chars: 9000 })
+    expect(proj.toolOutputs.get('c1')?.key()).toBe(offload.hash)
+  })
+
+  test('two equal outputs with different labels share one stub handle that carries both labels', () => {
+    const hash = 'd'.repeat(64)
+    const handle = 'out_dddddddddddd'
+    const cleared = ['c1', 'c2'].map((toolCallId) => ({ toolCallId, handle, hash, chars: 500 }))
+    const proj = projectRun(
+      stored([created, running, call('c1'), result('c1', 'x'.repeat(500), ['internal']), call('c2'), result('c2', 'x'.repeat(500), ['untrusted']), compacted(cleared)]),
+      '',
+    )
+    expect(proj.handles.get(handle)).toEqual({ hash, labels: ['internal', 'untrusted'], chars: 500 })
+  })
+
+  test('the context size is the last measured call plus what was added; a compaction replaces the estimate', () => {
+    const measured: NewEvent[] = [
+      created,
+      running,
+      { type: 'llm.requested', payload: { model: 'm', context: { snapshot: 's', chars: 1000 } }, labels: [] },
+      { ...call('c1'), payload: { ...(call('c1') as { payload: object }).payload, usage: { inputTokens: 250, outputTokens: 5 } } } as NewEvent,
+    ]
+    const answered = projectRun(stored(measured), '')
+    const answerChars = JSON.stringify(answered.messages.at(-1)!.toolCalls).length
+    expect(answered.contextSize).toEqual({ tokens: 250, tokensPerChar: 0.25, addedChars: answerChars, hadHandles: false })
+    expect(projectRun(stored([...measured, result('c1', 'z'.repeat(40))]), '').contextSize?.addedChars).toBe(answerChars + 40)
+    const after = projectRun(stored([...measured, result('c1', 'z'.repeat(40)), compacted([], 120)]), '')
+    expect(after.contextSize).toEqual({ tokens: 120, tokensPerChar: 0.25, addedChars: 0, hadHandles: true })
+  })
+
+  test('a measured call without usable input tokens falls back to a quarter of the characters', () => {
+    const events: NewEvent[] = [
+      created,
+      running,
+      { type: 'llm.requested', payload: { model: 'm', context: { snapshot: 's', chars: 4000 } }, labels: [] },
+      { ...call('c1'), payload: { ...(call('c1') as { payload: object }).payload, usage: { inputTokens: 0, outputTokens: 5 } } } as NewEvent,
+    ]
+    expect(projectRun(stored(events), '').contextSize).toMatchObject({ tokens: 1000, tokensPerChar: 0.25 })
+  })
+
+  test('a call without a request size, or an old log, has no context size', () => {
+    expect(projectRun(stored([created, running, requested, responded]), '').contextSize).toBeNull()
+  })
+})

@@ -1,0 +1,17 @@
+{
+  "id": "long-run-100-shipments",
+  "group": "context",
+  "description": "A 100-step run: every shipment record is about 2,500 characters, so the context passes its 12,000-token threshold and old outputs are cleared; the agent still lists the three lost shipments.",
+  "agent": "ops-long",
+  "timeoutS": 1500,
+  "input": {
+    "text": "Kiểm tra các vận đơn từ 2001 đến 2100 (từng vận đơn một) và cho tôi danh sách những vận đơn có trạng thái lost."
+  },
+  "expect": {
+    "toolCallCount": {
+      "shipments.get": 100
+    },
+    "peakInputTokensAtMost": 12000,
+    "rubric": "The reply lists exactly the shipments 2017, 2058 and 2093 as lost, and no other shipment."
+  }
+}

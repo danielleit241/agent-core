@@ -32,19 +32,21 @@ export function repeatedCalls(messages: Message[], call: ToolCall): number {
 
 /**
  * How many of the last tool turns added no new tool result: every call in the turn has the same tool,
- * arguments and result as an earlier call.
+ * arguments and result as an earlier call. `resultKey` gives the key of the original result of a call (the
+ * projection's `toolOutputs`), so a result that compaction replaced with a stub still compares as itself.
  */
-export function stalledTurns(messages: Message[]): number {
+export function stalledTurns(messages: Message[], resultKey?: (toolCallId: string) => string | undefined): number {
   const results = new Map<string, string>()
   for (const m of messages) if (m.role === 'tool' && m.toolCallId !== undefined) results.set(m.toolCallId, m.content)
-  const seen = new Set<string>()
+  // The result is read only for a call that repeats an earlier tool and arguments: the others are new whatever they returned.
+  const resultOf = (id: string) => resultKey?.(id) ?? results.get(id) ?? ''
+  const seen = new Map<string, string[]>()
   let stalled = 0
   for (const m of messages) {
     const calls = m.toolCalls ?? []
     if (calls.length === 0) continue
-    const keys = calls.map((c) => `${callKey(c)}\n${results.get(c.id) ?? ''}`)
-    const isNew = keys.some((k) => !seen.has(k))
-    for (const k of keys) seen.add(k)
+    const isNew = calls.some((c) => !(seen.get(callKey(c)) ?? []).some((id) => resultOf(id) === resultOf(c.id)))
+    for (const c of calls) seen.set(callKey(c), [...(seen.get(callKey(c)) ?? []), c.id])
     stalled = isNew ? 0 : stalled + 1
   }
   return stalled

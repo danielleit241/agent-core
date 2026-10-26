@@ -10,6 +10,7 @@ test('defaults are the conservative values', () => {
     run_time_s: 1800,
     wait_human_s: 86_400,
     tool_output_chars: 8_000,
+    context_tokens: 64_000,
     loop: 3,
   })
 })
@@ -36,4 +37,10 @@ test('an agent may carry a limits block', () => {
   const agent = { id: 'a', instructions: 'x', connections: [], autonomy: 'supervised', allow: [] }
   expect(AgentDefinitionSchema.parse({ ...agent, limits: { llm_calls: 3 } }).limits).toEqual({ llm_calls: 3 })
   expect(AgentDefinitionSchema.safeParse({ ...agent, limits: { llm_calls: 0 } }).success).toBe(false)
+})
+
+test('context_tokens is 64,000 by default and raising it is a raise above the default', () => {
+  expect(resolveLimits().context_tokens).toBe(64_000)
+  expect(limitsAboveDefault({ context_tokens: 64_001 })).toEqual(['context_tokens'])
+  expect(limitsAboveDefault({ context_tokens: 12_000 })).toEqual([])
 })

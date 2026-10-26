@@ -19,7 +19,7 @@ export type EvalStack = {
   close(): Promise<void>
 }
 
-/** Resets the test database, then starts the shop and the service with connections `shop` and `warehouse` and every agent in `agents/`. */
+/** Resets the test database, then starts the shop and the service with connections `shop`, `warehouse` and `logistics` and every agent in `agents/`. */
 export async function startEvalStack(opts: { llm: LLMPort }): Promise<EvalStack> {
   const databaseUrl =
     process.env.EVAL_DATABASE_URL ??
@@ -65,6 +65,7 @@ export async function startEvalStack(opts: { llm: LLMPort }): Promise<EvalStack>
     for (const [id, url] of [
       ['shop', shop.url],
       ['warehouse', shop.warehouseUrl],
+      ['logistics', shop.logisticsUrl],
     ] as const) {
       const conn = await api('POST', '/v1/connections', { id, url })
       if (conn.status >= 300) throw new Error(`registering connection ${id} failed: ${conn.status}`)

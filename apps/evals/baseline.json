@@ -94,5 +94,13 @@
     "peakInputTokens": 1640,
     "llmTurns": 3,
     "toolCalls": 2
+  },
+  "long-run-100-shipments": {
+    "verdict": "pass",
+    "inputTokens": 847526,
+    "outputTokens": 3048,
+    "peakInputTokens": 11970,
+    "llmTurns": 101,
+    "toolCalls": 100
   }
 }
