@@ -25,6 +25,9 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions exist
 - Row-level security: the service connects as a login role without table rights and switches to `agentcore_app` or `agentcore_claim` inside each transaction, so the database refuses a query that reaches another tenant's rows.
 - Connection and webhook secrets are encrypted at rest (AES-256-GCM, bound to tenant, table and row).
 - The admin key may send `X-Tenant-Id` on `/v1/connections` and `/v1/webhooks` routes to act for a tenant.
+- Limits: an agent may carry a `limits` block (`llm_calls` 30, `tokens` 500000, `cost_usd` 1, `tenant_cost_usd_per_day` 20, `run_time_s` 1800, `wait_human_s` 86400, `tool_output_chars` 48000 by default). A tenant key may only lower a limit; `403 limit_above_default` otherwise. Every breach appends `limit.reached` with the limit's name.
+- A run that breaches a run limit waits with `"waiting_reason":"limit"`. The resolve action `continue` gives it one more full allowance of that limit (`limit.continued`); `cancel` ends it.
+- A run that waits for a human longer than `wait_human_s` fails with reason `wait_expired`. Waits recorded before this change never expire.
 
 ### Fixed
 
@@ -57,6 +60,7 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions exist
 - The runner, not the tool adapters, retries tool calls: reads and writes with an idempotency key get up to 3 attempts with the same key, and each failed attempt is logged as `error.raised`. A keyed write that still fails after it was sent waits on an unknown outcome.
 - A transient LLM error (network, timeout, 429, 5xx) no longer fails the run. The run stays `running` and is retried after 30, 60, 120, 240 and 300 seconds (±20%), or longer when the provider's `Retry-After` asks for it (a hint can only lengthen a wait, and no wait is over 5 minutes, so the last wait is 240 to 300 seconds); the sixth failure in a row fails it. `error.raised` gains `retryAt`.
 - Source layout: adapters moved from `packages/adapters/*` to `packages/*`.
+- The 30-call breaker is now the `llm_calls` limit: the run waits with reason `limit` instead of `breaker`. The tool output cut follows `tool_output_chars` and records `limit.reached`; the run goes on.
 - `@agent-core/llm` replaces `llm-openai` and `llm-cassette`; each provider is a folder under `src/providers/`. The eval cassette is imported from `@agent-core/llm/cassette`, so the service does not load it.
 - `@agent-core/tools` replaces `tools-mcp` and `tools-webhook`; each tool protocol is a folder under `src/`.
 - Tests moved from `src/` to a `tests/` folder in each package that mirrors `src/`.
