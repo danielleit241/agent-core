@@ -89,7 +89,7 @@ export class PgConnectionGuard implements ConnectionGuard {
     })
   }
 
-  release(lease: string, outcome: 'ok' | 'failed'): Promise<void> {
+  release(lease: string, outcome: 'ok' | 'failed' | 'unused'): Promise<void> {
     return withTenant(this.pool, this.tenantId, async (client) => {
       const found = await client.query<{ connection_id: string }>('SELECT connection_id FROM connection_leases WHERE id = $1', [lease])
       const connectionId = found.rows[0]?.connection_id
@@ -98,7 +98,13 @@ export class PgConnectionGuard implements ConnectionGuard {
       await client.query('SELECT 1 FROM connection_guards WHERE tenant_id = $1 AND connection_id = $2 FOR UPDATE', key)
       const deleted = await client.query('DELETE FROM connection_leases WHERE id = $1', [lease])
       if (deleted.rowCount === 0) return // a parallel release won the lock first
-      if (outcome === 'ok') {
+      if (outcome === 'unused') {
+        // Never sent: the breaker learns nothing, and an unused trial frees the half-open slot for another call.
+        await client.query(
+          'UPDATE connection_guards SET trial_lease = NULL WHERE tenant_id = $1 AND connection_id = $2 AND trial_lease = $3::uuid',
+          [...key, lease],
+        )
+      } else if (outcome === 'ok') {
         await client.query(
           `UPDATE connection_guards SET failures = 0,
              opened_at = CASE WHEN trial_lease = $3::uuid THEN NULL ELSE opened_at END,

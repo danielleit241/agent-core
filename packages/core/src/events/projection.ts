@@ -94,7 +94,8 @@ export function projectRun(events: StoredEvent[], instructions: string): RunProj
   }
 
   for (const e of events) {
-    if (paused && e.type !== 'tool.deferred') {
+    // A message does not end the wait; the call still waits on its connection.
+    if (paused && e.type !== 'tool.deferred' && e.type !== 'input.received') {
       paused = false
       if (status === 'running') runningSince = e.createdAt
     }

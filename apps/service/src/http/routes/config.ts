@@ -113,7 +113,7 @@ export function registerConfigRoutes(
         if (existing && existing.kind !== 'webhook') throw kindConflict(id, existing.kind, 'webhook')
         created = existing === null
         // Re-registration keeps the secret; a new connection gets one, returned once.
-        return { kind: 'webhook', url, secret: existing?.secret ?? randomBytes(32).toString('hex'), tools, limits: wh.data.limits ?? null }
+        return { kind: 'webhook', url, secret: existing?.secret ?? randomBytes(32).toString('hex'), tools, limits: wh.data.limits ?? existing?.limits ?? null }
       })
       return reply.code(201).send({
         id,
@@ -159,7 +159,7 @@ export function registerConfigRoutes(
           reviewedFor: before?.reviewedFor ?? (existing ? NO_REVIEW : toolFingerprint({ ...tool, source })),
         }
       })
-      return { kind: 'mcp', url, tools, limits: limits ?? null }
+      return { kind: 'mcp', url, tools, limits: limits ?? existing?.limits ?? null }
     })
     return reply.code(201).send({ id, kind: 'mcp', tools: saved.tools.map(toView), limits: resolveConnectionLimits(saved.limits ?? undefined) })
   })

@@ -1411,7 +1411,7 @@ describe('connection guard', () => {
   /** Answers each acquire with the next denial in the list; grants once the list is used up. */
   function fakeGuard(denials: GuardDenial[] = []) {
     const acquired: string[] = []
-    const released: [string, 'ok' | 'failed'][] = []
+    const released: [string, 'ok' | 'failed' | 'unused'][] = []
     const guard: ConnectionGuard & { acquired: string[]; released: typeof released } = {
       acquired,
       released,
@@ -1478,7 +1478,7 @@ describe('connection guard', () => {
     ])
   })
 
-  test('a call denied for concurrency backs off 1, 2, 4 ... seconds, at most 30', async () => {
+  test('a call denied for concurrency backs off 1, 2, 4 ... seconds, at most 10', async () => {
     const c = clock()
     const guard = fakeGuard(Array.from({ length: 7 }, () => ({ reason: 'concurrency' as const, retryAt: null })))
     const { store, d } = await start(c, [lookup, say('done')], guard)
@@ -1489,7 +1489,7 @@ describe('connection guard', () => {
       waits.push((Date.parse(retryAt) - c.now().getTime()) / 1000)
       c.advance(waits.at(-1)!)
     }
-    expect(waits).toEqual([1, 2, 4, 8, 16, 30, 30])
+    expect(waits).toEqual([1, 2, 4, 8, 10, 10, 10])
     expect(await advanceRun('r1', d)).toBe('completed')
   })
 
@@ -1518,6 +1518,66 @@ describe('connection guard', () => {
     await advanceRun('r1', { ...d, agent: { ...AGENT, limits: { run_time_s: 60 } } })
     c.advance(3000)
     expect(await advanceRun('r1', { ...d, agent: { ...AGENT, limits: { run_time_s: 60 } } })).toBe('completed')
+    expect(projectRun(await store.readEvents('r1'), '').runningMs).toBe(0)
+  })
+
+  test('a sent write that waits on its connection for an hour waits for a human, as an unknown outcome', async () => {
+    const c = clock()
+    const store = new MemoryRunStore(c.now)
+    await store.append('r1', logAfterToolRequested('payments.capture'))
+    const guard = fakeGuard()
+    guard.acquire = async (connectionId) => {
+      guard.acquired.push(connectionId)
+      return { denied: { reason: 'breaker', retryAt: new Date(c.now().getTime() + 600_000).toISOString() } }
+    }
+    const tools = fakeTools()
+    const d = { ...capDeps({ llm: scriptedLlm([]), store, tools, now: c.now }), guard }
+    for (let i = 0; i < 6; i++) {
+      expect(await advanceRun('r1', d)).toBe('running')
+      c.advance(600)
+    }
+    expect(await advanceRun('r1', d)).toBe('waiting_human')
+    const log = await store.readEvents('r1')
+    expect(types(log)).not.toContain('tool.responded')
+    expect(log.at(-1)!.payload).toMatchObject({ to: 'waiting_human', reason: 'unknown_outcome' })
+    expect(tools.calls).toEqual([])
+  })
+
+  test('a guard that throws does not fail the run: the call is neither deferred nor sent, and is retried later', async () => {
+    const c = clock()
+    const guard = fakeGuard()
+    guard.acquire = async () => {
+      throw new Error('statement timeout')
+    }
+    const { store, d } = await start(c, [lookup, say('done')], guard)
+    expect(await advanceRun('r1', d)).toBe('running')
+    const logged = types(await store.readEvents('r1'))
+    expect(logged.filter((t) => t === 'tool.deferred' || t === 'tool.requested' || t === 'error.raised')).toEqual([])
+    expect(logged.at(-1)).toBe('rule.decided')
+  })
+
+  test('a lease is given back unused when the call cannot be recorded', async () => {
+    const c = clock()
+    const guard = fakeGuard()
+    const { store, d } = await start(c, [callTool('payments.refund', { order_id: '1042', amount: 100 })], guard)
+    const append = store.append.bind(store)
+    store.append = async (runId, events, opts) => {
+      if (events.some((e) => e.type === 'tool.requested')) throw new Error('lock lost')
+      return append(runId, events, opts)
+    }
+    await expect(advanceRun('r1', d)).rejects.toThrow('lock lost')
+    expect(guard.released).toEqual([['lease_1', 'unused']])
+  })
+
+  test('a message to a run whose call is deferred does not count as run time', async () => {
+    const c = clock()
+    const guard = fakeGuard([{ reason: 'rate', retryAt: c.at(3000) }])
+    const { store, d } = await start(c, [lookup, say('done')], guard)
+    await advanceRun('r1', d)
+    c.advance(10)
+    await store.append('r1', [{ type: 'input.received', payload: { action: 'message', text: 'hurry' }, labels: ['untrusted'] }])
+    c.advance(2990)
+    expect(await advanceRun('r1', d)).toBe('completed')
     expect(projectRun(await store.readEvents('r1'), '').runningMs).toBe(0)
   })
 

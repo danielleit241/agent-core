@@ -349,9 +349,11 @@ test('a connection takes optional limits; the response shows them with the defau
   expect((await new ConfigRepo(pool, 'default', box).getConnection('loyalty'))?.limits).toEqual({ calls_per_minute: 10 })
   const mcp = await authed('POST', '/v1/connections', { id: 'shop', url: 'http://shop.test/mcp', limits: { concurrency: 2 } })
   expect(mcp.json().limits).toEqual({ calls_per_minute: 60, concurrency: 2 })
-  // Registering again without limits goes back to the defaults.
+  // Registering again without limits keeps them: a refresh of the tools must not drop a protection.
   const again = await authed('POST', '/v1/connections', { id: 'shop', url: 'http://shop.test/mcp' })
-  expect(again.json().limits).toEqual({ calls_per_minute: 60, concurrency: 4 })
+  expect(again.json().limits).toEqual({ calls_per_minute: 60, concurrency: 2 })
+  const hookAgain = await authed('POST', '/v1/connections', webhookBody)
+  expect(hookAgain.json().limits).toEqual({ calls_per_minute: 10, concurrency: 4 })
   for (const limits of [{ concurrency: 0 }, { calls_per_minute: 1.5 }, { burst: 3 }]) {
     expect((await authed('POST', '/v1/connections', { ...webhookBody, limits })).statusCode).toBe(400)
   }

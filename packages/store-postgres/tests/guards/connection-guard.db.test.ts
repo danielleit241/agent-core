@@ -115,6 +115,22 @@ test('after the open time exactly one trial call passes and an ok result closes 
   expect(isLease(await g.acquire(C))).toBe(true)
 })
 
+test('an unused trial lease frees the half-open slot and leaves the breaker and failures as they were', async () => {
+  const g = guardFor({ concurrency: 10, calls_per_minute: 1000 })
+  await openBreaker(g)
+  await migrator.query("UPDATE connection_guards SET opened_at = opened_at - interval '31 seconds'")
+  const before = await guardRow()
+  const trial = await g.acquire(C)
+  if (!isLease(trial)) throw new Error('expected the trial')
+  await g.release(trial.lease, 'unused')
+  const row = await guardRow()
+  expect(row.trial_lease).toBeNull()
+  expect(row.opened_at).toEqual(before.opened_at)
+  expect(row.failures).toBe(before.failures)
+  expect(await leaseCount()).toBe(0)
+  expect(isLease(await g.acquire(C))).toBe(true)
+})
+
 test('a failed trial call re-opens the breaker with a fresh open time', async () => {
   const g = guardFor({ concurrency: 10, calls_per_minute: 1000 })
   await openBreaker(g)

@@ -31,7 +31,8 @@ const TOOL_MAX_ATTEMPTS = 3
 const TOOL_RETRY_WAITS_MS = [500, 1000]
 const LLM_RETRY_WAITS_MS = [30_000, 60_000, 120_000, 240_000, 300_000]
 const LLM_MAX_WAIT_MS = 300_000
-const CONCURRENCY_MAX_WAIT_S = 30
+// Short: nothing tells a waiter when a slot frees, so a long wait leaves slots idle.
+const CONCURRENCY_MAX_WAIT_S = 10
 // A call that waits on its connection this long gets a tool error, so the agent can handle it.
 const DEFERRAL_MAX_MS = 3_600_000
 
@@ -324,9 +325,20 @@ async function passGuard(runId: string, deps: RunnerDeps, proj: RunProjection, c
   const deferral = proj.deferral?.toolCallId === call.id ? proj.deferral : null
   // Woken before `retryAt`, for example by input: wait on.
   if (deferral !== null && now < Date.parse(deferral.retryAt)) return { stop: 'running' }
-  const res = await deps.guard.acquire(tool.connectionId)
+  let res: Awaited<ReturnType<ConnectionGuard['acquire']>>
+  try {
+    res = await deps.guard.acquire(tool.connectionId)
+  } catch {
+    // The guard's own store failed, not the connection: the worker tries again soon. Nothing was sent.
+    return { stop: 'running' }
+  }
   if ('lease' in res) return { lease: res.lease }
   if (deferral !== null && now - Date.parse(deferral.since) >= DEFERRAL_MAX_MS) {
+    // A write sent before (a retry, or a resume after a crash) may have run: a human must say.
+    if (proj.inFlight.includes(call.id) && tool.safety.effect !== 'read') {
+      await deps.store.append(runId, unknownOutcome('The tool call was sent, then its connection stayed unavailable for an hour. It may have run.', expiresAt(deps)))
+      return { stop: 'waiting_human' }
+    }
     await deps.store.append(runId, [toolError(call.id, 'Connection unavailable.')])
     return { stop: 'continue' }
   }
@@ -340,7 +352,7 @@ async function passGuard(runId: string, deps: RunnerDeps, proj: RunProjection, c
 }
 
 /** Gives the slot back. A failed release only delays the slot: the lease expires on its own. */
-async function releaseGate(deps: RunnerDeps, gate: Gate, outcome: 'ok' | 'failed'): Promise<void> {
+async function releaseGate(deps: RunnerDeps, gate: Gate, outcome: 'ok' | 'failed' | 'unused'): Promise<void> {
   if (!('lease' in gate) || gate.lease === undefined) return
   await deps.guard?.release(gate.lease, outcome).catch(() => undefined)
 }
@@ -357,13 +369,18 @@ async function execute(
   let gate = await passGuard(runId, deps, proj, call, tool)
   if ('stop' in gate) return gate.stop
   if (recordRequest) {
-    await deps.store.append(runId, [
-      {
-        type: 'tool.requested',
-        payload: { toolCallId: call.id, tool: call.name, args: call.arguments, idempotencyKey },
-        labels: [],
-      },
-    ])
+    try {
+      await deps.store.append(runId, [
+        {
+          type: 'tool.requested',
+          payload: { toolCallId: call.id, tool: call.name, args: call.arguments, idempotencyKey },
+          labels: [],
+        },
+      ])
+    } catch (err) {
+      await releaseGate(deps, gate, 'unused')
+      throw err
+    }
   }
   const retryable = isRetryable(tool)
   const maxAttempts = retryable ? TOOL_MAX_ATTEMPTS : 1

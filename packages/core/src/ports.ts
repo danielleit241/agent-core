@@ -44,9 +44,10 @@ export type GuardDenial = { reason: 'rate' | 'concurrency' | 'breaker'; retryAt:
 /**
  * Rate limit, concurrency limit and circuit breaker of each connection, shared by all runs and workers.
  * Every granted lease is released exactly once; `failed` means the invoker threw (a tool result with
- * `isError` is `ok`). A lease that is never released expires, so a dead worker does not hold a slot.
+ * `isError` is `ok`), and `unused` that the call was never sent, so the breaker learns nothing from it.
+ * A lease that is never released expires, so a dead worker does not hold a slot.
  */
 export interface ConnectionGuard {
   acquire(connectionId: string): Promise<{ lease: string } | { denied: GuardDenial }>
-  release(lease: string, outcome: 'ok' | 'failed'): Promise<void>
+  release(lease: string, outcome: 'ok' | 'failed' | 'unused'): Promise<void>
 }
