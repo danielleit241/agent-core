@@ -36,6 +36,7 @@ function start(opts: { llm: LLMPort | null; adminKeyHash?: Buffer; masterKeySour
     adminKeyHash: opts.adminKeyHash ?? hashAdminKey(ADMIN_KEY),
     secrets: box,
     llm: opts.llm,
+    llmApiKey: undefined,
     masterKeySource: opts.masterKeySource,
     workerId: 'w1',
     runPollMs: 20,

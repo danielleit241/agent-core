@@ -146,7 +146,9 @@ describe('run input', () => {
     expect(NewEventSchema.safeParse(message('steer')).success).toBe(true)
     expect(NewEventSchema.safeParse(cancel).success).toBe(true)
     expect(NewEventSchema.safeParse({ ...cancel, payload: { action: 'message' } }).success).toBe(false)
-    expect(NewEventSchema.safeParse(message('x'.repeat(32_001))).success).toBe(false)
+    // The stored text may be longer than the 32,000-character request limit (a redaction marker is longer than a short secret).
+    expect(NewEventSchema.safeParse(message('x'.repeat(32_001))).success).toBe(true)
+    expect(NewEventSchema.safeParse(message('x'.repeat(200_001))).success).toBe(false)
   })
 
   test('a message becomes a user message where it arrives when no tool call is open', () => {

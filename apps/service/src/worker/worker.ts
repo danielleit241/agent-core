@@ -1,6 +1,7 @@
 import { SecretDecryptError, advance, expireWait, projectRun } from '@agent-core/core'
 import type { AgentDefinition, ConnectionGuard, ConnectionLimits, LLMPort, RunStatus, SecretBox, ToolDescriptor, ToolInvoker } from '@agent-core/core'
 import { resolveAgent } from '../default-agent'
+import { knownSecretValues } from '../runs/known-secrets'
 import { createSubruns } from '../runs/subruns'
 import {
   ConfigRepo,
@@ -28,12 +29,18 @@ export type RunContext = {
   agentVersion: number
   toolsByName: Record<string, ToolDescriptor>
   guard?: ConnectionGuard
+  /** Exact secrets removed from tool output; a loader that leaves it out removes only what the patterns find. */
+  secretValues?: string[]
 }
 
 export type RunWorkerDeps = {
   pool: Pool
   secrets: SecretBox
   llm: LLMPort
+  /** The service's LLM API key: removed from every content, like a connection secret. */
+  llmApiKey?: string
+  /** Called with the kind → count of secrets removed from a tool output. */
+  onRedacted?: (redactions: Record<string, number>) => void
   /** Gives the invoker for one tenant's tools. */
   tools: (tenantId: string) => ToolInvoker
   workerId: string
@@ -60,7 +67,7 @@ export class ConfigError extends Error {}
 
 const errorMessage = (err: unknown): string => (err instanceof Error ? err.message : String(err))
 
-async function loadContext(pool: Pool, secrets: SecretBox, runId: string, tenantId: string): Promise<RunContext> {
+async function loadContext(pool: Pool, secrets: SecretBox, llmApiKey: string | undefined, runId: string, tenantId: string): Promise<RunContext> {
   const run = await getRun(pool, tenantId, runId)
   if (!run) throw new ConfigError(`run not found: ${runId}`)
   const config = new ConfigRepo(pool, tenantId, secrets)
@@ -69,6 +76,7 @@ async function loadContext(pool: Pool, secrets: SecretBox, runId: string, tenant
   // No prototype: a tool named `toString` must not collide with inherited members.
   const toolsByName: Record<string, ToolDescriptor> = Object.create(null)
   const limits: Record<string, Partial<ConnectionLimits> | undefined> = Object.create(null)
+  const connections: { secret: string | null; url: string }[] = []
   for (const connectionId of agent.definition.connections) {
     let connection: Awaited<ReturnType<typeof config.getConnection>>
     try {
@@ -80,12 +88,14 @@ async function loadContext(pool: Pool, secrets: SecretBox, runId: string, tenant
     }
     if (!connection) throw new ConfigError(`connection not found: ${connectionId}`)
     limits[connectionId] = connection.limits ?? undefined
+    connections.push(connection)
     for (const tool of connection.tools) {
       if (Object.hasOwn(toolsByName, tool.name)) throw new ConfigError(`duplicate tool name: ${tool.name}`)
       toolsByName[tool.name] = tool
     }
   }
-  return { agent: agent.definition, agentVersion: agent.version, toolsByName, guard: new PgConnectionGuard(pool, tenantId, limits) }
+  const secretValues = await knownSecretValues(config, agent.definition, llmApiKey, connections)
+  return { agent: agent.definition, agentVersion: agent.version, toolsByName, guard: new PgConnectionGuard(pool, tenantId, limits), secretValues }
 }
 
 /** Records the failure. Returns the settled status, or null when the failure could not be recorded. */
@@ -147,7 +157,7 @@ async function processJob(deps: RunWorkerDeps, job: { runId: string; tenantId: s
     }
     let ctx: RunContext
     try {
-      ctx = await (deps.loadContext ?? ((r, t) => loadContext(deps.pool, deps.secrets, r, t)))(runId, tenantId)
+      ctx = await (deps.loadContext ?? ((r, t) => loadContext(deps.pool, deps.secrets, deps.llmApiKey, r, t)))(runId, tenantId)
     } catch (err) {
       if (!(err instanceof ConfigError)) {
         // Transient: put the job back, unlocked, and retry later. The run is not failed.
@@ -169,6 +179,7 @@ async function processJob(deps: RunWorkerDeps, job: { runId: string; tenantId: s
       content: new PgContentStore(deps.pool, tenantId),
       tools: deps.tools(tenantId),
       ...ctx,
+      ...(deps.onRedacted === undefined ? {} : { onRedacted: deps.onRedacted }),
       signal: ctl.abort.signal,
       subruns: createSubruns(deps.pool, deps.secrets, tenantId),
       ...(deps.now === undefined ? {} : { now: deps.now }),

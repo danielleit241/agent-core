@@ -41,6 +41,7 @@ export async function startEvalStack(opts: { llm: LLMPort }): Promise<EvalStack>
       adminKeyHash: hashAdminKey(ADMIN_KEY),
       secrets: createSecretBox(Buffer.alloc(32, 7)),
       llm: withoutLlmRetry(opts.llm),
+      llmApiKey: process.env.LLM_API_KEY,
       workerId: 'eval-worker',
       runPollMs: 20,
       deliveryPollMs: 1000,

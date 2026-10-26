@@ -146,10 +146,13 @@ export const UsageSchema = z.object({
 })
 export type Usage = z.infer<typeof UsageSchema>
 
+// Kind → count of secrets removed from a content; never a value. Absent when nothing was removed.
+const RedactionsSchema = z.record(z.string(), z.number())
+
 const payloadSchemas = {
   'run.created': z.object({
     agentId: z.string(),
-    input: z.object({ text: z.string() }),
+    input: z.object({ text: z.string(), redactions: RedactionsSchema.optional() }),
     principal: z.object({ id: z.string(), roles: z.array(z.string()) }).optional(),
     // A copy of the workflow when the run started: editing the agent does not change a running workflow.
     workflow: z.object({ name: z.string(), definition: WorkflowSchema }).optional(),
@@ -192,6 +195,7 @@ const payloadSchemas = {
     toolCallId: z.string(),
     content: z.string(),
     isError: z.boolean(),
+    redactions: RedactionsSchema.optional(),
   }),
   'outcome.settled': z.object({
     toolCallId: z.string(),
@@ -222,7 +226,8 @@ const payloadSchemas = {
   // What a human sends to a run that is not waiting for them: `message` steers it, `cancel` stops it before its next step.
   'input.received': z.union([
     z.object({ action: z.literal('cancel') }).strict(),
-    z.object({ action: z.literal('message'), text: z.string().min(1).max(32_000) }).strict(),
+    z.object({ action: z.literal('message'), // The request limit is 32,000 characters; redaction can make the stored text longer (a marker is longer than a short secret).
+    text: z.string().min(1).max(200_000), redactions: RedactionsSchema.optional() }).strict(),
   ]),
   // `retryAt` (ISO 8601) is set only by an LLM retry wait.
   'error.raised': z.object({ message: z.string(), retryable: z.boolean(), retryAt: z.string().optional() }),

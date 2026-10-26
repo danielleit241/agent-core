@@ -17,6 +17,8 @@ export type ServiceStackDeps = {
   secrets: SecretBox
   /** Null when the LLM is not configured: runs are refused and the run worker does not start, so queued runs wait for a restart with LLM settings. */
   llm: LLMPort | null
+  /** The LLM API key. Removed from run input, messages and tool output. */
+  llmApiKey: string | undefined
   masterKeySource?: 'env' | 'file'
   /** Alias to real model id. */
   models?: Record<string, string>
@@ -52,11 +54,14 @@ export function createServiceStack(deps: ServiceStackDeps) {
     probe: deps.probe,
     llmConfigured: deps.llm !== null,
     masterKeySource: deps.masterKeySource,
+    llmApiKey: deps.llmApiKey,
   })
   const runWorker = deps.llm === null ? null : startRunWorker({
     pool,
     secrets: deps.secrets,
     llm,
+    llmApiKey: deps.llmApiKey,
+    onRedacted: (redactions) => metrics.redacted(redactions),
     tools: tools.forTenant,
     workerId: deps.workerId,
     pollMs: deps.runPollMs,

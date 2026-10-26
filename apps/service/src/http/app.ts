@@ -31,6 +31,8 @@ export type AppDeps = {
   llmConfigured?: boolean
   /** Where the master key came from. Default `env`. */
   masterKeySource?: 'env' | 'file'
+  /** The LLM API key: removed from run input and human messages like any known secret. */
+  llmApiKey?: string
 }
 
 export function buildApp(deps: AppDeps): FastifyInstance {
@@ -90,7 +92,7 @@ export function buildApp(deps: AppDeps): FastifyInstance {
     registerTenantRoutes(v1, { pool: deps.pool })
     registerDeliveryRoutes(v1, { pool: deps.pool })
     registerModelRoutes(v1, { pool: deps.pool, models: deps.models ?? {}, probe: deps.probe })
-    registerRunRoutes(v1, { pool: deps.pool, secrets: deps.secrets, closing: closing.signal, llmConfigured })
+    registerRunRoutes(v1, { pool: deps.pool, secrets: deps.secrets, closing: closing.signal, llmConfigured, llmApiKey: deps.llmApiKey })
     registerStreamRoutes(v1, { pool: deps.pool, closing: closing.signal })
   })
   return app
