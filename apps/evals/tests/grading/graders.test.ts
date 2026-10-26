@@ -89,4 +89,26 @@ describe('gradeDeterministic', () => {
     expect(gradeDeterministic(want([{ orderId: '1042', from: 'M', to: 'L' }]), o)).toEqual([])
     expect(gradeDeterministic(want([{ orderId: '1042', to: 'L' }]), o)).toHaveLength(1)
   })
+
+  test('peakInputTokensAtMost fails when the largest context is bigger', () => {
+    const llm = (inputTokens: number): StoredEvent => ({
+      ...toolEvent('x', {}),
+      type: 'llm.responded',
+      payload: { message: { role: 'assistant', content: 'x' }, usage: { inputTokens, outputTokens: 1 }, stopReason: 'end' },
+    })
+    const s = scenario({ peakInputTokensAtMost: 500 })
+    expect(gradeDeterministic(s, outcome({ events: [llm(500)] }))).toEqual([])
+    expect(gradeDeterministic(s, outcome({ events: [llm(100), llm(501)] }))).toEqual([
+      'peakInputTokensAtMost: expected at most 500, got 501',
+    ])
+  })
+
+  test('toolCallCount is an exact count per tool', () => {
+    const s = scenario({ toolCallCount: { 'orders.get': 1 } })
+    expect(gradeDeterministic(s, outcome({ events: [toolEvent('orders.get', {})] }))).toEqual([])
+    expect(gradeDeterministic(s, outcome({ events: [toolEvent('orders.get', {}), toolEvent('orders.get', {})] }))).toEqual([
+      'toolCallCount: orders.get expected 1, got 2',
+    ])
+    expect(gradeDeterministic(s, outcome({ events: [] }))).toEqual(['toolCallCount: orders.get expected 1, got 0'])
+  })
 })

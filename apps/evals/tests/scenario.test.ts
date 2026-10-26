@@ -34,4 +34,18 @@ describe('ScenarioSchema', () => {
     })
     expect(s.approvals['payments.refund']).toBe('approve')
   })
+
+  test('agent and timeoutS are optional; timeoutS is capped at 1800', () => {
+    const s = ScenarioSchema.parse(base)
+    expect(s.agent).toBeUndefined()
+    expect(s.timeoutS).toBeUndefined()
+    expect(ScenarioSchema.parse({ ...base, agent: 'long', timeoutS: 1800 }).timeoutS).toBe(1800)
+    expect(ScenarioSchema.safeParse({ ...base, timeoutS: 1801 }).success).toBe(false)
+  })
+
+  test('accepts the peak and tool count expectations', () => {
+    const s = ScenarioSchema.parse({ ...base, expect: { peakInputTokensAtMost: 500, toolCallCount: { 'orders.get': 1 } } })
+    expect(s.expect.peakInputTokensAtMost).toBe(500)
+    expect(s.expect.toolCallCount).toEqual({ 'orders.get': 1 })
+  })
 })

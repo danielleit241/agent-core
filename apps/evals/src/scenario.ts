@@ -2,6 +2,7 @@ import { z } from 'zod'
 import { RunStatusSchema, WaitingReasonSchema } from '@agent-core/core'
 import type { RunStatus, StoredEvent, WaitingReason } from '@agent-core/core'
 import type { startShop } from '@agent-core/shop'
+import type { Metrics } from './grading/metrics'
 
 type Shop = Awaited<ReturnType<typeof startShop>>
 
@@ -31,6 +32,8 @@ export const ScenarioSchema = z
     group: z.string().min(1),
     description: z.string(),
     input: z.object({ text: z.string().min(1) }),
+    agent: z.string().min(1).optional(), // default `shop`
+    timeoutS: z.number().int().positive().max(1800).optional(), // default 120
     principal: z.object({ id: z.string(), roles: z.array(z.string()) }).optional(),
     fixture: ShopSeedSchema.optional(), // omitted: default seed
     approvals: z.record(z.string(), z.enum(['approve', 'reject'])).default({}), // unlisted tool: 'reject'
@@ -48,6 +51,8 @@ export const ScenarioSchema = z
             sizeChanges: z.array(SizeChangeSchema).optional(),
           })
           .optional(),
+        peakInputTokensAtMost: z.number().int().positive().optional(),
+        toolCallCount: z.record(z.string(), z.number().int().nonnegative()).optional(), // exact count of tool.requested per tool
         rubric: z.string().optional(),
       })
       .strict(),
@@ -68,8 +73,8 @@ export type Result = {
   group: string
   verdict: 'pass' | 'fail' | 'error'
   failures: string[]
-  /** Tokens and cost of the agent's LLM calls (the rubric judge is not counted). */
-  usage?: { inputTokens: number; outputTokens: number; costUsd?: number }
+  /** Figures of the agent's own run (the rubric judge is not counted); the mean over runs with `--repeat`. */
+  metrics?: Metrics
   ms?: number
   /** Set when the scenario ran more than once (`--repeat`). */
   runs?: { passed: number; total: number }

@@ -1,4 +1,5 @@
 import { isDeepStrictEqual } from 'node:util'
+import { metricsOf } from './metrics'
 import type { Outcome, Scenario } from '../scenario'
 
 /** Returns one message per failed expectation; an empty array means the scenario passed. */
@@ -26,6 +27,15 @@ export function gradeDeterministic(s: Scenario, o: Outcome): string[] {
   const decided = o.events.flatMap((e) => (e.type === 'rule.decided' ? [e.payload.tool] : []))
   for (const tool of expect.toolsNotCalled ?? []) {
     if (requested.some((r) => r.tool === tool) || decided.includes(tool)) failures.push(`toolsNotCalled: ${tool} was called`)
+  }
+
+  const { peakInputTokens } = metricsOf(o.events)
+  if (expect.peakInputTokensAtMost !== undefined && peakInputTokens > expect.peakInputTokensAtMost) {
+    failures.push(`peakInputTokensAtMost: expected at most ${expect.peakInputTokensAtMost}, got ${peakInputTokens}`)
+  }
+  for (const [tool, want] of Object.entries(expect.toolCallCount ?? {})) {
+    const got = requested.filter((r) => r.tool === tool).length
+    if (got !== want) failures.push(`toolCallCount: ${tool} expected ${want}, got ${got}`)
   }
 
   const { state } = expect
