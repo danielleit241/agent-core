@@ -1,4 +1,29 @@
 services:
+  agent-core:
+    build: .
+    ports:
+      - "7300:7300"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    # .env is optional here. The two database URLs below win over any value in .env,
+    # because the .env URLs point to localhost:5433, which is wrong inside the container.
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      DATABASE_URL: postgres://agentcore_runtime:agentcore_runtime@postgres:5432/agentcore
+      MIGRATOR_DATABASE_URL: postgres://agentcore:agentcore@postgres:5432/agentcore
+      AGENT_CORE_DATA_DIR: /data
+      PORT: "7300"
+    volumes:
+      - agent-core-data:/data
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://localhost:7300/healthz').then(r=>process.exit(r.ok?0:1),()=>process.exit(1))"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
   postgres:
     image: postgres:17
     ports:
@@ -18,3 +43,4 @@ services:
 
 volumes:
   pgdata:
+  agent-core-data:
