@@ -8,6 +8,7 @@ import { applyTenantHeader, authenticate } from './auth'
 import { ApiError, apiError } from './errors'
 import { registerIdempotency } from './idempotency'
 import { registerConfigRoutes } from './routes/config'
+import { registerDeliveryRoutes } from './routes/deliveries'
 import { registerHealthRoutes } from './routes/health'
 import { registerMetricsRoutes } from './routes/metrics'
 import { registerModelRoutes } from './routes/models'
@@ -87,6 +88,7 @@ export function buildApp(deps: AppDeps): FastifyInstance {
     registerIdempotency(v1, { pool: deps.pool })
     registerConfigRoutes(v1, { pool: deps.pool, secrets: deps.secrets, discoverTools: deps.discoverTools ?? discoverMcpTools })
     registerTenantRoutes(v1, { pool: deps.pool })
+    registerDeliveryRoutes(v1, { pool: deps.pool })
     registerModelRoutes(v1, { pool: deps.pool, models: deps.models ?? {}, probe: deps.probe })
     registerRunRoutes(v1, { pool: deps.pool, secrets: deps.secrets, closing: closing.signal, llmConfigured })
     registerStreamRoutes(v1, { pool: deps.pool, closing: closing.signal })

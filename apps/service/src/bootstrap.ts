@@ -4,7 +4,7 @@ import { join } from 'node:path'
 import type pg from 'pg'
 import { parseMasterKey } from '@agent-core/core'
 
-const ADMIN_KEY_SETTING = 'admin_key_hash'
+export const ADMIN_KEY_SETTING = 'admin_key_hash'
 
 export const hashAdminKey = (key: string): Buffer => createHash('sha256').update(key).digest()
 

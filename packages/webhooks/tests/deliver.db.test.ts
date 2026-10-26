@@ -3,7 +3,7 @@ import type { Server } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import { afterAll, beforeAll, beforeEach, expect, test } from 'vitest'
 import { ConfigRepo, assertTestDatabase, createPool, runMigrations, runtimeTestUrl, withClaim, withTenant } from '@agent-core/store-postgres'
-import { CLAIM_SQL, enqueueWebhookEvent, startDeliveryWorker } from '../src/deliver'
+import { CLAIM_SQL, cleanupDeliveries, enqueueWebhookEvent, startDeliveryWorker } from '../src/deliver'
 import type { DeliveryScope, WebhookEventType } from '../src/deliver'
 import { verifyWebhook } from '@agent-core/protocol'
 
@@ -269,4 +269,57 @@ test('enqueueWebhookEvent with the same eventId creates one delivery per webhook
     { webhook_id: 'w1', event_id: 'evt_fixed' },
     { webhook_id: 'w2', event_id: 'evt_fixed' },
   ])
+})
+
+// Inserts one delivery of `status` whose last change was `ageDays` ago.
+async function seedAged(id: string, status: string, ageDays: number): Promise<void> {
+  await migrator.query(
+    `INSERT INTO webhook_deliveries (id, tenant_id, webhook_id, event_id, type, body, status, updated_at)
+     VALUES ($1, 'default', 'w1', $1, 'run.completed', '{}', $2, now() - make_interval(days => $3))`,
+    [id, status, ageDays],
+  )
+}
+const ids = async (): Promise<string[]> => (await migrator.query('SELECT id FROM webhook_deliveries ORDER BY id')).rows.map((r: { id: string }) => r.id)
+
+test('cleanup deletes delivered rows older than 7 days and failed rows older than 30 days, nothing else', async () => {
+  await putWebhook('w1', 'http://127.0.0.1:1/hook', ['run.completed'])
+  await seedAged('d8', 'delivered', 8)
+  await seedAged('d6', 'delivered', 6)
+  await seedAged('f31', 'failed', 31)
+  await seedAged('f29', 'failed', 29)
+  await seedAged('p99', 'pending', 99)
+  expect(await cleanupDeliveries(scope)).toEqual({ delivered: 1, failed: 1 })
+  expect(await ids()).toEqual(['d6', 'f29', 'p99'])
+})
+
+test('the worker runs a cleanup when it starts', async () => {
+  await putWebhook('w1', 'http://127.0.0.1:1/hook', ['run.completed'])
+  await seedAged('d8', 'delivered', 8)
+  const w = startDeliveryWorker({ scope, openSecret, pollMs: 10 })
+  await waitFor(async () => (await ids()).length === 0)
+  await w.stop()
+})
+
+test('every status update sets updated_at', async () => {
+  const rx = await startReceiver([500, 200])
+  await putWebhook('w1', rx.url, ['run.completed'])
+  await enqueue('run.completed', { run_id: 'r1' })
+  await migrator.query("UPDATE webhook_deliveries SET updated_at = now() - interval '1 day'")
+  const stamp = async (): Promise<number> => (await migrator.query('SELECT extract(epoch FROM now() - updated_at)::float8 AS age FROM webhook_deliveries')).rows[0].age
+  const w = startDeliveryWorker({ scope, openSecret, pollMs: 10, delaysS: [0] })
+  await waitFor(async () => (await deliveries())[0]?.status === 'delivered')
+  await w.stop()
+  expect(await stamp()).toBeLessThan(60)
+})
+
+test('a delivery that runs out of retries is failed with a fresh updated_at', async () => {
+  const rx = await startReceiver([500])
+  await putWebhook('w1', rx.url, ['run.completed'])
+  await enqueue('run.completed', { run_id: 'r1' })
+  await migrator.query("UPDATE webhook_deliveries SET updated_at = now() - interval '1 day'")
+  const w = startDeliveryWorker({ scope, openSecret, pollMs: 10, delaysS: [] })
+  await waitFor(async () => (await deliveries())[0]?.status === 'failed')
+  await w.stop()
+  const age = (await migrator.query('SELECT extract(epoch FROM now() - updated_at)::float8 AS age FROM webhook_deliveries')).rows[0].age
+  expect(age).toBeLessThan(60)
 })

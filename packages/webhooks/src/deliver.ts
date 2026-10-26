@@ -11,6 +11,10 @@ const SEND_TIMEOUT_MS = 10_000
 const MAX_ERROR_LEN = 500
 const DECRYPT_ERROR = 'secret could not be decrypted'
 
+export const DELIVERED_RETENTION_DAYS = 7
+export const FAILED_RETENTION_DAYS = 30
+const CLEANUP_EVERY_MS = 3_600_000
+
 export type Queryable = Pick<Pool, 'query'>
 
 /** Transactions the worker runs in: `claim` sees scheduling columns of every tenant; `tenant` sees one tenant's rows. */
@@ -84,6 +88,16 @@ export const CLAIM_SQL = `
             LIMIT 1)
   RETURNING d.id, d.tenant_id`
 
+/** Deletes `delivered` rows older than 7 days and `failed` rows older than 30 days, measured from the last status change. */
+export async function cleanupDeliveries(scope: Pick<DeliveryScope, 'claim'>, now: Date = new Date()): Promise<{ delivered: number; failed: number }> {
+  const del = (status: string, days: number) => async (db: Queryable): Promise<number> =>
+    (await db.query(`DELETE FROM webhook_deliveries WHERE status = $1 AND updated_at < $2::timestamptz - make_interval(days => $3)`, [status, now, days])).rowCount ?? 0
+  return scope.claim(async (db) => ({
+    delivered: await del('delivered', DELIVERED_RETENTION_DAYS)(db),
+    failed: await del('failed', FAILED_RETENTION_DAYS)(db),
+  }))
+}
+
 export function startDeliveryWorker(deps: DeliveryWorkerDeps): { stop(): Promise<void> } {
   const { scope, openSecret } = deps
   const doFetch = deps.fetch ?? fetch
@@ -92,6 +106,7 @@ export function startDeliveryWorker(deps: DeliveryWorkerDeps): { stop(): Promise
   const delaysS = deps.delaysS ?? RETRY_DELAYS_S
   let stopped = false
   let wake: (() => void) | undefined
+  let lastCleanup = 0
 
   async function send(d: ToSend): Promise<string | null> {
     try {
@@ -127,7 +142,7 @@ export function startDeliveryWorker(deps: DeliveryWorkerDeps): { stop(): Promise
       [id],
     )
     if (rows[0]) return rows[0]
-    await db.query(`UPDATE webhook_deliveries SET status = 'failed', last_error = 'webhook not found' WHERE id = $1 AND status = 'pending'`, [id])
+    await db.query(`UPDATE webhook_deliveries SET status = 'failed', last_error = 'webhook not found', updated_at = now() WHERE id = $1 AND status = 'pending'`, [id])
     return null
   }
 
@@ -147,7 +162,7 @@ export function startDeliveryWorker(deps: DeliveryWorkerDeps): { stop(): Promise
     const error = secret === undefined ? DECRYPT_ERROR : await send({ ...d, secret })
     await scope.tenant(tenantId, async (db) => {
       if (error === null) {
-        await db.query(`UPDATE webhook_deliveries SET status = 'delivered', attempts = attempts + 1, last_error = NULL WHERE id = $1 AND status = 'pending'`, [
+        await db.query(`UPDATE webhook_deliveries SET status = 'delivered', attempts = attempts + 1, last_error = NULL, updated_at = now() WHERE id = $1 AND status = 'pending'`, [
           id,
         ])
         return
@@ -155,14 +170,14 @@ export function startDeliveryWorker(deps: DeliveryWorkerDeps): { stop(): Promise
       const attempts = d.attempts + 1
       const delay = delaysS[attempts - 1]
       if (delay === undefined) {
-        await db.query(`UPDATE webhook_deliveries SET status = 'failed', attempts = $2, last_error = $3 WHERE id = $1 AND status = 'pending'`, [
+        await db.query(`UPDATE webhook_deliveries SET status = 'failed', attempts = $2, last_error = $3, updated_at = now() WHERE id = $1 AND status = 'pending'`, [
           id,
           attempts,
           error,
         ])
       } else {
         await db.query(
-          `UPDATE webhook_deliveries SET attempts = $2, last_error = $3, next_attempt_at = now() + make_interval(secs => $4) WHERE id = $1 AND status = 'pending'`,
+          `UPDATE webhook_deliveries SET attempts = $2, last_error = $3, next_attempt_at = now() + make_interval(secs => $4), updated_at = now() WHERE id = $1 AND status = 'pending'`,
           [id, attempts, error, delay],
         )
       }
@@ -172,6 +187,14 @@ export function startDeliveryWorker(deps: DeliveryWorkerDeps): { stop(): Promise
 
   const loop = (async (): Promise<void> => {
     while (!stopped) {
+      if (Date.now() - lastCleanup >= CLEANUP_EVERY_MS) {
+        lastCleanup = Date.now()
+        try {
+          await cleanupDeliveries(scope)
+        } catch (err) {
+          console.error('webhook cleanup error:', err instanceof Error ? err.message : 'unknown error')
+        }
+      }
       try {
         while (!stopped && (await deliverOne())) {
           // keep claiming until nothing is due

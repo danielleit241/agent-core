@@ -7,3 +7,8 @@ CREATE POLICY claim_count ON runs FOR SELECT TO agentcore_claim USING (true);
 
 -- Start-up settings (the generated admin key hash). Only the migrator reads and writes this table.
 CREATE TABLE service_settings (name text PRIMARY KEY, value bytea NOT NULL);
+
+-- Delivery cleanup keys on the time of the last status change. The claim role deletes old rows across tenants.
+ALTER TABLE webhook_deliveries ADD COLUMN updated_at timestamptz NOT NULL DEFAULT now();
+GRANT SELECT (updated_at), DELETE ON webhook_deliveries TO agentcore_claim;
+CREATE POLICY claim_cleanup ON webhook_deliveries FOR DELETE TO agentcore_claim USING (true);

@@ -896,3 +896,22 @@ test('a subrun step starts a child run of another agent; the parent sleeps, then
   expect(parent.find((e) => e.type === 'step.completed')!.payload).toEqual({ stepId: 'write', output: { status: 'completed', text: 'done' } })
   expect(await queueRows()).toBe(0)
 })
+
+test('stop() while a job is held leaves no queue row locked by the worker', async () => {
+  const { version } = await new ConfigRepo(pool, 'default', box).putAgent(agent)
+  await seedRun('r-shut', 'helper', version)
+  let release!: () => void
+  const gate = new Promise<void>((r) => (release = r))
+  // The LLM port gets no abort signal, so the call ends when the provider answers: here, when the gate opens.
+  const slow = toolCallingLlm(() => gate)
+  const settled: string[] = []
+  const worker = startRunWorker({ secrets: box, pool, llm: slow, tools, workerId: 'w-shut', pollMs: 20, onRunSettled: async (id) => void settled.push(id) })
+  await waitFor(() => slow.calls === 1)
+  expect((await pool.query("SELECT 1 FROM queue WHERE locked_by = 'w-shut'")).rowCount).toBe(1)
+  const stopping = worker.stop()
+  release()
+  await stopping
+  expect((await pool.query("SELECT 1 FROM queue WHERE locked_by = 'w-shut'")).rowCount).toBe(0)
+  expect(await queueRows()).toBe(1)
+  expect(settled).toEqual([])
+})
