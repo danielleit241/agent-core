@@ -26,8 +26,8 @@ const SECRET_KEYS = String.raw`(?:password|passwd|passphrase|pwd|secret|client[_
 const PATTERNS: Pattern[] = [
   // The body stops at the next BEGIN, so many headers without an END cost no more than one.
   { kind: 'private_key', re: /-----BEGIN [A-Z ]{0,30}PRIVATE KEY-----(?:[^-]|-(?!----(?:BEGIN|END) )){0,20000}?-----END [A-Z ]{0,30}PRIVATE KEY-----/g },
-  // A key cut off before its END line: the header and the base64 body that follows.
-  { kind: 'private_key', re: /-----BEGIN [A-Z ]{0,30}PRIVATE KEY-----[A-Za-z0-9+/=\s]{0,20000}/g },
+  // A key cut off before its END line: the header and the base64 body that follows, with its line breaks raw or JSON-escaped.
+  { kind: 'private_key', re: /-----BEGIN [A-Z ]{0,30}PRIVATE KEY-----(?:[A-Za-z0-9+/=\s]|\\[nrt]){0,20000}/g },
   { kind: 'aws_access_key', re: /\b(?:AKIA|ASIA)[A-Z0-9]{16}\b/g },
   { kind: 'github_token', re: /\bgh[pousr]_[A-Za-z0-9]{36,}/g },
   { kind: 'github_token', re: /\bgithub_pat_[A-Za-z0-9_]{60,}/g },

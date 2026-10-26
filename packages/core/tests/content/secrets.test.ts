@@ -146,6 +146,14 @@ test('a private key with no END line is removed with its body', () => {
   expect(out.redactions).toEqual({ private_key: 1 })
 })
 
+test('a private key with no END line inside JSON text is removed with its escaped body, and the JSON stays valid', () => {
+  const m = createSecretMatcher([])
+  const json = JSON.stringify({ key: '-----BEGIN RSA PRIVATE KEY-----\nMIIEowIBAAKCAQEA\r\nabcDEF+/==\n', next: 1 })
+  const out = m.redact(json)
+  expect(out.text).toBe('{"key":"[REDACTED:private_key]","next":1}')
+  expect(JSON.parse(out.text)).toEqual({ key: '[REDACTED:private_key]', next: 1 })
+})
+
 test('a known value is also matched in its JSON-escaped form', () => {
   const secret = 'pa"ss\word-12345'
   const m = createSecretMatcher([secret])
