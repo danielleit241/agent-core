@@ -1408,6 +1408,2538 @@
         },
         "stopReason": "end"
       }
+    },
+    {
+      "hash": "f2d02a3c97b1388cf1b33b4b57bbbece6c54718d2e914bf20edccd3f12f4497a",
+      "model": "default",
+      "tag": "long-run-100-shipments",
+      "response": {
+        "message": {
+          "role": "assistant",
+          "content": "",
+          "toolCalls": [
+            {
+              "id": "call_5ac7dd04-1403-44bc-a1f8-3c0a6eaa5ace",
+              "name": "shipments.get",
+              "arguments": {
+                "id": "2001"
+              }
+            }
+          ]
+        },
+        "usage": {
+          "inputTokens": 590,
+          "outputTokens": 21
+        },
+        "stopReason": "tool_calls"
+      }
+    },
+    {
+      "hash": "1eed0c87fc728d2b1dd63ea7f586049c7721f9ba7a11ebadf43c6d4717b3ef86",
+      "model": "default",
+      "tag": "long-run-100-shipments",
+      "response": {
+        "message": {
+          "role": "assistant",
+          "content": "",
+          "toolCalls": [
+            {
+              "id": "call_2d0f4c3e-27fe-40a7-91c6-3e3c3c64965a",
+              "name": "shipments.get",
+              "arguments": {
+                "id": "2002"
+              }
+            }
+          ]
+        },
+        "usage": {
+          "inputTokens": 1314,
+          "outputTokens": 36
+        },
+        "stopReason": "tool_calls"
+      }
+    },
+    {
+      "hash": "e256d6103850ed75929bbe44d9a753b4b96c4bfe0c95fc7fa6644f8ad9fade82",
+      "model": "default",
+      "tag": "long-run-100-shipments",
+      "response": {
+        "message": {
+          "role": "assistant",
+          "content": "",
+          "toolCalls": [
+            {
+              "id": "call_4f4701f8-4d47-43ed-97e9-ecc891897734",
+              "name": "shipments.get",
+              "arguments": {
+                "id": "2003"
+              }
+            }
+          ]
+        },
+        "usage": {
+          "inputTokens": 2035,
+          "outputTokens": 38
+        },
+        "stopReason": "tool_calls"
+      }
+    },
+    {
+      "hash": "d3840d60d45f0f84d59c58590e6190f92727f90157f9a6d404ba7ef4dada7766",
+      "model": "default",
+      "tag": "long-run-100-shipments",
+      "response": {
+        "message": {
+          "role": "assistant",
+          "content": "",
+          "toolCalls": [
+            {
+              "id": "call_8e3c8944-bb42-4481-9c1c-e2a5b04e64da",
+              "name": "shipments.get",
+              "arguments": {
+                "id": "2004"
+              }
+            }
+          ]
+        },
+        "usage": {
+          "inputTokens": 2759,
+          "outputTokens": 35
+        },
+        "stopReason": "tool_calls"
+      }
+    },
+    {
+      "hash": "4edb1603c9a415ba383727e394c3100b6d32e02a4227c4f62327961a37bf5b18",
+      "model": "default",
+      "tag": "long-run-100-shipments",
+      "response": {
+        "message": {
+          "role": "assistant",
+          "content": "",
+          "toolCalls": [
+            {
+              "id": "call_d4b48f40-04a9-4b00-be38-3f95f9e95e54",
+              "name": "shipments.get",
+              "arguments": {
+                "id": "2005"
+              }
+            }
+          ]
+        },
+        "usage": {
+          "inputTokens": 3481,
+          "outputTokens": 38
+        },
+        "stopReason": "tool_calls"
+      }
+    },
+    {
+      "hash": "ff58a4ca193f5d8d43031fee4c0317f251530b433188ad2ee57bc3c83cee72c2",
+      "model": "default",
+      "tag": "long-run-100-shipments",
+      "response": {
+        "message": {
+          "role": "assistant",
+          "content": "",
+          "toolCalls": [
+            {
+              "id": "call_f9ac91a2-4462-4329-9970-77de24f3026c",
+              "name": "shipments.get",
+              "arguments": {
+                "id": "2006"
+              }
+            }
+          ]
+        },
+        "usage": {
+          "inputTokens": 4206,
+          "outputTokens": 41
+        },
+        "stopReason": "tool_calls"
+      }
+    },
+    {
+      "hash": "2ff68f2b8b48521507138705f59c261c664fc99da635a1b3c68c44cc6a78ccd2",
+      "model": "default",
+      "tag": "long-run-100-shipments",
+      "response": {
+        "message": {
+          "role": "assistant",
+          "content": "",
+          "toolCalls": [
+            {
+              "id": "call_50ba9f09-e33c-4e3b-a0cc-9b5297939512",
+              "name": "shipments.get",
+              "arguments": {
+                "id": "2007"
+              }
+            }
+          ]
+        },
+        "usage": {
+          "inputTokens": 4927,
+          "outputTokens": 56
+        },
+        "stopReason": "tool_calls"
+      }
+    },
+    {
+      "hash": "2254f80f43da8d1cabaeed928088a5c2b0f72f38dd3bf6a775017ed7a4b05961",
+      "model": "default",
+      "tag": "long-run-100-shipments",
+      "response": {
+        "message": {
+          "role": "assistant",
+          "content": "",
+          "toolCalls": [
+            {
+              "id": "call_51580f75-4478-40ef-a0f5-27eb69785229",
+              "name": "shipments.get",
+              "arguments": {
+                "id": "2008"
+              }
+            }
+          ]
+        },
+        "usage": {
+          "inputTokens": 5649,
+          "outputTokens": 35
+        },
+        "stopReason": "tool_calls"
+      }
+    },
+    {
+      "hash": "7c6cdb765c94888a1cdd53c1cc766cf6aa30a42c80d64f546c77116f793b756a",
+      "model": "default",
+      "tag": "long-run-100-shipments",
+      "response": {
+        "message": {
+          "role": "assistant",
+          "content": "",
+          "toolCalls": [
+            {
+              "id": "call_689a0a68-ddd3-4c58-9f62-5ca7ee2f07e8",
+              "name": "shipments.get",
+              "arguments": {
+                "id": "2009"
+              }
+            }
+          ]
+        },
+        "usage": {
+          "inputTokens": 6372,
+          "outputTokens": 37
+        },
+        "stopReason": "tool_calls"
+      }
+    },
+    {
+      "hash": "eb06e4416cc0fb2ea8a1c3aee4dad0288ecca050a163b3ed8b2e30e063c29450",
+      "model": "default",
+      "tag": "long-run-100-shipments",
+      "response": {
+        "message": {
+          "role": "assistant",
+          "content": "",
+          "toolCalls": [
+            {
+              "id": "call_6f369f27-d8e7-415d-bae3-212e7d146ddd",
+              "name": "shipments.get",
+              "arguments": {
+                "id": "2010"
+              }
+            }
+          ]
+        },
+        "usage": {
+          "inputTokens": 7094,
+          "outputTokens": 35
+        },
+        "stopReason": "tool_calls"
+      }
+    },
+    {
+      "hash": "ed7a1373875d89ba692153385a98359cf1df54958817ca30be4ee430cfc24983",
+      "model": "default",
+      "tag": "long-run-100-shipments",
+      "response": {
+        "message": {
+          "role": "assistant",
+          "content": "",
+          "toolCalls": [
+            {
+              "id": "call_f10e1ca0-ab86-402d-8a18-9af00b672fe8",
+              "name": "shipments.get",
+              "arguments": {
+                "id": "2011"
+              }
+            }
+          ]
+        },
+        "usage": {
+          "inputTokens": 7817,
+          "outputTokens": 36
+        },
+        "stopReason": "tool_calls"
+      }
+    },
+    {
+      "hash": "4a38b7de2f8fd3d42bd2cdb42fd455931183d7685cf0bcef0f9eba315e99a3e2",
+      "model": "default",
+      "tag": "long-run-100-shipments",
+      "response": {
+        "message": {
+          "role": "assistant",
+          "content": "",
+          "toolCalls": [
+            {
+              "id": "call_8d68c159-ab3b-4fd0-b9ac-f947450e5e33",
+              "name": "shipments.get",
+              "arguments": {
+                "id": "2012"
+              }
+            }
+          ]
+        },
+        "usage": {
+          "inputTokens": 8539,
+          "outputTokens": 36
+        },
+        "stopReason": "tool_calls"
+      }
+    },
+    {
+      "hash": "349243ed37756396ab2fc5a8e0883b3a7d3ecb56e49cc6ae18e8c5f6b21ab642",
+      "model": "default",
+      "tag": "long-run-100-shipments",
+      "response": {
+        "message": {
+          "role": "assistant",
+          "content": "",
+          "toolCalls": [
+            {
+              "id": "call_2499c247-162e-46c9-957a-b2124c8a3830",
+              "name": "shipments.get",
+              "arguments": {
+                "id": "2013"
+              }
+            }
+          ]
+        },
+        "usage": {
+          "inputTokens": 9262,
+          "outputTokens": 33
+        },
+        "stopReason": "tool_calls"
+      }
+    },
+    {
+      "hash": "b27f8d0a91fa874fa3f6bdfa4188666f4e61ae5cd96106c3cc84748784080413",
+      "model": "default",
+      "tag": "long-run-100-shipments",
+      "response": {
+        "message": {
+          "role": "assistant",
+          "content": "",
+          "toolCalls": [
+            {
+              "id": "call_7daeb1c3-377e-4427-8840-32afa97e5614",
+              "name": "shipments.get",
+              "arguments": {
+                "id": "2014"
+              }
+            }
+          ]
+        },
+        "usage": {
+          "inputTokens": 9984,
+          "outputTokens": 38
+        },
+        "stopReason": "tool_calls"
+      }
+    },
+    {
+      "hash": "73c6cf9324b880d4973957a8dac086e7c6e1e78df15ce8a9b65dd77c415d1c26",
+      "model": "default",
+      "tag": "long-run-100-shipments",
+      "response": {
+        "message": {
+          "role": "assistant",
+          "content": "",
+          "toolCalls": [
+            {
+              "id": "call_97543213-3ebf-4344-8b6c-e616654771fb",
+              "name": "shipments.get",
+              "arguments": {
+                "id": "2015"
+              }
+            }
+          ]
+        },
+        "usage": {
+          "inputTokens": 10707,
+          "outputTokens": 38
+        },
+        "stopReason": "tool_calls"
+      }
+    },
+    {
+      "hash": "93c700ef09ee3172b5756d5858e352a47d8f8c0a2132822bd9134635476682c7",
+      "model": "default",
+      "tag": "long-run-100-shipments",
+      "response": {
+        "message": {
+          "role": "assistant",
+          "content": "",
+          "toolCalls": [
+            {
+              "id": "call_beb53be4-68bc-4c8c-9b9d-5497d881a483",
+              "name": "shipments.get",
+              "arguments": {
+                "id": "2016"
+              }
+            }
+          ]
+        },
+        "usage": {
+          "inputTokens": 11429,
+          "outputTokens": 21
+        },
+        "stopReason": "tool_calls"
+      }
+    },
+    {
+      "hash": "ffd2b0c15d92a86791053ab8515cf5c124651e596359875c989191ed2e0aaf37",
+      "model": "default",
+      "tag": "long-run-100-shipments",
+      "response": {
+        "message": {
+          "role": "assistant",
+          "content": "",
+          "toolCalls": [
+            {
+              "id": "call_ec9f027f-60aa-48e8-a165-57fea433dec7",
+              "name": "shipments.get",
+              "arguments": {
+                "id": "2017"
+              }
+            }
+          ]
+        },
+        "usage": {
+          "inputTokens": 5752,
+          "outputTokens": 37
+        },
+        "stopReason": "tool_calls"
+      }
+    },
+    {
+      "hash": "458c25285a606c916b196639a5ba79f59251db8f50b8da9e4adc2966aed7c7a7",
+      "model": "default",
+      "tag": "long-run-100-shipments",
+      "response": {
+        "message": {
+          "role": "assistant",
+          "content": "2017 — lost. Tiếp tục kiểm tra các vận đơn còn lại.",
+          "toolCalls": [
+            {
+              "id": "call_bcb89ebe-3302-460a-941c-a0e1837d37c4",
+              "name": "shipments.get",
+              "arguments": {
+                "id": "2018"
+              }
+            }
+          ]
+        },
+        "usage": {
+          "inputTokens": 6483,
+          "outputTokens": 60
+        },
+        "stopReason": "tool_calls"
+      }
+    },
+    {
+      "hash": "6b8d82a6851ac8de8fbc487ad87ae53e2caa8815b9e5993101fa92b61f45a839",
+      "model": "default",
+      "tag": "long-run-100-shipments",
+      "response": {
+        "message": {
+          "role": "assistant",
+          "content": "",
+          "toolCalls": [
+            {
+              "id": "call_ed114f4b-e9a4-4a8a-9768-5f6a4cb2cffb",
+              "name": "shipments.get",
+              "arguments": {
+                "id": "2019"
+              }
+            }
+          ]
+        },
+        "usage": {
+          "inputTokens": 7227,
+          "outputTokens": 35
+        },
+        "stopReason": "tool_calls"
+      }
+    },
+    {
+      "hash": "2cbf8201423c0b756d3132f7465ee162ac61d669414423518901635f5a5faabd",
+      "model": "default",
+      "tag": "long-run-100-shipments",
+      "response": {
+        "message": {
+          "role": "assistant",
+          "content": "",
+          "toolCalls": [
+            {
+              "id": "call_81bb7535-b2cc-4f94-b58e-7f5ffc80c4a2",
+              "name": "shipments.get",
+              "arguments": {
+                "id": "2020"
+              }
+            }
+          ]
+        },
+        "usage": {
+          "inputTokens": 7951,
+          "outputTokens": 38
+        },
+        "stopReason": "tool_calls"
+      }
+    },
+    {
+      "hash": "423036e1d20447c5dcbcdae4d56baf50d09442f0cac096dc6003a04091d0edbe",
+      "model": "default",
+      "tag": "long-run-100-shipments",
+      "response": {
+        "message": {
+          "role": "assistant",
+          "content": "",
+          "toolCalls": [
+            {
+              "id": "call_3480d3fc-b0d4-40ac-afeb-1df972f3f4a5",
+              "name": "shipments.get",
+              "arguments": {
+                "id": "2021"
+              }
+            }
+          ]
+        },
+        "usage": {
+          "inputTokens": 8672,
+          "outputTokens": 34
+        },
+        "stopReason": "tool_calls"
+      }
+    },
+    {
+      "hash": "606a9a7b25649df1e5fb2719b8eb2a249a4c02f552c407a73d8728f57b44077d",
+      "model": "default",
+      "tag": "long-run-100-shipments",
+      "response": {
+        "message": {
+          "role": "assistant",
+          "content": "",
+          "toolCalls": [
+            {
+              "id": "call_8ded5178-825b-4897-a74b-4f97377f4db0",
+              "name": "shipments.get",
+              "arguments": {
+                "id": "2022"
+              }
+            }
+          ]
+        },
+        "usage": {
+          "inputTokens": 9397,
+          "outputTokens": 35
+        },
+        "stopReason": "tool_calls"
+      }
+    },
+    {
+      "hash": "9297945e5a55963684e2fc15bb234c28ba9b7cf2d9737fc4c7b4b696ee899c96",
+      "model": "default",
+      "tag": "long-run-100-shipments",
+      "response": {
+        "message": {
+          "role": "assistant",
+          "content": "",
+          "toolCalls": [
+            {
+              "id": "call_ae3317d1-a651-4ae5-9ea1-407451b03280",
+              "name": "shipments.get",
+              "arguments": {
+                "id": "2023"
+              }
+            }
+          ]
+        },
+        "usage": {
+          "inputTokens": 10119,
+          "outputTokens": 36
+        },
+        "stopReason": "tool_calls"
+      }
+    },
+    {
+      "hash": "9ab8c30c7d47f6d397b83bf66557e08165dcaf70fb978a92f6d0bb084a299edf",
+      "model": "default",
+      "tag": "long-run-100-shipments",
+      "response": {
+        "message": {
+          "role": "assistant",
+          "content": "",
+          "toolCalls": [
+            {
+              "id": "call_19f5fe44-fa7f-45b7-b65c-a3c8a6cce24c",
+              "name": "shipments.get",
+              "arguments": {
+                "id": "2024"
+              }
+            }
+          ]
+        },
+        "usage": {
+          "inputTokens": 10843,
+          "outputTokens": 37
+        },
+        "stopReason": "tool_calls"
+      }
+    },
+    {
+      "hash": "25d8328dbc92bbfa1c9d7a7837f107b8ba98eee23521df5844750b562e679fda",
+      "model": "default",
+      "tag": "long-run-100-shipments",
+      "response": {
+        "message": {
+          "role": "assistant",
+          "content": "",
+          "toolCalls": [
+            {
+              "id": "call_82d41ebc-5d12-4dac-80ca-7565404e9b51",
+              "name": "shipments.get",
+              "arguments": {
+                "id": "2025"
+              }
+            }
+          ]
+        },
+        "usage": {
+          "inputTokens": 11564,
+          "outputTokens": 21
+        },
+        "stopReason": "tool_calls"
+      }
+    },
+    {
+      "hash": "41aa9786eab9477d3439c02c21d3ed167433b01459b2b3ec5825dd717066d333",
+      "model": "default",
+      "tag": "long-run-100-shipments",
+      "response": {
+        "message": {
+          "role": "assistant",
+          "content": "",
+          "toolCalls": [
+            {
+              "id": "call_f63db00f-a838-4e7b-a3a8-3b48eb5f2660",
+              "name": "shipments.get",
+              "arguments": {
+                "id": "2026"
+              }
+            }
+          ]
+        },
+        "usage": {
+          "inputTokens": 5734,
+          "outputTokens": 34
+        },
+        "stopReason": "tool_calls"
+      }
+    },
+    {
+      "hash": "14374a26197f7477dc2d3b54146712b1c086666929bfc04a3f1c84639aebf058",
+      "model": "default",
+      "tag": "long-run-100-shipments",
+      "response": {
+        "message": {
+          "role": "assistant",
+          "content": "",
+          "toolCalls": [
+            {
+              "id": "call_aa8a10d5-8e70-4499-a16b-8a249cf6b5f4",
+              "name": "shipments.get",
+              "arguments": {
+                "id": "2027"
+              }
+            }
+          ]
+        },
+        "usage": {
+          "inputTokens": 6457,
+          "outputTokens": 33
+        },
+        "stopReason": "tool_calls"
+      }
+    },
+    {
+      "hash": "68e4f4464686b3afe0a051b007548ab7fc01a7072bce9f5cb39025e4396eb05f",
+      "model": "default",
+      "tag": "long-run-100-shipments",
+      "response": {
+        "message": {
+          "role": "assistant",
+          "content": "",
+          "toolCalls": [
+            {
+              "id": "call_d4492ad4-16b5-4097-b158-493167c15ca1",
+              "name": "shipments.get",
+              "arguments": {
+                "id": "2028"
+              }
+            }
+          ]
+        },
+        "usage": {
+          "inputTokens": 7179,
+          "outputTokens": 37
+        },
+        "stopReason": "tool_calls"
+      }
+    },
+    {
+      "hash": "b147895a3a8ba785a8fc55cb32676df24c87143c2875d761483ee67ea514cf82",
+      "model": "default",
+      "tag": "long-run-100-shipments",
+      "response": {
+        "message": {
+          "role": "assistant",
+          "content": "",
+          "toolCalls": [
+            {
+              "id": "call_ee048744-3db6-46b4-b579-02e595142eb6",
+              "name": "shipments.get",
+              "arguments": {
+                "id": "2029"
+              }
+            }
+          ]
+        },
+        "usage": {
+          "inputTokens": 7902,
+          "outputTokens": 21
+        },
+        "stopReason": "tool_calls"
+      }
+    },
+    {
+      "hash": "91d641421b89ae28ee0f9137e6a5bedfe1f0938329c3848c50d57411aa25744e",
+      "model": "default",
+      "tag": "long-run-100-shipments",
+      "response": {
+        "message": {
+          "role": "assistant",
+          "content": "",
+          "toolCalls": [
+            {
+              "id": "call_2cc0029e-0b34-4c5b-b4e9-daf6cbeb721b",
+              "name": "shipments.get",
+              "arguments": {
+                "id": "2030"
+              }
+            }
+          ]
+        },
+        "usage": {
+          "inputTokens": 8624,
+          "outputTokens": 33
+        },
+        "stopReason": "tool_calls"
+      }
+    },
+    {
+      "hash": "92736388a266a8041fbbc09eb00a126d821a15ac81862bbed82cf45e1a14a53a",
+      "model": "default",
+      "tag": "long-run-100-shipments",
+      "response": {
+        "message": {
+          "role": "assistant",
+          "content": "",
+          "toolCalls": [
+            {
+              "id": "call_29d8ee64-4db9-4275-a5c4-03489088c6ba",
+              "name": "shipments.get",
+              "arguments": {
+                "id": "2031"
+              }
+            }
+          ]
+        },
+        "usage": {
+          "inputTokens": 9347,
+          "outputTokens": 37
+        },
+        "stopReason": "tool_calls"
+      }
+    },
+    {
+      "hash": "b5d8609d0f40d388bd8122c238581d3dfbe88a4c6505965fb4a0ffdf8ef0f555",
+      "model": "default",
+      "tag": "long-run-100-shipments",
+      "response": {
+        "message": {
+          "role": "assistant",
+          "content": "",
+          "toolCalls": [
+            {
+              "id": "call_372b80e7-5f4a-4a71-a9ac-5c05f4e6b30f",
+              "name": "shipments.get",
+              "arguments": {
+                "id": "2032"
+              }
+            }
+          ]
+        },
+        "usage": {
+          "inputTokens": 10069,
+          "outputTokens": 32
+        },
+        "stopReason": "tool_calls"
+      }
+    },
+    {
+      "hash": "8a108bc7828e5244dbc2efb20fe0798a4b7e787a004a2503cb9bfa61f9c66ec1",
+      "model": "default",
+      "tag": "long-run-100-shipments",
+      "response": {
+        "message": {
+          "role": "assistant",
+          "content": "",
+          "toolCalls": [
+            {
+              "id": "call_2c92d01e-e423-49ec-b2a3-8705a0a03dd0",
+              "name": "shipments.get",
+              "arguments": {
+                "id": "2033"
+              }
+            }
+          ]
+        },
+        "usage": {
+          "inputTokens": 10792,
+          "outputTokens": 34
+        },
+        "stopReason": "tool_calls"
+      }
+    },
+    {
+      "hash": "9b5a59306bcfaeae95c80a13305d518873638d6f28997d35c5b7753c2cb7e342",
+      "model": "default",
+      "tag": "long-run-100-shipments",
+      "response": {
+        "message": {
+          "role": "assistant",
+          "content": "",
+          "toolCalls": [
+            {
+              "id": "call_0d29fe78-c74c-406c-a07c-967b15c203f7",
+              "name": "shipments.get",
+              "arguments": {
+                "id": "2034"
+              }
+            }
+          ]
+        },
+        "usage": {
+          "inputTokens": 11514,
+          "outputTokens": 33
+        },
+        "stopReason": "tool_calls"
+      }
+    },
+    {
+      "hash": "ac35d64b198babf0935bc5666361173bc7b5ea2ddde64096a2803c95229821f8",
+      "model": "default",
+      "tag": "long-run-100-shipments",
+      "response": {
+        "message": {
+          "role": "assistant",
+          "content": "",
+          "toolCalls": [
+            {
+              "id": "call_d4bb6628-308c-4c5a-a2f0-dc13cb03e516",
+              "name": "shipments.get",
+              "arguments": {
+                "id": "2035"
+              }
+            }
+          ]
+        },
+        "usage": {
+          "inputTokens": 5684,
+          "outputTokens": 21
+        },
+        "stopReason": "tool_calls"
+      }
+    },
+    {
+      "hash": "9d8e62f998e87e09b39b4d119c61c8e15880d528a660a63482c475b6fb9fcc30",
+      "model": "default",
+      "tag": "long-run-100-shipments",
+      "response": {
+        "message": {
+          "role": "assistant",
+          "content": "",
+          "toolCalls": [
+            {
+              "id": "call_8f66a5ba-4daa-4182-9e66-8a7b02c846f7",
+              "name": "shipments.get",
+              "arguments": {
+                "id": "2036"
+              }
+            }
+          ]
+        },
+        "usage": {
+          "inputTokens": 6408,
+          "outputTokens": 35
+        },
+        "stopReason": "tool_calls"
+      }
+    },
+    {
+      "hash": "ddd2bc3b32610e3b553a96fb6a9314babc3f5a7bdf8fe6387ee633c6582518c6",
+      "model": "default",
+      "tag": "long-run-100-shipments",
+      "response": {
+        "message": {
+          "role": "assistant",
+          "content": "",
+          "toolCalls": [
+            {
+              "id": "call_86ae2216-59b5-4251-bf6b-572a7ef512c9",
+              "name": "shipments.get",
+              "arguments": {
+                "id": "2037"
+              }
+            }
+          ]
+        },
+        "usage": {
+          "inputTokens": 7129,
+          "outputTokens": 21
+        },
+        "stopReason": "tool_calls"
+      }
+    },
+    {
+      "hash": "e091d369b76460b7a7eba1adbfe08132fa4f3c7847ba73936a04e5a627f2d341",
+      "model": "default",
+      "tag": "long-run-100-shipments",
+      "response": {
+        "message": {
+          "role": "assistant",
+          "content": "",
+          "toolCalls": [
+            {
+              "id": "call_0423812c-2323-4018-9453-0cfe75496e15",
+              "name": "shipments.get",
+              "arguments": {
+                "id": "2038"
+              }
+            }
+          ]
+        },
+        "usage": {
+          "inputTokens": 7853,
+          "outputTokens": 32
+        },
+        "stopReason": "tool_calls"
+      }
+    },
+    {
+      "hash": "0b6b5efaa311cb7d0a21e707d57aab29dfc0feb0072b90bd691205960601d2af",
+      "model": "default",
+      "tag": "long-run-100-shipments",
+      "response": {
+        "message": {
+          "role": "assistant",
+          "content": "",
+          "toolCalls": [
+            {
+              "id": "call_e6aa441c-9a19-4c8c-8e68-1d16dd38ef07",
+              "name": "shipments.get",
+              "arguments": {
+                "id": "2039"
+              }
+            }
+          ]
+        },
+        "usage": {
+          "inputTokens": 8575,
+          "outputTokens": 21
+        },
+        "stopReason": "tool_calls"
+      }
+    },
+    {
+      "hash": "076f6e81844328896991a15e7b8207f3c060cb160689d37e766d6893ac614e09",
+      "model": "default",
+      "tag": "long-run-100-shipments",
+      "response": {
+        "message": {
+          "role": "assistant",
+          "content": "",
+          "toolCalls": [
+            {
+              "id": "call_e6cbfe9a-6d29-4d95-add6-49487a5bf13f",
+              "name": "shipments.get",
+              "arguments": {
+                "id": "2040"
+              }
+            }
+          ]
+        },
+        "usage": {
+          "inputTokens": 9300,
+          "outputTokens": 38
+        },
+        "stopReason": "tool_calls"
+      }
+    },
+    {
+      "hash": "90caa51ba992d1ff9e02d9e8bd9bdc142857c80ae06b6f4b596f1632e77c272c",
+      "model": "default",
+      "tag": "long-run-100-shipments",
+      "response": {
+        "message": {
+          "role": "assistant",
+          "content": "",
+          "toolCalls": [
+            {
+              "id": "call_d859ea73-ee9a-4047-bf9b-fa6493c2c844",
+              "name": "shipments.get",
+              "arguments": {
+                "id": "2041"
+              }
+            }
+          ]
+        },
+        "usage": {
+          "inputTokens": 10021,
+          "outputTokens": 38
+        },
+        "stopReason": "tool_calls"
+      }
+    },
+    {
+      "hash": "09a0b301eae4b3e423549c82f5450cdcf9303d5147bcda50df8c342d19e7f6c5",
+      "model": "default",
+      "tag": "long-run-100-shipments",
+      "response": {
+        "message": {
+          "role": "assistant",
+          "content": "",
+          "toolCalls": [
+            {
+              "id": "call_3febedcb-92d8-443e-8908-912e39d17920",
+              "name": "shipments.get",
+              "arguments": {
+                "id": "2042"
+              }
+            }
+          ]
+        },
+        "usage": {
+          "inputTokens": 10745,
+          "outputTokens": 33
+        },
+        "stopReason": "tool_calls"
+      }
+    },
+    {
+      "hash": "43ee3dcc98e46dd4ef71906f3a5c49edf56ea34f6307f69e78acf77fb68e19a8",
+      "model": "default",
+      "tag": "long-run-100-shipments",
+      "response": {
+        "message": {
+          "role": "assistant",
+          "content": "",
+          "toolCalls": [
+            {
+              "id": "call_38f177b9-2e56-4755-b0cd-b6f3f3dbff4c",
+              "name": "shipments.get",
+              "arguments": {
+                "id": "2043"
+              }
+            }
+          ]
+        },
+        "usage": {
+          "inputTokens": 11466,
+          "outputTokens": 37
+        },
+        "stopReason": "tool_calls"
+      }
+    },
+    {
+      "hash": "e001c4038599afde9095316196522fb8de0ce4399803e8f1b8d112ce2431d5c3",
+      "model": "default",
+      "tag": "long-run-100-shipments",
+      "response": {
+        "message": {
+          "role": "assistant",
+          "content": "",
+          "toolCalls": [
+            {
+              "id": "call_001ba082-6a44-4b72-baf9-4369971ea025",
+              "name": "shipments.get",
+              "arguments": {
+                "id": "2044"
+              }
+            }
+          ]
+        },
+        "usage": {
+          "inputTokens": 5638,
+          "outputTokens": 32
+        },
+        "stopReason": "tool_calls"
+      }
+    },
+    {
+      "hash": "cede2e767ffdf9b8a51a60be0a5aab2ffd9e8bf02e5846f9d656003af1311e8f",
+      "model": "default",
+      "tag": "long-run-100-shipments",
+      "response": {
+        "message": {
+          "role": "assistant",
+          "content": "",
+          "toolCalls": [
+            {
+              "id": "call_92a81a09-708e-45a0-a42d-d337f6d79132",
+              "name": "shipments.get",
+              "arguments": {
+                "id": "2045"
+              }
+            }
+          ]
+        },
+        "usage": {
+          "inputTokens": 6361,
+          "outputTokens": 35
+        },
+        "stopReason": "tool_calls"
+      }
+    },
+    {
+      "hash": "28a30af376b1a1e4e49b62d285a764b77577e215d6e495fb589624c2260135dc",
+      "model": "default",
+      "tag": "long-run-100-shipments",
+      "response": {
+        "message": {
+          "role": "assistant",
+          "content": "",
+          "toolCalls": [
+            {
+              "id": "call_4e7d19be-5802-4c44-8bbe-d07f4fdd78f0",
+              "name": "shipments.get",
+              "arguments": {
+                "id": "2046"
+              }
+            }
+          ]
+        },
+        "usage": {
+          "inputTokens": 7083,
+          "outputTokens": 37
+        },
+        "stopReason": "tool_calls"
+      }
+    },
+    {
+      "hash": "bbb809abd5881fe64b73d5e728b3c35f388d7ecaeabdfc379eb2df6ab78fa50c",
+      "model": "default",
+      "tag": "long-run-100-shipments",
+      "response": {
+        "message": {
+          "role": "assistant",
+          "content": "",
+          "toolCalls": [
+            {
+              "id": "call_c6657db0-0e01-42fa-bdba-138f28f0bf44",
+              "name": "shipments.get",
+              "arguments": {
+                "id": "2047"
+              }
+            }
+          ]
+        },
+        "usage": {
+          "inputTokens": 7806,
+          "outputTokens": 31
+        },
+        "stopReason": "tool_calls"
+      }
+    },
+    {
+      "hash": "16bc4d705d54a7bab333d9d43adbe1887d1c04c16539c3f264ab51952d5339fa",
+      "model": "default",
+      "tag": "long-run-100-shipments",
+      "response": {
+        "message": {
+          "role": "assistant",
+          "content": "",
+          "toolCalls": [
+            {
+              "id": "call_4d2eb48c-1f45-4a89-bfa7-9cc912e69ee8",
+              "name": "shipments.get",
+              "arguments": {
+                "id": "2048"
+              }
+            }
+          ]
+        },
+        "usage": {
+          "inputTokens": 8528,
+          "outputTokens": 21
+        },
+        "stopReason": "tool_calls"
+      }
+    },
+    {
+      "hash": "86876308462b17ba20eaa73830ceb61c8e2e405cd41ed7d3f4f0175e00d9058c",
+      "model": "default",
+      "tag": "long-run-100-shipments",
+      "response": {
+        "message": {
+          "role": "assistant",
+          "content": "",
+          "toolCalls": [
+            {
+              "id": "call_d238a18b-5a7e-4d94-b6db-d87f6a4ab7d9",
+              "name": "shipments.get",
+              "arguments": {
+                "id": "2049"
+              }
+            }
+          ]
+        },
+        "usage": {
+          "inputTokens": 9251,
+          "outputTokens": 21
+        },
+        "stopReason": "tool_calls"
+      }
+    },
+    {
+      "hash": "1ad57f8405336b4229eb9029336a5a2e2b3161f5aa79550c5ad54282615ae088",
+      "model": "default",
+      "tag": "long-run-100-shipments",
+      "response": {
+        "message": {
+          "role": "assistant",
+          "content": "",
+          "toolCalls": [
+            {
+              "id": "call_8140f827-624f-460e-ba9a-dab98934dd3a",
+              "name": "shipments.get",
+              "arguments": {
+                "id": "2050"
+              }
+            }
+          ]
+        },
+        "usage": {
+          "inputTokens": 9973,
+          "outputTokens": 37
+        },
+        "stopReason": "tool_calls"
+      }
+    },
+    {
+      "hash": "cfb8afa8955cfabf29a52a228db1822983ad54872e5a64672bdb8c819e74c0ba",
+      "model": "default",
+      "tag": "long-run-100-shipments",
+      "response": {
+        "message": {
+          "role": "assistant",
+          "content": "",
+          "toolCalls": [
+            {
+              "id": "call_919c3a25-67ef-46dc-a0a7-f6520329700e",
+              "name": "shipments.get",
+              "arguments": {
+                "id": "2051"
+              }
+            }
+          ]
+        },
+        "usage": {
+          "inputTokens": 10696,
+          "outputTokens": 38
+        },
+        "stopReason": "tool_calls"
+      }
+    },
+    {
+      "hash": "8d53acc40de292332aaced2120623a99153e6b6da0213b7fbc8be6b7e4a5c87f",
+      "model": "default",
+      "tag": "long-run-100-shipments",
+      "response": {
+        "message": {
+          "role": "assistant",
+          "content": "",
+          "toolCalls": [
+            {
+              "id": "call_e80f9189-6a72-443a-bbf6-4c4c8edf22de",
+              "name": "shipments.get",
+              "arguments": {
+                "id": "2052"
+              }
+            }
+          ]
+        },
+        "usage": {
+          "inputTokens": 11418,
+          "outputTokens": 37
+        },
+        "stopReason": "tool_calls"
+      }
+    },
+    {
+      "hash": "72eb783ff88288ba82f16e592150c3693cc6d59213b20c2c8a3ffda93aaa008d",
+      "model": "default",
+      "tag": "long-run-100-shipments",
+      "response": {
+        "message": {
+          "role": "assistant",
+          "content": "",
+          "toolCalls": [
+            {
+              "id": "call_2df2720e-b4bf-4a1f-b15a-b0453c3834a6",
+              "name": "shipments.get",
+              "arguments": {
+                "id": "2053"
+              }
+            }
+          ]
+        },
+        "usage": {
+          "inputTokens": 5596,
+          "outputTokens": 39
+        },
+        "stopReason": "tool_calls"
+      }
+    },
+    {
+      "hash": "5efd68226c3682679951ac9ef54e628b2aeb06916fb79bde563b387ec4eef2b3",
+      "model": "default",
+      "tag": "long-run-100-shipments",
+      "response": {
+        "message": {
+          "role": "assistant",
+          "content": "",
+          "toolCalls": [
+            {
+              "id": "call_91ac628f-fd8d-4647-98a9-f62cae286155",
+              "name": "shipments.get",
+              "arguments": {
+                "id": "2054"
+              }
+            }
+          ]
+        },
+        "usage": {
+          "inputTokens": 6320,
+          "outputTokens": 32
+        },
+        "stopReason": "tool_calls"
+      }
+    },
+    {
+      "hash": "f5cce4c7c79465726e67296c01dc5e287e685ec2e704dffa784f025d14ca9ccd",
+      "model": "default",
+      "tag": "long-run-100-shipments",
+      "response": {
+        "message": {
+          "role": "assistant",
+          "content": "",
+          "toolCalls": [
+            {
+              "id": "call_e0a34566-fee2-4904-8d54-e6d8bdcaefd9",
+              "name": "shipments.get",
+              "arguments": {
+                "id": "2055"
+              }
+            }
+          ]
+        },
+        "usage": {
+          "inputTokens": 7041,
+          "outputTokens": 21
+        },
+        "stopReason": "tool_calls"
+      }
+    },
+    {
+      "hash": "e1e5902b59d5f146833ebbb47aff4966118daf75ea76f2525fabb54792c04281",
+      "model": "default",
+      "tag": "long-run-100-shipments",
+      "response": {
+        "message": {
+          "role": "assistant",
+          "content": "",
+          "toolCalls": [
+            {
+              "id": "call_a67e777f-51e7-48f7-a9b6-232c324e7d8e",
+              "name": "shipments.get",
+              "arguments": {
+                "id": "2056"
+              }
+            }
+          ]
+        },
+        "usage": {
+          "inputTokens": 7766,
+          "outputTokens": 32
+        },
+        "stopReason": "tool_calls"
+      }
+    },
+    {
+      "hash": "651227758cecc64121b0d4971be932cb4a0340a9c8ee48f1bc8b356c4393ebea",
+      "model": "default",
+      "tag": "long-run-100-shipments",
+      "response": {
+        "message": {
+          "role": "assistant",
+          "content": "",
+          "toolCalls": [
+            {
+              "id": "call_7d1d49ab-4563-4ba5-b8fd-8ca8e7ba2fa8",
+              "name": "shipments.get",
+              "arguments": {
+                "id": "2057"
+              }
+            }
+          ]
+        },
+        "usage": {
+          "inputTokens": 8488,
+          "outputTokens": 21
+        },
+        "stopReason": "tool_calls"
+      }
+    },
+    {
+      "hash": "3d18a687cb38e0b5cb5c6545d3f2dbdeeb6d8ee64be671681b2be340bcae94e6",
+      "model": "default",
+      "tag": "long-run-100-shipments",
+      "response": {
+        "message": {
+          "role": "assistant",
+          "content": "",
+          "toolCalls": [
+            {
+              "id": "call_99151ca2-5a60-421d-b443-bece2a517e13",
+              "name": "shipments.get",
+              "arguments": {
+                "id": "2058"
+              }
+            }
+          ]
+        },
+        "usage": {
+          "inputTokens": 9212,
+          "outputTokens": 21
+        },
+        "stopReason": "tool_calls"
+      }
+    },
+    {
+      "hash": "cc7f208ccec206ba7d02b73537c7eba103b4057202528af5653ea1db5630af94",
+      "model": "default",
+      "tag": "long-run-100-shipments",
+      "response": {
+        "message": {
+          "role": "assistant",
+          "content": "2058 — lost. Tiếp tục kiểm tra các vận đơn còn lại.",
+          "toolCalls": [
+            {
+              "id": "call_09a6d11b-c1f1-4e59-badd-90df2bb476d7",
+              "name": "shipments.get",
+              "arguments": {
+                "id": "2059"
+              }
+            }
+          ]
+        },
+        "usage": {
+          "inputTokens": 9941,
+          "outputTokens": 44
+        },
+        "stopReason": "tool_calls"
+      }
+    },
+    {
+      "hash": "170dda874a09ea68709e3161b02810f153e524892639576bd6bf31e5fbf89c75",
+      "model": "default",
+      "tag": "long-run-100-shipments",
+      "response": {
+        "message": {
+          "role": "assistant",
+          "content": "",
+          "toolCalls": [
+            {
+              "id": "call_8289ba35-b9e6-49d6-8998-6a3b6f8440e8",
+              "name": "shipments.get",
+              "arguments": {
+                "id": "2060"
+              }
+            }
+          ]
+        },
+        "usage": {
+          "inputTokens": 10688,
+          "outputTokens": 21
+        },
+        "stopReason": "tool_calls"
+      }
+    },
+    {
+      "hash": "209b97c74e4d1c49aaef3c01ad64f4b6e9d8c662733e2bfdf64a21bfb573027e",
+      "model": "default",
+      "tag": "long-run-100-shipments",
+      "response": {
+        "message": {
+          "role": "assistant",
+          "content": "",
+          "toolCalls": [
+            {
+              "id": "call_a8521c56-b92b-441f-9060-f355bba35617",
+              "name": "shipments.get",
+              "arguments": {
+                "id": "2061"
+              }
+            }
+          ]
+        },
+        "usage": {
+          "inputTokens": 11409,
+          "outputTokens": 36
+        },
+        "stopReason": "tool_calls"
+      }
+    },
+    {
+      "hash": "021eb59f5f5b1155cff45a227aa2024874331ce26b1a3d0c51e739f900b86a05",
+      "model": "default",
+      "tag": "long-run-100-shipments",
+      "response": {
+        "message": {
+          "role": "assistant",
+          "content": "",
+          "toolCalls": [
+            {
+              "id": "call_2649df04-2086-4aa0-92a0-3d89467e88e3",
+              "name": "shipments.get",
+              "arguments": {
+                "id": "2062"
+              }
+            }
+          ]
+        },
+        "usage": {
+          "inputTokens": 5581,
+          "outputTokens": 21
+        },
+        "stopReason": "tool_calls"
+      }
+    },
+    {
+      "hash": "7046fbd09f106d873c60d3608aa452591b7b887e24cd1a6a99be9521f254b9e6",
+      "model": "default",
+      "tag": "long-run-100-shipments",
+      "response": {
+        "message": {
+          "role": "assistant",
+          "content": "",
+          "toolCalls": [
+            {
+              "id": "call_be430ab1-b024-4675-863a-74c68ce26083",
+              "name": "shipments.get",
+              "arguments": {
+                "id": "2063"
+              }
+            }
+          ]
+        },
+        "usage": {
+          "inputTokens": 6304,
+          "outputTokens": 36
+        },
+        "stopReason": "tool_calls"
+      }
+    },
+    {
+      "hash": "89982308a4d3b87a91d36e85a846233b23b52e35f0ef8611e97e831c04ed98c3",
+      "model": "default",
+      "tag": "long-run-100-shipments",
+      "response": {
+        "message": {
+          "role": "assistant",
+          "content": "",
+          "toolCalls": [
+            {
+              "id": "call_d581997d-8499-48f2-9491-85ce34f8471e",
+              "name": "shipments.get",
+              "arguments": {
+                "id": "2064"
+              }
+            }
+          ]
+        },
+        "usage": {
+          "inputTokens": 7026,
+          "outputTokens": 36
+        },
+        "stopReason": "tool_calls"
+      }
+    },
+    {
+      "hash": "027552619f121ef8d32f4f18b15b148d14e1312fcebaa08fa68c7a471abba809",
+      "model": "default",
+      "tag": "long-run-100-shipments",
+      "response": {
+        "message": {
+          "role": "assistant",
+          "content": "",
+          "toolCalls": [
+            {
+              "id": "call_95fed07d-5404-4ddf-aac8-0b909c21b280",
+              "name": "shipments.get",
+              "arguments": {
+                "id": "2065"
+              }
+            }
+          ]
+        },
+        "usage": {
+          "inputTokens": 7749,
+          "outputTokens": 21
+        },
+        "stopReason": "tool_calls"
+      }
+    },
+    {
+      "hash": "cba44ee8070c38680e6bdb3a9a95387d2e74676230f8ad2e50ade28c2eba5503",
+      "model": "default",
+      "tag": "long-run-100-shipments",
+      "response": {
+        "message": {
+          "role": "assistant",
+          "content": "",
+          "toolCalls": [
+            {
+              "id": "call_ec90207a-b981-4424-a346-d7cd446ab286",
+              "name": "shipments.get",
+              "arguments": {
+                "id": "2066"
+              }
+            }
+          ]
+        },
+        "usage": {
+          "inputTokens": 8471,
+          "outputTokens": 21
+        },
+        "stopReason": "tool_calls"
+      }
+    },
+    {
+      "hash": "d58aea0396646cc0f4644e515e8e2b85581ae2170702c4a2b61b44d5b29c52f6",
+      "model": "default",
+      "tag": "long-run-100-shipments",
+      "response": {
+        "message": {
+          "role": "assistant",
+          "content": "",
+          "toolCalls": [
+            {
+              "id": "call_9917711c-f8b8-47d4-8dcc-7cf780226503",
+              "name": "shipments.get",
+              "arguments": {
+                "id": "2067"
+              }
+            }
+          ]
+        },
+        "usage": {
+          "inputTokens": 9194,
+          "outputTokens": 39
+        },
+        "stopReason": "tool_calls"
+      }
+    },
+    {
+      "hash": "58801dacbdfea74d4361b34b75229dbbb112512a346f3affb9e581c44840d322",
+      "model": "default",
+      "tag": "long-run-100-shipments",
+      "response": {
+        "message": {
+          "role": "assistant",
+          "content": "",
+          "toolCalls": [
+            {
+              "id": "call_4ac2a0d2-7ced-4924-8bb9-932f84281d3d",
+              "name": "shipments.get",
+              "arguments": {
+                "id": "2068"
+              }
+            }
+          ]
+        },
+        "usage": {
+          "inputTokens": 9916,
+          "outputTokens": 21
+        },
+        "stopReason": "tool_calls"
+      }
+    },
+    {
+      "hash": "c10e95bcb19e16681a896f092d7f29eedcfb4ebc84e7aa9a01718567fbde1d50",
+      "model": "default",
+      "tag": "long-run-100-shipments",
+      "response": {
+        "message": {
+          "role": "assistant",
+          "content": "",
+          "toolCalls": [
+            {
+              "id": "call_15fb6c49-8c21-47e6-934d-58bd64bd24de",
+              "name": "shipments.get",
+              "arguments": {
+                "id": "2069"
+              }
+            }
+          ]
+        },
+        "usage": {
+          "inputTokens": 10639,
+          "outputTokens": 21
+        },
+        "stopReason": "tool_calls"
+      }
+    },
+    {
+      "hash": "470fa450fbd85794a4ab4778aa2f32f16a40fc023a6bb78aeb0c43911f4e9472",
+      "model": "default",
+      "tag": "long-run-100-shipments",
+      "response": {
+        "message": {
+          "role": "assistant",
+          "content": "",
+          "toolCalls": [
+            {
+              "id": "call_e3744da2-97e4-46a3-aa99-3a480bae7a6a",
+              "name": "shipments.get",
+              "arguments": {
+                "id": "2070"
+              }
+            }
+          ]
+        },
+        "usage": {
+          "inputTokens": 11361,
+          "outputTokens": 21
+        },
+        "stopReason": "tool_calls"
+      }
+    },
+    {
+      "hash": "ce00d20b967d1f3723dcca96123740c2f344b41705f86734eb269f40ceb1133c",
+      "model": "default",
+      "tag": "long-run-100-shipments",
+      "response": {
+        "message": {
+          "role": "assistant",
+          "content": "",
+          "toolCalls": [
+            {
+              "id": "call_6d8ccad2-b7f9-48ad-ad7a-42438a485338",
+              "name": "shipments.get",
+              "arguments": {
+                "id": "2071"
+              }
+            }
+          ]
+        },
+        "usage": {
+          "inputTokens": 6188,
+          "outputTokens": 21
+        },
+        "stopReason": "tool_calls"
+      }
+    },
+    {
+      "hash": "bba93e0975ebed218da894946069a8d7cdb9fb0c1fb67773f67c6a5aec061f5d",
+      "model": "default",
+      "tag": "long-run-100-shipments",
+      "response": {
+        "message": {
+          "role": "assistant",
+          "content": "",
+          "toolCalls": [
+            {
+              "id": "call_0c34bb7f-ae1c-4096-992e-9020685b2520",
+              "name": "shipments.get",
+              "arguments": {
+                "id": "2072"
+              }
+            }
+          ]
+        },
+        "usage": {
+          "inputTokens": 6912,
+          "outputTokens": 21
+        },
+        "stopReason": "tool_calls"
+      }
+    },
+    {
+      "hash": "dfe302b53cc199eb32434562e5a17e884ff8b881fca8bda7da062a1e521375b1",
+      "model": "default",
+      "tag": "long-run-100-shipments",
+      "response": {
+        "message": {
+          "role": "assistant",
+          "content": "",
+          "toolCalls": [
+            {
+              "id": "call_e446a2f8-9822-4036-9475-4be32b66b5ee",
+              "name": "shipments.get",
+              "arguments": {
+                "id": "2073"
+              }
+            }
+          ]
+        },
+        "usage": {
+          "inputTokens": 7634,
+          "outputTokens": 32
+        },
+        "stopReason": "tool_calls"
+      }
+    },
+    {
+      "hash": "3646346915ec9fc5f54a0ef50c38635c2890d0cb39f4f6fcf13133f12c48043f",
+      "model": "default",
+      "tag": "long-run-100-shipments",
+      "response": {
+        "message": {
+          "role": "assistant",
+          "content": "",
+          "toolCalls": [
+            {
+              "id": "call_1bbfcbbf-d39f-4376-ac76-4352c1caefd4",
+              "name": "shipments.get",
+              "arguments": {
+                "id": "2074"
+              }
+            }
+          ]
+        },
+        "usage": {
+          "inputTokens": 8359,
+          "outputTokens": 21
+        },
+        "stopReason": "tool_calls"
+      }
+    },
+    {
+      "hash": "863b25c9e818f2a3a535ddf927e54464e3bf32af5acd3c6c1295bd1d72ab0b75",
+      "model": "default",
+      "tag": "long-run-100-shipments",
+      "response": {
+        "message": {
+          "role": "assistant",
+          "content": "",
+          "toolCalls": [
+            {
+              "id": "call_67806d11-a8fd-426a-a80a-727b091e3b6e",
+              "name": "shipments.get",
+              "arguments": {
+                "id": "2075"
+              }
+            }
+          ]
+        },
+        "usage": {
+          "inputTokens": 9080,
+          "outputTokens": 37
+        },
+        "stopReason": "tool_calls"
+      }
+    },
+    {
+      "hash": "3d3da311065e5c3837b0df1f42f79abedc7e81c9ee22a4fd59a6eb32dadab2c6",
+      "model": "default",
+      "tag": "long-run-100-shipments",
+      "response": {
+        "message": {
+          "role": "assistant",
+          "content": "",
+          "toolCalls": [
+            {
+              "id": "call_3dbcf19d-f072-4859-9ab0-9b309470fa11",
+              "name": "shipments.get",
+              "arguments": {
+                "id": "2076"
+              }
+            }
+          ]
+        },
+        "usage": {
+          "inputTokens": 9804,
+          "outputTokens": 36
+        },
+        "stopReason": "tool_calls"
+      }
+    },
+    {
+      "hash": "7115bd2578aa867f09d091163d860a956dbc1c4093889697547ddf00b10648ec",
+      "model": "default",
+      "tag": "long-run-100-shipments",
+      "response": {
+        "message": {
+          "role": "assistant",
+          "content": "",
+          "toolCalls": [
+            {
+              "id": "call_d862c597-3401-4638-9541-eb1ab8b3bb54",
+              "name": "shipments.get",
+              "arguments": {
+                "id": "2077"
+              }
+            }
+          ]
+        },
+        "usage": {
+          "inputTokens": 10525,
+          "outputTokens": 21
+        },
+        "stopReason": "tool_calls"
+      }
+    },
+    {
+      "hash": "ac638f5cec7dd727b58d83e8fe6af7b3d6769540272e9b725e9838bda8c824de",
+      "model": "default",
+      "tag": "long-run-100-shipments",
+      "response": {
+        "message": {
+          "role": "assistant",
+          "content": "",
+          "toolCalls": [
+            {
+              "id": "call_7875fce4-c1ab-4b5f-80d3-367ffb8709a6",
+              "name": "shipments.get",
+              "arguments": {
+                "id": "2078"
+              }
+            }
+          ]
+        },
+        "usage": {
+          "inputTokens": 11249,
+          "outputTokens": 21
+        },
+        "stopReason": "tool_calls"
+      }
+    },
+    {
+      "hash": "799b5f33cc2c1bf470c6e50460f1b09fdadffda0494152c72fdaa5711f791a20",
+      "model": "default",
+      "tag": "long-run-100-shipments",
+      "response": {
+        "message": {
+          "role": "assistant",
+          "content": "",
+          "toolCalls": [
+            {
+              "id": "call_8a7eeea3-052c-48d6-ad20-926f1efc5bcc",
+              "name": "shipments.get",
+              "arguments": {
+                "id": "2079"
+              }
+            }
+          ]
+        },
+        "usage": {
+          "inputTokens": 11970,
+          "outputTokens": 21
+        },
+        "stopReason": "tool_calls"
+      }
+    },
+    {
+      "hash": "7c64341c3e8780a2dd1061ee067a863a0dcbc98585a38cffbd119d866678ce85",
+      "model": "default",
+      "tag": "long-run-100-shipments",
+      "response": {
+        "message": {
+          "role": "assistant",
+          "content": "",
+          "toolCalls": [
+            {
+              "id": "call_72653ae1-47e7-4131-b810-c6b691f9de98",
+              "name": "shipments.get",
+              "arguments": {
+                "id": "2080"
+              }
+            }
+          ]
+        },
+        "usage": {
+          "inputTokens": 6797,
+          "outputTokens": 21
+        },
+        "stopReason": "tool_calls"
+      }
+    },
+    {
+      "hash": "933f891aa7e598dd5dff81b5c59a7fbce8a0f454ba852f2835987a66cf63990c",
+      "model": "default",
+      "tag": "long-run-100-shipments",
+      "response": {
+        "message": {
+          "role": "assistant",
+          "content": "",
+          "toolCalls": [
+            {
+              "id": "call_6875f4c6-6033-4886-9202-b60c3e408614",
+              "name": "shipments.get",
+              "arguments": {
+                "id": "2081"
+              }
+            }
+          ]
+        },
+        "usage": {
+          "inputTokens": 7520,
+          "outputTokens": 33
+        },
+        "stopReason": "tool_calls"
+      }
+    },
+    {
+      "hash": "6b9eaedd7ddcdf861f9bfa8cf12a5777bda612d05d537badb5fde0d773b3458d",
+      "model": "default",
+      "tag": "long-run-100-shipments",
+      "response": {
+        "message": {
+          "role": "assistant",
+          "content": "",
+          "toolCalls": [
+            {
+              "id": "call_92ed4c2a-4790-4c07-beb1-720dfc4a199e",
+              "name": "shipments.get",
+              "arguments": {
+                "id": "2082"
+              }
+            }
+          ]
+        },
+        "usage": {
+          "inputTokens": 8242,
+          "outputTokens": 21
+        },
+        "stopReason": "tool_calls"
+      }
+    },
+    {
+      "hash": "4917b5593269c7fa2c5cf22062ae75169ed2e6235e69e5f9fe758ae3a655ce23",
+      "model": "default",
+      "tag": "long-run-100-shipments",
+      "response": {
+        "message": {
+          "role": "assistant",
+          "content": "",
+          "toolCalls": [
+            {
+              "id": "call_e60c8a95-1d22-4a35-846e-f2f19d88b978",
+              "name": "shipments.get",
+              "arguments": {
+                "id": "2083"
+              }
+            }
+          ]
+        },
+        "usage": {
+          "inputTokens": 8965,
+          "outputTokens": 21
+        },
+        "stopReason": "tool_calls"
+      }
+    },
+    {
+      "hash": "f910934c0cb79bb13669641fb6e82279b0871a0ccc662a2534c9d162dd20047a",
+      "model": "default",
+      "tag": "long-run-100-shipments",
+      "response": {
+        "message": {
+          "role": "assistant",
+          "content": "",
+          "toolCalls": [
+            {
+              "id": "call_12982f19-1b86-4167-b689-b2f442fe45f1",
+              "name": "shipments.get",
+              "arguments": {
+                "id": "2084"
+              }
+            }
+          ]
+        },
+        "usage": {
+          "inputTokens": 9687,
+          "outputTokens": 21
+        },
+        "stopReason": "tool_calls"
+      }
+    },
+    {
+      "hash": "61b339143979c91fe5ac03803430624d55c7920d8f483d8712cc4ccaca9e82a4",
+      "model": "default",
+      "tag": "long-run-100-shipments",
+      "response": {
+        "message": {
+          "role": "assistant",
+          "content": "",
+          "toolCalls": [
+            {
+              "id": "call_3e4c52dc-30cd-4be7-984f-1a7362a9b0e3",
+              "name": "shipments.get",
+              "arguments": {
+                "id": "2085"
+              }
+            }
+          ]
+        },
+        "usage": {
+          "inputTokens": 10410,
+          "outputTokens": 34
+        },
+        "stopReason": "tool_calls"
+      }
+    },
+    {
+      "hash": "3ed204a82f8f3193fe5ea7ed5fffa8a6a3dc2682a6dc2e30e8b989d31c4da203",
+      "model": "default",
+      "tag": "long-run-100-shipments",
+      "response": {
+        "message": {
+          "role": "assistant",
+          "content": "",
+          "toolCalls": [
+            {
+              "id": "call_535e5bbf-a5ad-4a0d-9572-3a7732f9a278",
+              "name": "shipments.get",
+              "arguments": {
+                "id": "2086"
+              }
+            }
+          ]
+        },
+        "usage": {
+          "inputTokens": 11132,
+          "outputTokens": 33
+        },
+        "stopReason": "tool_calls"
+      }
+    },
+    {
+      "hash": "7a191b97c9c132f80ea8f9833638d24119782fcbbe3f1248cf8b6881398a79d8",
+      "model": "default",
+      "tag": "long-run-100-shipments",
+      "response": {
+        "message": {
+          "role": "assistant",
+          "content": "",
+          "toolCalls": [
+            {
+              "id": "call_09f2c12a-35f3-459a-888f-a9a380d2252c",
+              "name": "shipments.get",
+              "arguments": {
+                "id": "2087"
+              }
+            }
+          ]
+        },
+        "usage": {
+          "inputTokens": 11855,
+          "outputTokens": 35
+        },
+        "stopReason": "tool_calls"
+      }
+    },
+    {
+      "hash": "e15954cedb90d19161a0a5dff9fcf14680fd28acf93743a5befe7803adf6dd44",
+      "model": "default",
+      "tag": "long-run-100-shipments",
+      "response": {
+        "message": {
+          "role": "assistant",
+          "content": "",
+          "toolCalls": [
+            {
+              "id": "call_2ef2a799-f5e5-405b-bdde-f3649331c9a2",
+              "name": "shipments.get",
+              "arguments": {
+                "id": "2088"
+              }
+            }
+          ]
+        },
+        "usage": {
+          "inputTokens": 7345,
+          "outputTokens": 21
+        },
+        "stopReason": "tool_calls"
+      }
+    },
+    {
+      "hash": "5b6cddd76453a9021a35becf551dae91420bd2118184274808e065137a55686d",
+      "model": "default",
+      "tag": "long-run-100-shipments",
+      "response": {
+        "message": {
+          "role": "assistant",
+          "content": "",
+          "toolCalls": [
+            {
+              "id": "call_d3aaf354-c5c9-4ddc-8c0f-2e6e0d958de9",
+              "name": "shipments.get",
+              "arguments": {
+                "id": "2089"
+              }
+            }
+          ]
+        },
+        "usage": {
+          "inputTokens": 8066,
+          "outputTokens": 21
+        },
+        "stopReason": "tool_calls"
+      }
+    },
+    {
+      "hash": "a6195fbb69a04b76bc4e87dd356f69166d278982e981f80ce62f2aa99edac198",
+      "model": "default",
+      "tag": "long-run-100-shipments",
+      "response": {
+        "message": {
+          "role": "assistant",
+          "content": "",
+          "toolCalls": [
+            {
+              "id": "call_fcd0afbe-3222-4e49-a83a-da0b1ad31985",
+              "name": "shipments.get",
+              "arguments": {
+                "id": "2090"
+              }
+            }
+          ]
+        },
+        "usage": {
+          "inputTokens": 8791,
+          "outputTokens": 21
+        },
+        "stopReason": "tool_calls"
+      }
+    },
+    {
+      "hash": "6810366e3b15a58a4ca286cfa17152ca8beeec635c1c1146140b5fba35d58ec4",
+      "model": "default",
+      "tag": "long-run-100-shipments",
+      "response": {
+        "message": {
+          "role": "assistant",
+          "content": "",
+          "toolCalls": [
+            {
+              "id": "call_d80b1920-970d-4629-8c5c-7eb3de4bb2e4",
+              "name": "shipments.get",
+              "arguments": {
+                "id": "2091"
+              }
+            }
+          ]
+        },
+        "usage": {
+          "inputTokens": 9513,
+          "outputTokens": 21
+        },
+        "stopReason": "tool_calls"
+      }
+    },
+    {
+      "hash": "8a4daa21c1534bd3c9686733b066beb04fc25e7a2c165341587496cdebeedb2a",
+      "model": "default",
+      "tag": "long-run-100-shipments",
+      "response": {
+        "message": {
+          "role": "assistant",
+          "content": "",
+          "toolCalls": [
+            {
+              "id": "call_04e4c70a-7147-4409-ad55-7080673e69f8",
+              "name": "shipments.get",
+              "arguments": {
+                "id": "2092"
+              }
+            }
+          ]
+        },
+        "usage": {
+          "inputTokens": 10237,
+          "outputTokens": 21
+        },
+        "stopReason": "tool_calls"
+      }
+    },
+    {
+      "hash": "69f15a5a22dcd6635063645b2cb03502249c0e37f224eea300cd78d0a5687cc8",
+      "model": "default",
+      "tag": "long-run-100-shipments",
+      "response": {
+        "message": {
+          "role": "assistant",
+          "content": "",
+          "toolCalls": [
+            {
+              "id": "call_e7566116-2a88-4105-832b-d4c89e5e8d77",
+              "name": "shipments.get",
+              "arguments": {
+                "id": "2093"
+              }
+            }
+          ]
+        },
+        "usage": {
+          "inputTokens": 10958,
+          "outputTokens": 21
+        },
+        "stopReason": "tool_calls"
+      }
+    },
+    {
+      "hash": "c7e6dd3bd9ff6f76dcbd379bad4110ed7cc47c7641aa37be2b4d3756b1179735",
+      "model": "default",
+      "tag": "long-run-100-shipments",
+      "response": {
+        "message": {
+          "role": "assistant",
+          "content": "2093 — lost. Tiếp tục kiểm tra các vận đơn còn lại.",
+          "toolCalls": [
+            {
+              "id": "call_b7a4b646-fd71-4ed6-b13f-d8117c007867",
+              "name": "shipments.get",
+              "arguments": {
+                "id": "2094"
+              }
+            }
+          ]
+        },
+        "usage": {
+          "inputTokens": 11689,
+          "outputTokens": 44
+        },
+        "stopReason": "tool_calls"
+      }
+    },
+    {
+      "hash": "293133f814d434ed167b470e1448a088bc136e0214519dd2bf0d5ea6a9a44404",
+      "model": "default",
+      "tag": "long-run-100-shipments",
+      "response": {
+        "message": {
+          "role": "assistant",
+          "content": "",
+          "toolCalls": [
+            {
+              "id": "call_f95050ba-15d6-46bb-94f1-78a936d09acf",
+              "name": "shipments.get",
+              "arguments": {
+                "id": "2095"
+              }
+            }
+          ]
+        },
+        "usage": {
+          "inputTokens": 7846,
+          "outputTokens": 21
+        },
+        "stopReason": "tool_calls"
+      }
+    },
+    {
+      "hash": "0b85faa6c5aa63c8c5e81718795330c405cae2e20c755454ebb2c341e1d8971d",
+      "model": "default",
+      "tag": "long-run-100-shipments",
+      "response": {
+        "message": {
+          "role": "assistant",
+          "content": "",
+          "toolCalls": [
+            {
+              "id": "call_5d364f27-4630-4e21-bb05-14fb2d38fb53",
+              "name": "shipments.get",
+              "arguments": {
+                "id": "2096"
+              }
+            }
+          ]
+        },
+        "usage": {
+          "inputTokens": 8570,
+          "outputTokens": 21
+        },
+        "stopReason": "tool_calls"
+      }
+    },
+    {
+      "hash": "1b4d31e1f97fb0ea0997ecf8897928d02b7c9dae579ee02fedff0f125f22243e",
+      "model": "default",
+      "tag": "long-run-100-shipments",
+      "response": {
+        "message": {
+          "role": "assistant",
+          "content": "",
+          "toolCalls": [
+            {
+              "id": "call_80ffc947-8ab6-46fc-8c88-e68f525e420d",
+              "name": "shipments.get",
+              "arguments": {
+                "id": "2097"
+              }
+            }
+          ]
+        },
+        "usage": {
+          "inputTokens": 9291,
+          "outputTokens": 21
+        },
+        "stopReason": "tool_calls"
+      }
+    },
+    {
+      "hash": "3ae74df238cb67da5f174d18a18e2ea04879b8d330d2515edf37be441142c2c1",
+      "model": "default",
+      "tag": "long-run-100-shipments",
+      "response": {
+        "message": {
+          "role": "assistant",
+          "content": "",
+          "toolCalls": [
+            {
+              "id": "call_8b973e50-bdba-43f3-8177-4b68f9df74b4",
+              "name": "shipments.get",
+              "arguments": {
+                "id": "2098"
+              }
+            }
+          ]
+        },
+        "usage": {
+          "inputTokens": 10013,
+          "outputTokens": 21
+        },
+        "stopReason": "tool_calls"
+      }
+    },
+    {
+      "hash": "39cccbab3ffcc5fa23dca40a6316500b1d152054b2c3c688384bb08b1e17ee24",
+      "model": "default",
+      "tag": "long-run-100-shipments",
+      "response": {
+        "message": {
+          "role": "assistant",
+          "content": "",
+          "toolCalls": [
+            {
+              "id": "call_891f5105-4308-413c-9607-efaaf6cb54ef",
+              "name": "shipments.get",
+              "arguments": {
+                "id": "2099"
+              }
+            }
+          ]
+        },
+        "usage": {
+          "inputTokens": 10736,
+          "outputTokens": 21
+        },
+        "stopReason": "tool_calls"
+      }
+    },
+    {
+      "hash": "a2f445fbf94d9345db19178c86f7f97477ab1cf0f2fc84743afbaef75952f44a",
+      "model": "default",
+      "tag": "long-run-100-shipments",
+      "response": {
+        "message": {
+          "role": "assistant",
+          "content": "",
+          "toolCalls": [
+            {
+              "id": "call_e1a4812d-3cf1-4aa4-93a1-25358c6a9c66",
+              "name": "shipments.get",
+              "arguments": {
+                "id": "2100"
+              }
+            }
+          ]
+        },
+        "usage": {
+          "inputTokens": 11458,
+          "outputTokens": 21
+        },
+        "stopReason": "tool_calls"
+      }
+    },
+    {
+      "hash": "b04542ec0666a7fcac84c300327da90b5d1d81e3d3d658bb67f1fa16ba09706a",
+      "model": "default",
+      "tag": "long-run-100-shipments",
+      "response": {
+        "message": {
+          "role": "assistant",
+          "content": "Các vận đơn có trạng thái lost:\n\n- 2017 — lost\n- 2058 — lost\n- 2093 — lost"
+        },
+        "usage": {
+          "inputTokens": 8256,
+          "outputTokens": 32
+        },
+        "stopReason": "end"
+      }
+    },
+    {
+      "hash": "901c110cb81708e84f94a6beea19f8c4acc230326c19a640cb00580d5f0dbe08",
+      "model": "smart",
+      "tag": "long-run-100-shipments",
+      "response": {
+        "message": {
+          "role": "assistant",
+          "content": "{\"pass\":true,\"reason\":\"The reply lists exactly shipments 2017, 2058, and 2093 as lost, with no others.\"}"
+        },
+        "usage": {
+          "inputTokens": 71594,
+          "outputTokens": 36
+        },
+        "stopReason": "end"
+      }
     }
   ]
 }

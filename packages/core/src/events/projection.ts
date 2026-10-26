@@ -1,4 +1,6 @@
 import { LIMIT_NAMES, type LimitName } from '../limits'
+import { contentHash, messageChars } from '../content/snapshot'
+import { compactionStub } from '../content/offload'
 import type { EventPayloads, Label, Message, RunStatus, StoredEvent, ToolCall, WaitingReason } from '../types'
 
 /** Stands in `RunProjection.sentTools` for a workflow `subrun` step: the child run may write anywhere. */
@@ -59,6 +61,14 @@ export type RunProjection = {
   sentTools: string[]
   /** The offloaded contents of this run, by handle. `labels` are those of the event that holds the handle. */
   handles: Map<string, { hash: string; labels: Label[]; chars: number }>
+  /** Per tool call: the key of its original result (the offload hash, else the content hash; computed on first use), its offload, its labels, and whether the message is a stub. */
+  toolOutputs: Map<string, { key: () => string; offload?: { handle: string; hash: string; chars: number }; labels: Label[]; stubbed: boolean }>
+  /**
+   * The size of the next request as last measured: input tokens of the last answered call that had a `chars` size (or the
+   * estimate after a compaction), the tokens per character of that call, the characters added since, and whether that
+   * call carried `read_output` (offered once a handle exists). Null before a measure.
+   */
+  contextSize: { tokens: number; tokensPerChar: number; addedChars: number; hadHandles: boolean } | null
   /** Seq of the last event. */
   lastSeq: number
 }
@@ -87,6 +97,14 @@ export function projectRun(events: StoredEvent[], instructions: string): RunProj
     handles.set(o.handle, { hash: o.hash, labels: [...new Set([...have, ...labels])], chars: o.chars })
   }
   addHandle(first.payload.input.offload, first.labels)
+  const toolOutputs: RunProjection['toolOutputs'] = new Map()
+  const toolIndex = new Map<string, number>()
+  let contextSize: RunProjection['contextSize'] = null
+  let requestedChars: number | null = null
+  const push = (m: Message) => {
+    messages.push(m)
+    if (contextSize !== null) contextSize.addedChars += messageChars(m)
+  }
   let lastToolCalls: ToolCall[] = []
   let output: string | null = null
   let llmCalls = 0
@@ -122,7 +140,7 @@ export function projectRun(events: StoredEvent[], instructions: string): RunProj
   const callsOpen = () => lastToolCalls.some((c) => !responded.has(c.id))
   const flush = () => {
     if (llmOpen || callsOpen()) return
-    messages.push(...held)
+    for (const m of held) push(m)
     held = []
   }
 
@@ -163,13 +181,26 @@ export function projectRun(events: StoredEvent[], instructions: string): RunProj
       case 'llm.requested':
         unreadMessages = 0
         llmOpen = true
+        requestedChars = e.payload.context?.chars ?? null
         break
       case 'llm.responded':
         llmCalls++
         tokens += e.payload.usage.inputTokens + e.payload.usage.outputTokens
         costUsd += e.payload.usage.costUsd ?? 0
         llmRetry = { attempts: 0, retryAt: null }
-        messages.push(e.payload.message)
+        // The request is measured now; the answer and later messages are what the next request adds.
+        contextSize =
+          requestedChars !== null && requestedChars > 0
+            ? {
+                // Without usable usage, a quarter of the characters keeps compaction on.
+                tokens: e.payload.usage.inputTokens > 0 ? e.payload.usage.inputTokens : requestedChars / 4,
+                tokensPerChar: e.payload.usage.inputTokens > 0 ? e.payload.usage.inputTokens / requestedChars : 0.25,
+                addedChars: 0,
+                hadHandles: handles.size > 0,
+              }
+            : null
+        requestedChars = null
+        push(e.payload.message)
         lastToolCalls = e.payload.message.toolCalls ?? []
         output = e.payload.stopReason === 'end' ? e.payload.message.content : null
         llmOpen = false
@@ -198,8 +229,35 @@ export function projectRun(events: StoredEvent[], instructions: string): RunProj
           }
         }
         addHandle(e.payload.offload, e.labels)
-        messages.push({ role: 'tool', toolCallId: e.payload.toolCallId, content: e.payload.content })
+        toolIndex.set(e.payload.toolCallId, messages.length)
+        {
+          const { content, offload } = e.payload
+          let key: string | undefined
+          toolOutputs.set(e.payload.toolCallId, {
+            key: () => (key ??= offload?.hash ?? contentHash(content)),
+            ...(offload === undefined ? {} : { offload }),
+            labels: e.labels,
+            stubbed: false,
+          })
+        }
+        push({ role: 'tool', toolCallId: e.payload.toolCallId, content: e.payload.content })
         flush()
+        break
+      case 'context.compacted':
+        for (const c of e.payload.cleared) {
+          const index = toolIndex.get(c.toolCallId)
+          const out = toolOutputs.get(c.toolCallId)
+          if (index === undefined || out === undefined) continue
+          messages[index] = { role: 'tool', toolCallId: c.toolCallId, content: compactionStub(c.handle, c.chars) }
+          out.stubbed = true
+          // Joins the labels of every output with this handle; an inline output gets its handle now.
+          addHandle(c, out.labels)
+        }
+        // The estimate after the clear replaces the measure until the next call is measured.
+        {
+          const prev = contextSize as RunProjection['contextSize'] // narrowed to `never` otherwise, as `deferral`
+          if (prev !== null) contextSize = { ...prev, tokens: e.payload.estimatedAfter, addedChars: 0, hadHandles: true }
+        }
         break
       case 'tool.requested':
         if (deferral?.toolCallId === e.payload.toolCallId) deferral = null
@@ -270,6 +328,8 @@ export function projectRun(events: StoredEvent[], instructions: string): RunProj
     completedCalls: completedCalls.filter((c) => !settled.has(c.toolCallId)),
     sentTools,
     handles,
+    toolOutputs,
+    contextSize,
     lastSeq: events.at(-1)!.seq,
     output,
     principal: principal === undefined ? null : { id: principal.id, roles: principal.roles },

@@ -123,3 +123,37 @@ it('reports.sales_export returns a deterministic 1 MB CSV with one note in the m
     await warehouse.close()
   }
 })
+
+it('the logistics endpoint lists only shipments.get', async () => {
+  const logistics = new Client({ name: 'test', version: '0.0.0' })
+  await logistics.connect(new StreamableHTTPClientTransport(new URL(shop.logisticsUrl)))
+  try {
+    expect(shop.logisticsUrl).toMatch(/\/logistics\/mcp$/)
+    expect((await logistics.listTools()).tools.map((t) => t.name)).toEqual(['shipments.get'])
+  } finally {
+    await logistics.close()
+  }
+})
+
+it('shipments.get returns a verbose record of at least 2,000 characters; only 2017, 2058 and 2093 are lost', async () => {
+  const warehouse = new Client({ name: 'test', version: '0.0.0' })
+  await warehouse.connect(new StreamableHTTPClientTransport(new URL(shop.logisticsUrl)))
+  try {
+    const get = async (id: string) => (await warehouse.callTool({ name: 'shipments.get', arguments: { id } })) as { isError?: boolean; content: { text: string }[] }
+    const lost = await get('2058')
+    expect(lost.content[0]!.text.length).toBeGreaterThanOrEqual(2_000)
+    expect(JSON.parse(lost.content[0]!.text).status).toBe('lost')
+    const ok = await get('2001')
+    expect(ok.content[0]!.text.length).toBeGreaterThanOrEqual(2_000)
+    expect(ok.content[0]!.text.length).toBeLessThan(8_000)
+    expect(JSON.parse(ok.content[0]!.text).status).not.toBe('lost')
+    expect((await get('2001')).content[0]!.text).toBe(ok.content[0]!.text)
+    const statuses = await Promise.all(Array.from({ length: 100 }, async (_, i) => JSON.parse((await get(String(2001 + i))).content[0]!.text).status as string))
+    expect(statuses.flatMap((s, i) => (s === 'lost' ? [2001 + i] : []))).toEqual([2017, 2058, 2093])
+    const missing = await get('2101')
+    expect(missing.isError).toBe(true)
+    expect(missing.content[0]!.text).toBe('Shipment not found: 2101')
+  } finally {
+    await warehouse.close()
+  }
+})

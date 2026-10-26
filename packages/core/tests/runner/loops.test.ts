@@ -51,3 +51,23 @@ test('stalledTurns resets on a turn with a new result, and a different call with
 test('stalledTurns is 0 without tool turns', () => {
   expect(stalledTurns([{ role: 'user', content: 'hi' }])).toBe(0)
 })
+
+test('stalledTurns compares the original results, so a compacted (stubbed) result still counts as repeated', () => {
+  const a1 = call('t', { q: 'a' })
+  const a2 = call('t', { q: 'a' })
+  const stub = '[Output cleared to keep the context small: out_aaaaaaaaaaaa, 500 characters. Read it again with agent_core.read_output.]'
+  const messages = [turn(a1), result(a1, stub), turn(a2), result(a2, 'x'.repeat(500))]
+  const keys: Record<string, string> = { [a1.id]: 'same', [a2.id]: 'same' }
+  expect(stalledTurns(messages)).toBe(0)
+  expect(stalledTurns(messages, (id) => keys[id])).toBe(1)
+})
+
+test('stalledTurns asks for result keys only of calls that repeat an earlier tool and arguments', () => {
+  const a1 = call('t', { q: 'a' })
+  const b1 = call('t', { q: 'b' })
+  const a2 = call('t', { q: 'a' })
+  const asked: string[] = []
+  const messages = [turn(a1), result(a1, 'r'), turn(b1), result(b1, 'r'), turn(a2), result(a2, 'r')]
+  expect(stalledTurns(messages, (id) => (asked.push(id), undefined))).toBe(1)
+  expect(asked.sort()).toEqual([a1.id, a2.id].sort())
+})

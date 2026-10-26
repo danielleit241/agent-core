@@ -1,6 +1,6 @@
 import { AppendConflictError, type ConnectionGuard, type ContentStore, type LLMPort, type RunStore, type SubrunPort, type ToolInvoker } from '../ports'
 import { projectRun, type RunProjection } from '../events/projection'
-import { snapshotRequest } from '../content/snapshot'
+import { snapshotRequest, toolPart } from '../content/snapshot'
 import { createSecretMatcher } from '../content/secrets'
 import { screenContent, screenedToolResponse } from '../content/pipeline'
 import { decide } from '../policy/rules'
@@ -8,6 +8,7 @@ import { resolveLimits, type LimitName, type Limits } from '../limits'
 import { repeatedCalls, stalledTurns } from './loops'
 import { findCachedRead } from './read-cache'
 import { readOutput } from '../content/read-output'
+import { compactionEvent } from './compaction'
 import { FOLLOWUP_TOOL, MAX_FOLLOWUPS, READ_OUTPUT_TOOL, builtinTools, isBuiltin, parseFollowup, parseHumanWait, parseReadOutput } from './builtins'
 import type { AgentDefinition, Message, NewEvent, RunStatus, StoredEvent, ToolCall, ToolDescriptor, WaitingReason } from '../types'
 
@@ -105,7 +106,7 @@ export async function checkRunLimits(deps: RunnerDeps, proj: RunProjection, call
     breach(proj, limits, 'tokens', proj.tokens) ??
     breach(proj, limits, 'cost_usd', proj.costUsd) ??
     breach(proj, limits, 'tenant_cost_usd_per_day', await deps.tenantCostToday()) ??
-    breach(proj, limits, 'loop', stalledTurns(proj.messages))
+    breach(proj, limits, 'loop', stalledTurns(proj.messages, (id) => proj.toolOutputs.get(id)?.key()))
   )
 }
 
@@ -512,6 +513,12 @@ export function llmRetryAt(err: unknown, proj: RunProjection, deps: RunnerDeps):
   return new Date(nowOf(deps).getTime() + Math.min(wait, LLM_MAX_WAIT_MS)).toISOString()
 }
 
+/** The size of the `read_output` descriptor: it joins the tools of the request once the run holds a handle. */
+const readOutputChars = (deps: RunnerDeps): number => {
+  const tool = deps.toolsByName[READ_OUTPUT_TOOL]
+  return tool === undefined ? 0 : toolPart(tool).length
+}
+
 async function llmStep(
   runId: string,
   deps: RunnerDeps,
@@ -521,6 +528,12 @@ async function llmStep(
   const now = deps.now ?? (() => new Date())
   // The run waits for an LLM retry; the worker calls again once `retryAt` has passed.
   if (proj.llmRetry.retryAt !== null && new Date(proj.llmRetry.retryAt).getTime() > now().getTime()) return 'running'
+  // Old tool outputs are cleared before the snapshot, so the request that would pass `context_tokens` never goes out.
+  const compacted = await compactionEvent(deps.content, proj, limitsOf(deps).context_tokens, readOutputChars(deps))
+  if (compacted !== null) {
+    await store.append(runId, [compacted])
+    return 'continue'
+  }
   // The time goes into the request only. It is not an event, so the projection never holds it.
   const firstTurn = proj.messages.findIndex((m) => m.role !== 'system')
   const at = firstTurn === -1 ? proj.messages.length : firstTurn

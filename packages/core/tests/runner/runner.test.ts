@@ -3,9 +3,10 @@ import { MemoryContentStore } from '../support/memory-content-store'
 import { type ConnectionGuard, type ContentStore, type GuardDenial, type LLMPort, type RunStore, type ToolInvoker } from '../../src/ports'
 import { projectRun } from '../../src/events/projection'
 import { handleOf } from '../../src/content/offload'
-import { contentHash } from '../../src/content/snapshot'
+import { contentHash, messageChars, toolPart } from '../../src/content/snapshot'
+import { compactionEvent } from '../../src/runner/compaction'
 import type { Manifest } from '../../src/content/snapshot'
-import { advanceRun, expireWait } from '../../src/runner/runner'
+import { advanceRun, checkRunLimits, expireWait } from '../../src/runner/runner'
 import type { AgentDefinition, Limits, Message, NewEvent, RunStatus, StoredEvent, ToolDescriptor } from '../../src/types'
 
 const TOOLS: Record<string, ToolDescriptor> = {
@@ -2004,4 +2005,128 @@ test('a tool output with NUL bytes and a lone surrogate is stored and previewed 
   expect(res!.payload.offload!.hash).toBe(contentHash(clean))
   expect(content.blobs.get(contentHash(clean))).toBe(clean)
   expect(res!.payload.content).not.toContain(NUL)
+})
+
+describe('context compaction', () => {
+  const LIMITS = { context_tokens: 12_000, llm_calls: 100, tokens: 5_000_000 }
+  // An LLM whose input tokens are a quarter of the characters it was sent, so the measured ratio is 0.25.
+  const tokensOf = (req: { messages: Message[]; tools: ToolDescriptor[] }) =>
+    Math.ceil((req.messages.reduce((n, m) => n + messageChars(m), 0) + req.tools.reduce((n, t) => n + toolPart(t).length, 0)) / 4)
+  function quarterLlm(calls: number) {
+    const requests: { messages: Message[]; tools: ToolDescriptor[]; tokens: number }[] = []
+    const llm: LLMPort = {
+      async complete(req) {
+        const tokens = tokensOf(req)
+        requests.push({ messages: req.messages, tools: req.tools, tokens })
+        const n = requests.length
+        const message: Message =
+          n <= calls
+            ? { role: 'assistant', content: '', toolCalls: [{ id: `call_${n}`, name: 'orders.get', arguments: { order_id: String(n) } }] }
+            : { role: 'assistant', content: 'done' }
+        return { message, usage: { inputTokens: tokens, outputTokens: 1 }, stopReason: n <= calls ? 'tool_calls' : 'end' }
+      },
+    }
+    return { llm, requests }
+  }
+  const verbose: ToolInvoker = {
+    async call(_tool, args) {
+      return { content: String(args.order_id).padEnd(3000, '.'), isError: false }
+    },
+  }
+  const compactedEvents = (log: StoredEvent[]) => log.filter((e) => e.type === 'context.compacted')
+
+  test('a 40-call run with 3,000-character outputs keeps every request under context_tokens and compacts rarely', async () => {
+    const { llm, requests } = quarterLlm(40)
+    const { store } = await setup()
+    expect(await advanceRun('r1', deps({ llm, store, tools: verbose, limits: LIMITS }))).toBe('completed')
+    expect(requests).toHaveLength(41)
+    expect(Math.max(...requests.map((r) => r.tokens))).toBeLessThanOrEqual(12_000)
+    const compactions = compactedEvents(await store.readEvents('r1'))
+    expect(compactions.length).toBeGreaterThanOrEqual(1)
+    expect(compactions.length).toBeLessThanOrEqual(requests.length / 4)
+    const last = requests.at(-1)!
+    expect(last.messages.some((m) => m.role === 'tool' && m.content.startsWith('[Output cleared'))).toBe(true)
+    expect(last.tools.map((t) => t.name)).toContain('agent_core.read_output')
+  })
+
+  test('a cleared output is stored whole and its handle resolves with the original labels and size', async () => {
+    const { llm } = quarterLlm(20)
+    const { store } = await setup()
+    const content = new MemoryContentStore()
+    await advanceRun('r1', deps({ llm, store, tools: verbose, content, limits: LIMITS }))
+    const log = await store.readEvents('r1')
+    const [event] = compactedEvents(log)
+    if (event?.type !== 'context.compacted') throw new Error('no compaction')
+    const first = event.payload.cleared[0]!
+    expect(first.chars).toBe(3000)
+    expect((await content.get([first.hash])).get(first.hash)).toBe('1'.padEnd(3000, '.'))
+    expect(projectRun(log, '').handles.get(first.handle)).toEqual({ hash: first.hash, labels: ['internal'], chars: 3000 })
+  })
+
+  // A measured call at 10,000 tokens for 40,000 characters, 8,000 more characters since: 12,000 estimated.
+  function measuredLog(): NewEvent[] {
+    const call = (id: string): Message => ({ role: 'assistant', content: '', toolCalls: [{ id, name: 'orders.get', arguments: { order_id: id } }] })
+    const turn = (id: string, len: number): NewEvent[] => [
+      { type: 'llm.responded', payload: { message: call(id), usage: { inputTokens: 1, outputTokens: 1 }, stopReason: 'tool_calls' }, labels: [] },
+      { type: 'tool.responded', payload: { toolCallId: id, content: 'x'.repeat(len), isError: false }, labels: ['internal'] },
+    ]
+    const last = call('last')
+    return [
+      created(),
+      stateChanged('queued', 'running'),
+      ...turn('a', 4000),
+      ...turn('b', 4000),
+      { type: 'llm.requested', payload: { model: 'test-model', context: { snapshot: 's', chars: 40_000 } }, labels: [] },
+      { type: 'llm.responded', payload: { message: last, usage: { inputTokens: 10_000, outputTokens: 1 }, stopReason: 'tool_calls' }, labels: [] },
+      { type: 'tool.responded', payload: { toolCallId: 'last', content: 'y'.repeat(8000 - messageChars(last)), isError: false }, labels: ['internal'] },
+    ]
+  }
+
+  test('compaction is appended right before the request, and the request carries the stubs', async () => {
+    const llm = scriptedLlm([say('done')])
+    const { store, tools } = await setupWithEvents(measuredLog())
+    await advanceRun('r1', deps({ llm, store, tools, limits: { context_tokens: 12_000 } }))
+    expect(types(await store.readEvents('r1')).slice(-4)).toEqual(['context.compacted', 'llm.requested', 'llm.responded', 'run.state_changed'])
+    const sent = llm.requests[0]!.messages.filter((m) => m.role === 'tool').map((m) => m.content)
+    expect(sent.filter((c) => c.startsWith('[Output cleared'))).toHaveLength(2)
+    expect(sent.at(-1)).toMatch(/^y+$/)
+  })
+
+  test('below the threshold nothing is compacted', async () => {
+    const llm = scriptedLlm([say('done')])
+    const { store, tools } = await setupWithEvents(measuredLog())
+    await advanceRun('r1', deps({ llm, store, tools, limits: { context_tokens: 12_001 } }))
+    expect(compactedEvents(await store.readEvents('r1'))).toHaveLength(0)
+  })
+
+  test('a crash after context.compacted and before llm.requested does not compact again', async () => {
+    const content = new MemoryContentStore()
+    const { store, tools } = await setupWithEvents(measuredLog())
+    const proj = projectRun(await store.readEvents('r1'), AGENT.instructions)
+    await store.append('r1', [(await compactionEvent(content, proj, 12_000))!])
+    const llm = scriptedLlm([say('done')])
+    await advanceRun('r1', deps({ llm, store, tools, content, limits: { context_tokens: 12_000 } }))
+    expect(compactedEvents(await store.readEvents('r1'))).toHaveLength(1)
+    expect(llm.requests).toHaveLength(1)
+  })
+
+  test('the loop limit still sees a repeated result after compaction', async () => {
+    const call = (id: string): Message => ({ role: 'assistant', content: '', toolCalls: [{ id, name: 'orders.get', arguments: { order_id: '1' } }] })
+    const turn = (id: string): NewEvent[] => [
+      { type: 'llm.responded', payload: { message: call(id), usage: { inputTokens: 1, outputTokens: 1 }, stopReason: 'tool_calls' }, labels: [] },
+      { type: 'tool.responded', payload: { toolCallId: id, content: 'same'.padEnd(3000, '.'), isError: false }, labels: ['internal'] },
+    ]
+    const cleared = ['c1', 'c2', 'c3'].map((toolCallId) => ({ toolCallId, handle: 'out_aaaaaaaaaaaa', hash: 'a'.repeat(64), chars: 3000 }))
+    const events: NewEvent[] = [
+      created(),
+      stateChanged('queued', 'running'),
+      ...['c1', 'c2', 'c3', 'c4'].flatMap(turn),
+      { type: 'context.compacted', payload: { estimatedBefore: 9, estimatedAfter: 1, threshold: 8, cleared }, labels: [] },
+    ]
+    const { store, tools } = await setupWithEvents(events)
+    const proj = projectRun(await store.readEvents('r1'), AGENT.instructions)
+    expect(proj.messages.filter((m) => m.content.startsWith('[Output cleared'))).toHaveLength(3)
+    const b = await checkRunLimits(deps({ llm: scriptedLlm([]), store, tools }), proj, undefined)
+    expect(b).toMatchObject({ limit: 'loop', value: 3 })
+  })
 })

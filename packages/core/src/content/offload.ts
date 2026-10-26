@@ -13,6 +13,13 @@ export const handleOf = (hash: string): string => `out_${hash.slice(0, 12)}`
 
 export const formatCount = (n: number): string => n.toLocaleString('en-US')
 
+/** What a cleared tool output reads as in the context (compaction). */
+export const compactionStub = (handle: string, chars: number): string =>
+  `[Output cleared to keep the context small: ${handle}, ${formatCount(chars)} characters. Read it again with agent_core.read_output.]`
+
+// Every handle has the same length, so a stub's size is known before its handle is.
+export const stubSize = (chars: number): number => compactionStub(handleOf('0'.repeat(12)), chars).length
+
 const isHighSurrogate = (code: number): boolean => code >= 0xd800 && code <= 0xdbff
 const isLowSurrogate = (code: number): boolean => code >= 0xdc00 && code <= 0xdfff
 
