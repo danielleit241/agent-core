@@ -1731,3 +1731,38 @@ test('a crash after the blobs are stored and before llm.requested resumes withou
   expect(await advanceRun('r1', deps({ llm, store: flaky, tools, content, now }))).toBe('completed')
   expect(content.puts).toBe(stored)
 })
+
+test('a tool output with secrets reaches neither the LLM nor the log', async () => {
+  const known = 'conn-secret-9f8e7d6c'
+  const aws = 'AKIAIOSFODNN7EXAMPLE'
+  const llm = scriptedLlm([callTool('orders.get', { order_id: '1042' }), say('done')])
+  const { store } = await setup()
+  const tools: ToolInvoker = { call: async () => ({ content: `key ${aws} secret ${known}`, isError: false }) }
+  expect(await advanceRun('r1', { ...deps({ llm, store, tools }), secretValues: [known] })).toBe('completed')
+  const log = await store.readEvents('r1')
+  expect(JSON.stringify(log)).not.toContain(aws)
+  expect(JSON.stringify(log)).not.toContain(known)
+  expect(JSON.stringify(llm.requests)).not.toContain(aws)
+  expect(JSON.stringify(llm.requests)).not.toContain(known)
+  const responded = log.find((e) => e.type === 'tool.responded')!
+  expect(responded.payload).toMatchObject({ redactions: { aws_access_key: 1, known_secret: 1 } })
+})
+
+test('an error result from a tool is screened too, and the redactions are reported', async () => {
+  const seen: Record<string, number>[] = []
+  const llm = scriptedLlm([callTool('orders.get', { order_id: '1042' }), say('done')])
+  const { store } = await setup()
+  const tools: ToolInvoker = { call: async () => ({ content: 'denied for AKIAIOSFODNN7EXAMPLE', isError: true }) }
+  await advanceRun('r1', { ...deps({ llm, store, tools }), onRedacted: (r: Record<string, number>) => seen.push(r) })
+  const responded = (await store.readEvents('r1')).find((e) => e.type === 'tool.responded')!
+  expect(responded.payload).toMatchObject({ isError: true, content: 'denied for [REDACTED:aws_access_key]' })
+  expect(seen).toEqual([{ aws_access_key: 1 }])
+})
+
+test('an output without secrets has the same tool.responded payload as before (no redactions key)', async () => {
+  const llm = scriptedLlm([callTool('orders.get', { order_id: '1042' }), say('done')])
+  const { store, tools } = await setup()
+  await advanceRun('r1', deps({ llm, store, tools }))
+  const responded = (await store.readEvents('r1')).find((e) => e.type === 'tool.responded')!
+  expect(responded.payload).toEqual({ toolCallId: 'call_1', content: JSON.stringify({ id: '1042', status: 'delivered' }), isError: false })
+})

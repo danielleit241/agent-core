@@ -5,6 +5,7 @@ class Metrics {
   private http = new Map<string, number>()
   private llm = { ok: 0, error: 0 }
   private tokens = { input: 0, output: 0 }
+  private redactions = new Map<string, number>()
 
   httpRequest(method: string, statusCode: number): void {
     const key = `${METHODS.has(method) ? method : 'OTHER'}|${Math.floor(statusCode / 100)}xx`
@@ -17,6 +18,11 @@ class Metrics {
       this.tokens.input += usage.input
       this.tokens.output += usage.output
     }
+  }
+
+  /** Secrets removed from content, by kind (a fixed set of names, never a value). */
+  redacted(counts: Record<string, number>): void {
+    for (const [kind, n] of Object.entries(counts)) this.redactions.set(kind, (this.redactions.get(kind) ?? 0) + n)
   }
 
   /** The counters in Prometheus text format. */
@@ -32,6 +38,8 @@ class Metrics {
     lines.push('# TYPE agent_core_llm_tokens_total counter')
     lines.push(`agent_core_llm_tokens_total{kind="input"} ${this.tokens.input}`)
     lines.push(`agent_core_llm_tokens_total{kind="output"} ${this.tokens.output}`)
+    lines.push('# TYPE agent_core_redactions_total counter')
+    for (const [kind, n] of [...this.redactions].sort()) lines.push(`agent_core_redactions_total{kind="${kind}"} ${n}`)
     return lines.join('\n') + '\n'
   }
 }

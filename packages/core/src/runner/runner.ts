@@ -1,6 +1,8 @@
 import { AppendConflictError, type ConnectionGuard, type ContentStore, type LLMPort, type RunStore, type SubrunPort, type ToolInvoker } from '../ports'
 import { projectRun, type RunProjection } from '../events/projection'
 import { snapshotRequest } from '../content/snapshot'
+import { createSecretMatcher } from '../content/secrets'
+import { screenedToolResponse } from '../content/pipeline'
 import { decide } from '../policy/rules'
 import { resolveLimits, type LimitName, type Limits } from '../limits'
 import { repeatedCalls, stalledTurns } from './loops'
@@ -13,6 +15,10 @@ export type RunnerDeps = {
   tools: ToolInvoker
   /** Holds a snapshot of every LLM request, by content hash. */
   content: ContentStore
+  /** Exact secrets the service holds (connection secrets, the LLM key). They are removed from every tool output. */
+  secretValues?: string[]
+  /** Called with the kind → count of secrets removed from a tool output (not called when none). */
+  onRedacted?: (redactions: Record<string, number>) => void
   /** Rate, concurrency and breaker of each connection. Without one, calls are not limited. */
   guard?: ConnectionGuard
   /** Child runs of workflow `subrun` steps. */
@@ -452,16 +458,17 @@ async function execute(
       }
     }
   }
+  const screened = await screenedToolResponse({ toolCallId: call.id }, result, [tool.safety.outputLabel], {
+    secrets: createSecretMatcher(deps.secretValues ?? []),
+  })
+  if (screened.payload.redactions !== undefined) deps.onRedacted?.(screened.payload.redactions)
   const maxChars = limitsOf(deps).tool_output_chars
+  const length = screened.payload.content.length
   // The cut keeps the run safe, so a long output is recorded but does not stop the run.
-  const tooLong = result.content.length > maxChars ? [limitReached({ limit: 'tool_output_chars', max: maxChars, value: result.content.length })] : []
+  const tooLong = length > maxChars ? [limitReached({ limit: 'tool_output_chars', max: maxChars, value: length })] : []
   await deps.store.append(runId, [
     ...tooLong,
-    {
-      type: 'tool.responded',
-      payload: { toolCallId: call.id, content: capToolOutput(result.content, maxChars), isError: result.isError },
-      labels: [tool.safety.outputLabel],
-    },
+    { ...screened, payload: { ...screened.payload, content: capToolOutput(screened.payload.content, maxChars) } },
   ])
   return 'continue'
 }

@@ -1,13 +1,15 @@
 import { randomUUID } from 'node:crypto'
 import type { FastifyInstance, FastifyRequest } from 'fastify'
 import { z } from 'zod'
-import { projectRun, verifyChain } from '@agent-core/core'
+import { createSecretMatcher, projectRun, screenContent, screenedToolResponse, verifyChain } from '@agent-core/core'
 import type { NewEvent, RunStatus, SecretBox, StoredEvent, WaitingReason } from '@agent-core/core'
 import { ConfigRepo, PgRunStore, StateConflictError, childRunIds, createRunWithEvent, getRun, getRunHead, makeDue } from '@agent-core/store-postgres'
 import type { createPool } from '@agent-core/store-postgres'
 import { ApiError, apiError, validationError } from '../errors'
 import { DEFAULT_AGENT, resolveAgent } from '../../default-agent'
+import { knownSecretValues } from '../../runs/known-secrets'
 import { getLlmCall, getLlmCalls, getRunView } from '../../runs/views'
+import { metrics } from '../../metrics'
 import { keyReused, readIdempotencyKey, requestHash } from '../idempotency'
 
 const POLL_MS = 100
@@ -80,10 +82,21 @@ export function checkChain(
   return { valid: true }
 }
 
-export function registerRunRoutes(app: FastifyInstance, deps: { pool: ReturnType<typeof createPool>; secrets: SecretBox; closing: AbortSignal; llmConfigured: boolean }): void {
+export function registerRunRoutes(app: FastifyInstance, deps: { pool: ReturnType<typeof createPool>; secrets: SecretBox; closing: AbortSignal; llmConfigured: boolean; llmApiKey?: string }): void {
   const { pool } = deps
   const configFor = (req: FastifyRequest) => new ConfigRepo(pool, req.auth.tenantId, deps.secrets)
   const storeFor = (req: FastifyRequest) => new PgRunStore(pool, req.auth.tenantId)
+
+  /** The matcher for text a caller sent: the secrets the service holds for the agent, and the ones that look like secrets. */
+  async function secretsFor(req: FastifyRequest, agent: { connections: string[] }) {
+    return createSecretMatcher(await knownSecretValues(configFor(req), agent, deps.llmApiKey))
+  }
+
+  /** Screens a run input or a message. The caller counts the redactions in the metrics once the event is stored. */
+  async function screenInput(req: FastifyRequest, agent: { connections: string[] }, text: string): Promise<{ text: string; redactions?: Record<string, number> }> {
+    const screened = await screenContent(text, { secrets: await secretsFor(req, agent) })
+    return Object.keys(screened.redactions).length === 0 ? { text: screened.content } : { text: screened.content, redactions: screened.redactions }
+  }
 
   /** Polls until the run settles, the time runs out, the client disconnects or the app closes. */
   async function waitForSettle(tenantId: string, runId: string, seconds: number, clientGone: () => boolean): Promise<void> {
@@ -139,6 +152,7 @@ export function registerRunRoutes(app: FastifyInstance, deps: { pool: ReturnType
         422,
       )
     }
+    const input = await screenInput(req, agent.definition, body.input.text)
     // One transaction: the run row, run.created and the queue row appear together or not at all.
     const created = await createRunWithEvent(pool, {
       tenantId,
@@ -151,13 +165,14 @@ export function registerRunRoutes(app: FastifyInstance, deps: { pool: ReturnType
         type: 'run.created',
         payload: {
           agentId,
-          input: body.input,
+          input: { text: input.text, ...(input.redactions === undefined ? {} : { redactions: input.redactions }) },
           ...(body.principal ? { principal: body.principal } : {}),
           ...(definition === undefined ? {} : { workflow: { name: body.workflow!, definition } }),
         },
         labels: ['untrusted'], // the caller's text is untrusted input
       },
     })
+    if (created.created && input.redactions !== undefined) metrics.redacted(input.redactions)
     if (!created.created) {
       // A row from before the hash existed has none and matches any request.
       if (created.requestHash !== null && created.requestHash !== requestHash(req)) throw keyReused()
@@ -255,16 +270,20 @@ export function registerRunRoutes(app: FastifyInstance, deps: { pool: ReturnType
   }
 
   /** Records a message for the run. The runner adds it to the context before its next LLM call; the run's state does not change. */
-  async function sendMessage(req: FastifyRequest, runId: string, firstStatus: RunStatus, text: string): Promise<{ run_id: string; status: RunStatus }> {
+  async function sendMessage(req: FastifyRequest, runId: string, firstStatus: RunStatus, agentId: string, rawText: string): Promise<{ run_id: string; status: RunStatus }> {
     const store = storeFor(req)
+    // A run whose agent was deleted has no connections to look up; the patterns still apply.
+    const agent = await resolveAgent(configFor(req), agentId)
+    const { text, redactions } = await screenInput(req, agent?.definition ?? { connections: [] }, rawText)
     let status = firstStatus
     // One retry: the run may move between states (for example queued to running) while the message is sent.
     for (let attempt = 0; ; attempt++) {
       if (ENDED.includes(status)) throw runEnded()
       try {
-        await store.append(runId, [{ type: 'input.received', payload: { action: 'message', text }, labels: ['untrusted'] }], {
+        await store.append(runId, [{ type: 'input.received', payload: { action: 'message', text, ...(redactions === undefined ? {} : { redactions }) }, labels: ['untrusted'] }], {
           expect: { status },
         })
+        if (redactions !== undefined) metrics.redacted(redactions)
         return { run_id: runId, status }
       } catch (err) {
         if (!(err instanceof StateConflictError) || attempt > 0) throw err
@@ -286,7 +305,7 @@ export function registerRunRoutes(app: FastifyInstance, deps: { pool: ReturnType
       await cancelChildren(req, runId)
       return reply.code(202).send(cancelled)
     }
-    if (body.action === 'message') return reply.code(202).send(await sendMessage(req, runId, run.status, body.text))
+    if (body.action === 'message') return reply.code(202).send(await sendMessage(req, runId, run.status, run.agentId, body.text))
     const { action } = body
     // approve and reject keep their original error code for a run that is not waiting.
     const notWaiting =
@@ -322,6 +341,7 @@ export function registerRunRoutes(app: FastifyInstance, deps: { pool: ReturnType
       labels: [],
     })
     let events: NewEvent[]
+    let answerRedactions: Record<string, number> | undefined
     if (action === 'continue') {
       // A legacy `breaker` wait has no limit.reached event; it was an llm_calls breach.
       const breached = logged.findLast((e) => e.type === 'limit.reached')
@@ -347,10 +367,11 @@ export function registerRunRoutes(app: FastifyInstance, deps: { pool: ReturnType
       // `ask_human` and `escalate` stay in flight until now; the answer is their result.
       const toolCallId = proj.inFlight[0]
       if (toolCallId === undefined) throw notWaiting
-      events = [
-        { type: 'tool.responded', payload: { toolCallId, content: body.text, isError: false }, labels: ['untrusted'] },
-        stateTo('running'),
-      ]
+      const agent = await resolveAgent(configFor(req), run.agentId)
+      const secrets = await secretsFor(req, agent?.definition ?? { connections: [] })
+      const response = await screenedToolResponse({ toolCallId }, { content: body.text, isError: false }, ['untrusted'], { secrets })
+      answerRedactions = response.payload.redactions
+      events = [response, stateTo('running')]
     } else {
       const toolCallId = proj.inFlight[0]
       if (toolCallId === undefined) throw notWaiting
@@ -370,6 +391,7 @@ export function registerRunRoutes(app: FastifyInstance, deps: { pool: ReturnType
       if (err instanceof StateConflictError) throw notWaiting
       throw err
     }
+    if (answerRedactions !== undefined) metrics.redacted(answerRedactions)
     return reply.code(202).send({ run_id: runId, status: 'queued' })
   })
 

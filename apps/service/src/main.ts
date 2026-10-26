@@ -49,6 +49,7 @@ async function main(): Promise<void> {
     secrets: createSecretBox(master.key),
     masterKeySource: master.source,
     llm,
+    llmApiKey: llmConfig?.apiKey,
     models: llmConfig?.models,
     probe: llmConfig ? (model) => probeModel({ baseUrl: llmConfig.baseUrl, apiKey: llmConfig.apiKey, model }) : undefined,
     workerId: `${hostname()}:${process.pid}`,

@@ -25,6 +25,8 @@ export type Stack = {
   apiForTenant(tenant: string, method: string, path: string, body?: unknown): Promise<{ status: number; body: any }>
   shop: Awaited<ReturnType<typeof startShop>>
   receiver: { url: string; received: Received[] }
+  /** The request bodies the fake LLM received, in order. Empty with a real LLM. */
+  llmRequests: unknown[]
   close(): Promise<void>
 }
 
@@ -33,6 +35,8 @@ export type StackOpts = {
   receiverStatuses?: number[]
   /** Use a real OpenAI-compatible endpoint instead of the fake LLM (live smoke only). */
   realLlm?: { baseUrl: string; apiKey: string; model: string }
+  /** The API key of the fake LLM; the service removes it from content like a real key. */
+  llmApiKey?: string
 }
 
 export async function startStack(script: FakeTurn[], opts: StackOpts = {}): Promise<Stack> {
@@ -62,12 +66,13 @@ export async function startStack(script: FakeTurn[], opts: StackOpts = {}): Prom
 
   const llm = opts.realLlm
     ? createOpenAICompatible({ baseUrl: opts.realLlm.baseUrl, apiKey: opts.realLlm.apiKey, models: { default: opts.realLlm.model } })
-    : createOpenAICompatible({ baseUrl: fakeLlm!.url, apiKey: 'fake', models: { default: 'fake-model' } })
+    : createOpenAICompatible({ baseUrl: fakeLlm!.url, apiKey: opts.llmApiKey ?? 'fake', models: { default: 'fake-model' } })
   const stack = createServiceStack({
     pool,
     adminKeyHash: hashAdminKey(ADMIN_KEY),
     secrets: createSecretBox(Buffer.alloc(32, 7)),
     llm,
+    llmApiKey: opts.realLlm?.apiKey ?? opts.llmApiKey,
     workerId: 'e2e-worker',
     runPollMs: 20,
     deliveryPollMs: 20,
@@ -97,6 +102,7 @@ export async function startStack(script: FakeTurn[], opts: StackOpts = {}): Prom
     apiForTenant: (tenant, method, path, body) => request(ADMIN_KEY, method, path, body, undefined, tenant),
     shop,
     receiver: { url: receiverUrl, received },
+    llmRequests: fakeLlm?.requests ?? [],
     async close() {
       await stack.close()
       await shop.close()

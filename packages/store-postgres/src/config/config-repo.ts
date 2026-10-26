@@ -1,5 +1,5 @@
 import type pg from 'pg'
-import { resolveSafety, secretAad, toolFingerprint } from '@agent-core/core'
+import { SecretDecryptError, resolveSafety, secretAad, toolFingerprint } from '@agent-core/core'
 import { withTenant } from '../db/scope'
 import type { AgentDefinition, ConnectionLimits, SafetySource, SecretBox, ToolDescriptor, ToolSafety } from '@agent-core/core'
 
@@ -195,10 +195,19 @@ export class ConfigRepo {
     )
   }
 
-  async listWebhooks(): Promise<Webhook[]> {
+  /** With `onUndecryptable`, a row whose secret cannot be decrypted is skipped and reported by id; without it, the call throws. */
+  async listWebhooks(onUndecryptable?: (id: string) => void): Promise<Webhook[]> {
     const res = await this.scoped((client) =>
       client.query('SELECT id, url, secret, events FROM webhooks WHERE tenant_id = $1 ORDER BY id', [this.tenantId]),
     )
-    return res.rows.map((r) => ({ ...r, secret: this.secrets.open(r.secret, secretAad(this.tenantId, 'webhooks', r.id)) }))
+    return res.rows.flatMap((r) => {
+      try {
+        return [{ ...r, secret: this.secrets.open(r.secret, secretAad(this.tenantId, 'webhooks', r.id)) }]
+      } catch (err) {
+        if (onUndecryptable === undefined || !(err instanceof SecretDecryptError)) throw err
+        onUndecryptable(r.id)
+        return []
+      }
+    })
   }
 }
