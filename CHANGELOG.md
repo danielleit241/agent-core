@@ -28,6 +28,7 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions exist
 - Limits: an agent may carry a `limits` block (`llm_calls` 30, `tokens` 500000, `cost_usd` 1, `tenant_cost_usd_per_day` 20, `run_time_s` 1800, `wait_human_s` 86400, `tool_output_chars` 48000 by default). A tenant key may only lower a limit; `403 limit_above_default` otherwise. Every breach appends `limit.reached` with the limit's name. A model without a price and without a provider-reported cost counts as cost 0, so only `tokens` bounds it; give the model profile prices to enforce the cost limits.
 - A run that breaches a run limit waits with `"waiting_reason":"limit"`. The resolve action `continue` gives it one more full allowance of that limit (`limit.continued`); `cancel` ends it. Only the admin key may continue past `tenant_cost_usd_per_day` (`403 limit_needs_admin`).
 - A run that waits for a human longer than `wait_human_s` (24 hours by default) fails with reason `wait_expired`. This applies to every wait, approvals and unknown outcomes included, which used to wait forever. Waits recorded before this change never expire.
+- Loop detection: the `loop` limit (default 3) stops a run before a fourth call with the same tool and the same arguments, and before an LLM call that follows 3 tool turns in a row whose every call and result repeat an earlier one. The run waits with `"waiting_reason":"limit"` and `limit.reached` names `loop`.
 
 ### Fixed
 
