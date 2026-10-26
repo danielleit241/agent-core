@@ -499,8 +499,11 @@ async function llmStep(
       ],
       // A tool changed since review stays hidden until an owner reviews it again.
       tools: Object.values(deps.toolsByName).filter((t) => t.changedSinceReview !== true),
+      ...(deps.signal === undefined ? {} : { signal: deps.signal }),
     })
   } catch (err) {
+    // The worker stopped the call. The open `llm.requested` is the same state as a crash mid-call; resume handles it.
+    if (deps.signal?.aborted) return 'running'
     const retryAt = llmRetryAt(err, proj, deps)
     if (retryAt !== null) {
       await store.append(runId, [

@@ -383,6 +383,39 @@ test('stop aborts the in-flight run and puts the job back for another worker', a
   expect(await runStatus('r10')).toBe('running')
 })
 
+test('stop aborts an LLM call that only settles on abort, without waiting for the provider', async () => {
+  const { version } = await new ConfigRepo(pool, 'default', box).putAgent(agent)
+  await seedRun('r10b', 'helper', version)
+  let calls = 0
+  const hanging: LLMPort = {
+    complete: (req) =>
+      new Promise((_resolve, reject) => {
+        calls++
+        req.signal?.addEventListener('abort', () => reject(new Error('aborted')))
+      }),
+  }
+  const settled: string[] = []
+  const worker = startRunWorker({
+    secrets: box,
+    pool,
+    llm: hanging,
+    tools,
+    workerId: 'w1',
+    pollMs: 20,
+    onRunSettled: async (id) => {
+      settled.push(id)
+    },
+  })
+  await waitFor(() => calls === 1)
+  const started = Date.now()
+  await worker.stop()
+  expect(Date.now() - started).toBeLessThan(2000)
+  expect(settled).toEqual([])
+  const rows = await pool.query('SELECT locked_by FROM queue WHERE run_id = $1', ['r10b'])
+  expect(rows.rows).toEqual([{ locked_by: null }])
+  expect((await new PgRunStore(pool, 'default').readEvents('r10b')).map((e) => e.type)).not.toContain('error.raised')
+})
+
 test('a worker whose lock was taken writes nothing and does not fail, settle or release the run', async () => {
   await new ConfigRepo(pool, 'default', box).putAgent({ ...agent, model: 'default' })
   await seedRun('r-lost', 'helper', 1)

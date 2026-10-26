@@ -60,7 +60,18 @@ function strictCompatible(node: unknown): boolean {
 }
 
 const REQUEST_TIMEOUT_MS = 60_000
-const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms))
+/** Resolves after `ms`, or at once when `signal` aborts. */
+const sleep = (ms: number, signal?: AbortSignal) =>
+  new Promise<void>((resolve) => {
+    if (signal?.aborted) return resolve()
+    const done = () => {
+      clearTimeout(timer)
+      signal?.removeEventListener('abort', done)
+      resolve()
+    }
+    const timer = setTimeout(done, ms)
+    signal?.addEventListener('abort', done, { once: true })
+  })
 
 function toWireMessage(m: Message): Record<string, unknown> {
   if (m.role === 'tool') return { role: 'tool', tool_call_id: m.toolCallId, content: m.content }
@@ -124,24 +135,32 @@ export function createOpenAICompatible(opts: Opts): LLMPort {
   const delays = opts.retryDelaysMs ?? [500, 1000]
   const url = `${opts.baseUrl.replace(/\/+$/, '')}/chat/completions`
 
-  async function post(body: unknown): Promise<WireResponse> {
+  async function post(body: unknown, signal?: AbortSignal): Promise<WireResponse> {
     let last: LlmError | undefined
+    // Fixed text, no URL: errors reach the event log.
+    const aborted = () => new LlmError('LLM request aborted', 0, false)
     for (let attempt = 0; attempt <= delays.length; attempt++) {
-      if (attempt > 0) await sleep(delays[attempt - 1])
+      if (signal?.aborted) throw aborted()
+      if (attempt > 0) {
+        await sleep(delays[attempt - 1]!, signal)
+        if (signal?.aborted) throw aborted()
+      }
       let res: Response
       try {
         res = await doFetch(url, {
           method: 'POST',
           headers: { Authorization: `Bearer ${opts.apiKey}`, 'Content-Type': 'application/json' },
           body: JSON.stringify(body),
-          signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+          signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(REQUEST_TIMEOUT_MS)]) : AbortSignal.timeout(REQUEST_TIMEOUT_MS),
         })
       } catch {
+        if (signal?.aborted) throw aborted()
         // The cause text can carry the URL; errors reach the event log, so only fixed text is kept.
         last = new LlmError('LLM request failed: network error', 0, true)
         continue
       }
       const json: unknown = await res.json().catch(() => undefined)
+      if (signal?.aborted) throw aborted()
       if (res.ok) return (json ?? {}) as WireResponse
       // Provider text can echo part of the key (for example on a 401), so only the status is kept.
       const message = `LLM provider returned HTTP ${res.status}`
@@ -164,6 +183,7 @@ export function createOpenAICompatible(opts: Opts): LLMPort {
     messages: Message[],
     tools: ToolDescriptor[],
     responseFormat?: unknown,
+    signal?: AbortSignal,
   ): Promise<{ message: Message; usage: Usage; stopReason: 'end' | 'tool_calls' | 'length' | 'filtered' }> {
     const wireToInternal = new Map<string, string>()
     for (const t of tools) {
@@ -177,7 +197,7 @@ export function createOpenAICompatible(opts: Opts): LLMPort {
       messages: mergeSystemRuns(messages).map(toWireMessage),
       ...(tools.length > 0 ? { tools: tools.map(toWireTool) } : {}),
       ...(responseFormat !== undefined ? { response_format: responseFormat } : {}),
-    })
+    }, signal)
     const choice = json.choices?.[0]
     if (!choice?.message) throw new LlmError('LLM response has no choices', 200, false)
 
@@ -222,7 +242,7 @@ export function createOpenAICompatible(opts: Opts): LLMPort {
       const model = opts.models[req.model]
       if (model === undefined) throw new Error(`unknown_model_alias: ${req.model}`)
       const profile = await (opts.profile ?? (() => DEFAULT_MODEL_PROFILE))(model)
-      if (!req.output) return once(model, profile, req.messages, req.tools)
+      if (!req.output) return once(model, profile, req.messages, req.tools, undefined, req.signal)
 
       const { name, schema } = req.output
       // A reply with tool calls has no JSON content, so the two cannot be combined.
@@ -249,7 +269,7 @@ export function createOpenAICompatible(opts: Opts): LLMPort {
         const res = await once(model, profile, req.messages, req.tools, {
           type: 'json_schema',
           json_schema: { name, strict: true, schema: jsonSchema },
-        })
+        }, req.signal)
         // A filtered answer has no valid output; the runner fails the run.
         if (res.stopReason === 'filtered') return res
         const r = check(res.message.content)
@@ -266,7 +286,7 @@ export function createOpenAICompatible(opts: Opts): LLMPort {
       let outputTokens = 0
       let costUsd: number | undefined
       for (let attempt = 1; attempt <= OUTPUT_ATTEMPTS; attempt++) {
-        const res = await once(model, profile, messages, req.tools)
+        const res = await once(model, profile, messages, req.tools, undefined, req.signal)
         inputTokens += res.usage.inputTokens
         outputTokens += res.usage.outputTokens
         if (res.usage.costUsd !== undefined) costUsd = (costUsd ?? 0) + res.usage.costUsd

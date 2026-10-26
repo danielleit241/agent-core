@@ -49,6 +49,7 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions exist
 
 ### Fixed
 
+- When the worker stops or loses its lock, an LLM call in progress is aborted at once, so the job is released quickly instead of waiting for the provider timeout.
 - A filtered or refused LLM answer now fails the run with reason `filtered` instead of completing it.
 - The event log refuses a state change written from a stale status, so a run cancelled while a worker was starting it stays cancelled.
 - A tool always runs with the safety computed from its source and confirmations, never a stored copy; tools stored before this change run strict until confirmed.

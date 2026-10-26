@@ -1634,3 +1634,25 @@ describe('connection guard', () => {
     expect(guard.acquired).toEqual([])
   })
 })
+
+test('an aborted LLM call leaves no error and no state change', async () => {
+  const done = scriptedLlm([say('Done.')])
+  const llm: LLMPort = {
+    complete: (req) =>
+      req.signal?.aborted === false && llmCalls++ === 0
+        ? new Promise((_resolve, reject) => req.signal!.addEventListener('abort', () => reject(new Error('aborted'))))
+        : done.complete(req),
+  }
+  let llmCalls = 0
+  const { store, tools } = await setup()
+  const ctl = new AbortController()
+  const pending = advanceRun('r1', { ...deps({ llm, store, tools }), signal: ctl.signal })
+  await new Promise((r) => setTimeout(r, 10))
+  ctl.abort()
+  expect(await pending).toBe('running')
+  const log = await store.readEvents('r1')
+  expect(types(log).at(-1)).toBe('llm.requested')
+  expect(types(log)).not.toContain('error.raised')
+  expect(projectRun(log, '').status).toBe('running')
+  expect(await advanceRun('r1', { ...deps({ llm, store, tools }), signal: new AbortController().signal })).toBe('completed')
+})

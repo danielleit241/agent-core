@@ -36,7 +36,7 @@ The first reference agent is `retail-support`: it looks up orders and refunds th
 
 ```bash
 docker compose up -d --build   # Postgres and agent-core on http://localhost:7300
-docker compose logs agent-core # the generated admin key is printed once (ak_admin.…)
+docker compose logs agent-core # the generated admin key is printed once (ak_admin....)
 ```
 
 The container needs no `.env`. To enable runs, copy `.env.example` to `.env`, set `LLM_BASE_URL`, `LLM_API_KEY` and `LLM_MODEL_DEFAULT`, then run `docker compose up -d` again. The compose file sets `DATABASE_URL` and `MIGRATOR_DATABASE_URL` for the container, so the `localhost:5433` values in `.env` do not apply there. `master.key` and the admin key live in the `agent-core-data` volume. Run the CLI inside the container with `docker compose exec agent-core agent-core log verify <run-id>`. `pnpm db:up` still starts only Postgres.

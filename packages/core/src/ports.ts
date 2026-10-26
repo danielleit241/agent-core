@@ -8,6 +8,8 @@ export interface LLMPort {
     tools: ToolDescriptor[]
     /** When set, `message.content` is JSON text that matches `schema`. */
     output?: { name: string; schema: z.ZodType }
+    /** Aborts the call at once (the worker is stopping). The signal is not part of the request hash. */
+    signal?: AbortSignal
   }): Promise<{ message: Message; usage: Usage; stopReason: 'end' | 'tool_calls' | 'length' | 'filtered' }>
 }
 
