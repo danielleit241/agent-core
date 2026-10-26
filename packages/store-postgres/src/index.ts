@@ -1,6 +1,7 @@
 export {
   assertTestDatabase,
   assertTestPool,
+  childRunIds,
   ChainIntegrityError,
   createPool,
   createRun,

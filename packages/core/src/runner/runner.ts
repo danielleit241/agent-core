@@ -1,4 +1,4 @@
-import { AppendConflictError, type ConnectionGuard, type LLMPort, type RunStore, type ToolInvoker } from '../ports'
+import { AppendConflictError, type ConnectionGuard, type LLMPort, type RunStore, type SubrunPort, type ToolInvoker } from '../ports'
 import { projectRun, type RunProjection } from '../events/projection'
 import { decide } from '../policy/rules'
 import { resolveLimits, type LimitName, type Limits } from '../limits'
@@ -12,6 +12,8 @@ export type RunnerDeps = {
   tools: ToolInvoker
   /** Rate, concurrency and breaker of each connection. Without one, calls are not limited. */
   guard?: ConnectionGuard
+  /** Child runs of workflow `subrun` steps. */
+  subruns?: SubrunPort
   agent: AgentDefinition
   toolsByName: Record<string, ToolDescriptor>
   agentVersion: number
@@ -56,7 +58,8 @@ function capToolOutput(content: string, max: number): string {
 ${content.slice(tail)}`
 }
 
-const stateChanged = (from: RunStatus, to: RunStatus, reason?: string): NewEvent => ({
+// Shared with the workflow runner (./workflow.ts) from here to `handleToolCall`.
+export const stateChanged = (from: RunStatus, to: RunStatus, reason?: string): NewEvent => ({
   type: 'run.state_changed',
   payload: reason === undefined ? { from, to } : { from, to, reason },
   labels: [],
@@ -68,19 +71,19 @@ const toolError = (toolCallId: string, content: string): NewEvent => ({
   labels: [],
 })
 
-const waitHuman = (from: RunStatus, reason: WaitingReason, expiresAt: string): NewEvent => ({
+export const waitHuman = (from: RunStatus, reason: WaitingReason, expiresAt: string): NewEvent => ({
   type: 'run.state_changed',
   payload: { from, to: 'waiting_human', reason, expiresAt },
   labels: [],
 })
 
 type Breach = { limit: LimitName; max: number; value: number }
-const limitReached = (b: Breach): NewEvent => ({ type: 'limit.reached', payload: b, labels: [] })
+export const limitReached = (b: Breach): NewEvent => ({ type: 'limit.reached', payload: b, labels: [] })
 
-const nowOf = (deps: RunnerDeps): Date => (deps.now ?? (() => new Date()))()
+export const nowOf = (deps: RunnerDeps): Date => (deps.now ?? (() => new Date()))()
 const limitsOf = (deps: RunnerDeps): Limits => resolveLimits(deps.agent.limits)
 /** When a wait for a human that starts now expires. */
-const expiresAt = (deps: RunnerDeps): string => new Date(nowOf(deps).getTime() + limitsOf(deps).wait_human_s * 1000).toISOString()
+export const expiresAt = (deps: RunnerDeps): string => new Date(nowOf(deps).getTime() + limitsOf(deps).wait_human_s * 1000).toISOString()
 
 /** One grant from a human gives one more full allowance. */
 function breach(proj: RunProjection, limits: Limits, limit: LimitName, value: number): Breach | null {
@@ -92,7 +95,7 @@ function breach(proj: RunProjection, limits: Limits, limit: LimitName, value: nu
  * Checks the run limits before a step: before a tool call when `call` is set, else before an LLM step.
  * The tenant cost is read only before an LLM step.
  */
-async function checkRunLimits(deps: RunnerDeps, proj: RunProjection, call: ToolCall | undefined): Promise<Breach | null> {
+export async function checkRunLimits(deps: RunnerDeps, proj: RunProjection, call: ToolCall | undefined): Promise<Breach | null> {
   const limits = limitsOf(deps)
   const now = nowOf(deps).getTime()
   const runningMs = proj.runningMs + (proj.runningSince === null ? 0 : now - Date.parse(proj.runningSince))
@@ -128,7 +131,7 @@ export function expireWait(events: StoredEvent[], now: Date): NewEvent[] | null 
 }
 
 const isNotSent = (err: unknown): boolean => (err as { notSent?: unknown } | null)?.notSent === true
-const errorMessage = (err: unknown): string => (err instanceof Error ? err.message : String(err))
+export const errorMessage = (err: unknown): string => (err instanceof Error ? err.message : String(err))
 // Fixed text: an adapter error message may carry secrets (for example a URL) and must not reach events or the LLM.
 const toolUnavailable = (err: unknown): string => {
   const code = (err as { code?: unknown } | null)?.code
@@ -194,7 +197,7 @@ export async function advanceRun(runId: string, deps: RunnerDeps): Promise<RunSt
   }
 }
 
-async function handleToolCall(
+export async function handleToolCall(
   runId: string,
   deps: RunnerDeps,
   proj: RunProjection,
@@ -440,6 +443,17 @@ async function execute(
   return 'continue'
 }
 
+/** When to try a failed LLM call again, or null when the error is final or the retries are used up. */
+export function llmRetryAt(err: unknown, proj: RunProjection, deps: RunnerDeps): string | null {
+  const { retryable, retryAfterMs } = (err ?? {}) as { retryable?: unknown; retryAfterMs?: unknown }
+  const attempts = proj.llmRetry.attempts
+  if (retryable !== true || attempts >= LLM_RETRY_WAITS_MS.length) return null
+  // The provider's hint can only lengthen the computed wait.
+  const hint = typeof retryAfterMs === 'number' && Number.isFinite(retryAfterMs) && retryAfterMs >= 0 ? retryAfterMs : 0
+  const wait = Math.max(hint, jitter(LLM_RETRY_WAITS_MS[attempts]!, deps.random ?? Math.random))
+  return new Date(nowOf(deps).getTime() + Math.min(wait, LLM_MAX_WAIT_MS)).toISOString()
+}
+
 async function llmStep(
   runId: string,
   deps: RunnerDeps,
@@ -467,13 +481,8 @@ async function llmStep(
       tools: Object.values(deps.toolsByName).filter((t) => t.changedSinceReview !== true),
     })
   } catch (err) {
-    const { retryable, retryAfterMs } = (err ?? {}) as { retryable?: unknown; retryAfterMs?: unknown }
-    const attempts = proj.llmRetry.attempts
-    if (retryable === true && attempts < LLM_RETRY_WAITS_MS.length) {
-      // The provider's hint can only lengthen the computed wait.
-      const hint = typeof retryAfterMs === 'number' && Number.isFinite(retryAfterMs) && retryAfterMs >= 0 ? retryAfterMs : 0
-      const wait = Math.max(hint, jitter(LLM_RETRY_WAITS_MS[attempts]!, deps.random ?? Math.random))
-      const retryAt = new Date(now().getTime() + Math.min(wait, LLM_MAX_WAIT_MS)).toISOString()
+    const retryAt = llmRetryAt(err, proj, deps)
+    if (retryAt !== null) {
       await store.append(runId, [
         { type: 'error.raised', payload: { message: errorMessage(err), retryable: true, retryAt }, labels: [] },
       ])

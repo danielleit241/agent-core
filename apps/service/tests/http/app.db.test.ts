@@ -2,10 +2,11 @@ import type { FastifyInstance } from 'fastify'
 import { afterAll, beforeAll, beforeEach, expect, test } from 'vitest'
 import { toolFingerprint } from '@agent-core/core'
 import type { LLMPort, NewEvent, ToolDescriptor } from '@agent-core/core'
-import { ConfigRepo, PgRunStore, assertTestDatabase, createPool, runtimeTestUrl, createRun, createTenant, getRunHead, runMigrations } from '@agent-core/store-postgres'
+import { ConfigRepo, PgRunStore, assertTestDatabase, createPool, runtimeTestUrl, createRun, createRunWithEvent, createTenant, getRun, getRunHead, runMigrations } from '@agent-core/store-postgres'
 import { buildApp } from '../../src/http/app'
 import { checkChain } from '../../src/http/routes/runs'
 import { createRunSettledHandler } from '../../src/runs/settled'
+import { createSubruns } from '../../src/runs/subruns'
 import { startRunWorker } from '../../src/worker/worker'
 import { createSecretBox } from '@agent-core/core'
 
@@ -1209,4 +1210,64 @@ test('only the admin key may continue a run past the tenant daily cost', async (
     headers: { authorization: `Bearer ${tenant!.apiKey}` },
   })
   expect(cancel.statusCode).toBe(202)
+})
+
+const pingWorkflow = { start: 'ask', steps: { ask: { kind: 'approval', reason: 'Go?', next: 'say' }, say: { kind: 'llm', prompt: 'Say hi.' } } }
+
+test('an agent whose workflow has a cycle or a missing step gives 422 with the path of each problem', async () => {
+  const res = await authed('POST', '/v1/agents', {
+    ...agentBody,
+    workflows: { loop: { start: 'a', steps: { a: { kind: 'approval', reason: 'x', next: 'b' }, b: { kind: 'approval', reason: 'y', next: 'a' } } } },
+  })
+  expect(res.statusCode).toBe(422)
+  expect(res.json().error).toMatchObject({ code: 'invalid_workflow', fix: expect.any(String) })
+  expect(res.json().error.message).toContain('workflows.loop.steps.a.next: the steps form a cycle (a → b → a)')
+  expect(await new ConfigRepo(pool, 'default', box).getAgent('helper')).toBeNull()
+  expect((await authed('POST', '/v1/agents', { ...agentBody, workflows: { ping: pingWorkflow } })).statusCode).toBe(201)
+})
+
+test('a run can name a workflow of its agent; run.created keeps a copy of it, and an unknown name gives 422', async () => {
+  await authed('POST', '/v1/agents', { ...agentBody, workflows: { ping: pingWorkflow } })
+  const unknown = await authed('POST', '/v1/runs', { agent: 'helper', workflow: 'pong', input: { text: 'hi' } })
+  expect(unknown.statusCode).toBe(422)
+  expect(unknown.json().error).toMatchObject({ code: 'unknown_workflow', fix: expect.any(String) })
+  const res = await authed('POST', '/v1/runs', { agent: 'helper', workflow: 'ping', input: { text: 'hi' } })
+  expect(res.statusCode).toBe(202)
+  const events = (await authed('GET', `/v1/runs/${res.json().run_id}/events`)).json().events
+  expect(events[0].payload.workflow).toEqual({ name: 'ping', definition: pingWorkflow })
+})
+
+test('cancelling a workflow run also cancels the child runs of its subrun steps', async () => {
+  await authed('POST', '/v1/agents', agentBody)
+  const parent = (await authed('POST', '/v1/runs', { agent: 'helper', input: { text: 'hi' } })).json().run_id as string
+  const child = await createRunWithEvent(pool, {
+    tenantId: 'default',
+    runId: 'run_child',
+    agentId: 'helper',
+    agentVersion: 1,
+    idempotencyKey: `subrun:${parent}:write`,
+    created: { type: 'run.created', payload: { agentId: 'helper', input: { text: 'x' }, parent: { runId: parent, stepId: 'write' } }, labels: ['untrusted'] },
+  })
+  expect((await authed('POST', `/v1/runs/${parent}/input`, { action: 'cancel' })).statusCode).toBe(202)
+  expect((await getRun(pool, 'default', child.id))?.status).toBe('cancelled')
+})
+
+test('an Idempotency-Key that starts with subrun: is refused: that prefix belongs to child runs', async () => {
+  await authed('POST', '/v1/agents', agentBody)
+  const res = await app.inject({
+    method: 'POST',
+    url: '/v1/runs',
+    payload: { agent: 'helper', input: { text: 'hi' } },
+    headers: { authorization: `Bearer ${ADMIN_KEY}`, 'idempotency-key': 'subrun:run_x:write' },
+  })
+  expect(res.statusCode).toBe(400)
+  expect(res.json().error).toMatchObject({ code: 'invalid_idempotency_key', fix: expect.any(String) })
+})
+
+test('a child run started by a subrun step carries the principal of its parent', async () => {
+  await authed('POST', '/v1/agents', agentBody)
+  const principal = { id: 'u1', roles: ['staff'] }
+  const childId = await createSubruns(pool, box, 'default').start({ agentId: 'helper', input: 'x', parent: { runId: 'run_p', stepId: 'write' }, principal })
+  const events = (await authed('GET', `/v1/runs/${childId}/events`)).json().events
+  expect(events[0].payload).toMatchObject({ parent: { runId: 'run_p', stepId: 'write' }, principal })
 })

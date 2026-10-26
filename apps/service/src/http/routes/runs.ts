@@ -3,9 +3,9 @@ import type { FastifyInstance, FastifyRequest } from 'fastify'
 import { z } from 'zod'
 import { projectRun, verifyChain } from '@agent-core/core'
 import type { NewEvent, RunStatus, SecretBox, StoredEvent, WaitingReason } from '@agent-core/core'
-import { ConfigRepo, PgRunStore, StateConflictError, createRunWithEvent, getRun, getRunHead, makeDue } from '@agent-core/store-postgres'
+import { ConfigRepo, PgRunStore, StateConflictError, childRunIds, createRunWithEvent, getRun, getRunHead, makeDue } from '@agent-core/store-postgres'
 import type { createPool } from '@agent-core/store-postgres'
-import { apiError, validationError } from '../errors'
+import { ApiError, apiError, validationError } from '../errors'
 import { getRunView } from '../../runs/views'
 import { keyReused, readIdempotencyKey, requestHash } from '../idempotency'
 
@@ -13,6 +13,8 @@ const POLL_MS = 100
 
 const RunBody = z.object({
   agent: z.string().min(1),
+  /** A workflow of the agent; without it the run is an agent run. */
+  workflow: z.string().min(1).optional(),
   input: z.object({ text: z.string().min(1) }),
   // Bounded: the principal goes into the LLM context.
   principal: z.object({ id: z.string().max(200), roles: z.array(z.string().max(64)).max(20) }).optional(),
@@ -94,6 +96,14 @@ export function registerRunRoutes(app: FastifyInstance, deps: { pool: ReturnType
     const config = configFor(req)
     const wait = parseWait(req.query.wait)
     const key = readIdempotencyKey(req)
+    if (key?.startsWith('subrun:')) {
+      throw apiError(
+        'invalid_idempotency_key',
+        'An Idempotency-Key may not start with "subrun:".',
+        'That prefix names the child runs of workflow steps. Use another key.',
+        400,
+      )
+    }
     const parsed = RunBody.safeParse(req.body)
     if (!parsed.success) throw validationError(parsed.error)
     const body = parsed.data
@@ -103,6 +113,17 @@ export function registerRunRoutes(app: FastifyInstance, deps: { pool: ReturnType
         'unknown_agent',
         `Agent "${body.agent}" does not exist.`,
         'Create the agent with POST /v1/agents first.',
+        422,
+      )
+    }
+    const workflows = agent.definition.workflows ?? {}
+    // Own keys only: a name like "constructor" must not find an inherited member.
+    const definition = body.workflow !== undefined && Object.hasOwn(workflows, body.workflow) ? workflows[body.workflow] : undefined
+    if (body.workflow !== undefined && definition === undefined) {
+      throw apiError(
+        'unknown_workflow',
+        `Agent "${body.agent}" has no workflow "${body.workflow}".`,
+        "Name a workflow from the agent's \"workflows\", or leave \"workflow\" out for an agent run.",
         422,
       )
     }
@@ -120,6 +141,7 @@ export function registerRunRoutes(app: FastifyInstance, deps: { pool: ReturnType
           agentId: body.agent,
           input: body.input,
           ...(body.principal ? { principal: body.principal } : {}),
+          ...(definition === undefined ? {} : { workflow: { name: body.workflow!, definition } }),
         },
         labels: ['untrusted'], // the caller's text is untrusted input
       },
@@ -185,6 +207,21 @@ export function registerRunRoutes(app: FastifyInstance, deps: { pool: ReturnType
     }
   }
 
+  /** Cancels the child runs of a workflow's subrun steps, and theirs: work the caller cancelled must not go on. */
+  async function cancelChildren(req: FastifyRequest, runId: string): Promise<void> {
+    for (const childId of await childRunIds(pool, req.auth.tenantId, runId)) {
+      const child = await getRun(pool, req.auth.tenantId, childId)
+      if (!child || ENDED.includes(child.status)) continue
+      try {
+        await cancelRun(req, childId, child.status)
+      } catch (err) {
+        // The child ended meanwhile; nothing left to stop.
+        if (!(err instanceof ApiError) || err.status !== 409) throw err
+      }
+      await cancelChildren(req, childId)
+    }
+  }
+
   /** Records a message for the run. The runner adds it to the context before its next LLM call; the run's state does not change. */
   async function sendMessage(req: FastifyRequest, runId: string, firstStatus: RunStatus, text: string): Promise<{ run_id: string; status: RunStatus }> {
     const store = storeFor(req)
@@ -212,7 +249,11 @@ export function registerRunRoutes(app: FastifyInstance, deps: { pool: ReturnType
     const store = storeFor(req)
     const run = await getRun(pool, req.auth.tenantId, runId)
     if (!run) throw runNotFound(runId)
-    if (body.action === 'cancel') return reply.code(202).send(await cancelRun(req, runId, run.status))
+    if (body.action === 'cancel') {
+      const cancelled = await cancelRun(req, runId, run.status)
+      await cancelChildren(req, runId)
+      return reply.code(202).send(cancelled)
+    }
     if (body.action === 'message') return reply.code(202).send(await sendMessage(req, runId, run.status, body.text))
     const { action } = body
     // approve and reject keep their original error code for a run that is not waiting.

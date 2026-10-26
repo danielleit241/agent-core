@@ -108,7 +108,11 @@ export function projectRun(events: StoredEvent[], instructions: string): RunProj
         waitStartedAt = status === 'waiting_human' ? e.createdAt : null
         waitExpiresAt = status === 'waiting_human' ? (e.payload.expiresAt ?? null) : null
         wakeAt = status === 'sleeping' ? (e.payload.wakeAt ?? null) : null
-        if (status === 'sleeping') followups++
+        if (status === 'sleeping' && e.payload.wakeAt !== undefined) followups++
+        break
+      case 'step.completed':
+        // A workflow's result is the output of its last step.
+        output = JSON.stringify(e.payload.output)
         break
       case 'limit.continued':
         limitGrants[e.payload.limit]++

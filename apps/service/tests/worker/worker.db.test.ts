@@ -871,3 +871,28 @@ test('a call over its connection rate is deferred and the job comes back at retr
   expect(row?.locked_by).toBeNull()
   expect(row?.available_at.toISOString()).toBe(deferred?.retryAt)
 })
+
+test('a subrun step starts a child run of another agent; the parent sleeps, then continues with the child result', async () => {
+  const config = new ConfigRepo(pool, 'default', box)
+  await config.putAgent({ ...agent, id: 'writer' })
+  const { version } = await config.putAgent({
+    ...agent,
+    workflows: { draft: { start: 'write', steps: { write: { kind: 'subrun', agent: 'writer', input: { $ref: '$input.text' } } } } },
+  })
+  await createRun(pool, { tenantId: 'default', runId: 'r-parent', agentId: 'helper', agentVersion: version, input: { text: 'hi' } })
+  const definition = (await config.getAgent('helper'))!.definition.workflows!.draft!
+  await new PgRunStore(pool, 'default').append('r-parent', [
+    { type: 'run.created', payload: { agentId: 'helper', input: { text: 'write to 1042' }, workflow: { name: 'draft', definition } }, labels: ['untrusted'] },
+  ])
+  await enqueue(pool, { runId: 'r-parent', tenantId: 'default' })
+  const log = settledLog()
+  const worker = startRunWorker({ secrets: box, pool, llm, tools, workerId: 'w1', pollMs: 20, ...log })
+  await waitFor(() => log.settled.some(([id, s]) => id === 'r-parent' && s === 'completed'))
+  await worker.stop()
+  const childId = log.settled.find(([id]) => id !== 'r-parent')![0]
+  const child = await new PgRunStore(pool, 'default').readEvents(childId)
+  expect(child[0]!.payload).toEqual({ agentId: 'writer', input: { text: 'write to 1042' }, parent: { runId: 'r-parent', stepId: 'write' } })
+  const parent = await new PgRunStore(pool, 'default').readEvents('r-parent')
+  expect(parent.find((e) => e.type === 'step.completed')!.payload).toEqual({ stepId: 'write', output: { status: 'completed', text: 'done' } })
+  expect(await queueRows()).toBe(0)
+})

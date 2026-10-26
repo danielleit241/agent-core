@@ -1,7 +1,7 @@
 import { randomBytes, randomUUID } from 'node:crypto'
 import type { FastifyInstance, FastifyRequest } from 'fastify'
 import { z } from 'zod'
-import { AgentDefinitionSchema, BUILTIN_PREFIX, ConnectionLimitsSchema, DEFAULT_LIMITS, resolveConnectionLimits, SupportSchema, limitsAboveDefault, ToolSafetySchema, resolveSafety, toolFingerprint } from '@agent-core/core'
+import { AgentDefinitionSchema, BUILTIN_PREFIX, ConnectionLimitsSchema, DEFAULT_LIMITS, resolveConnectionLimits, workflowProblems, SupportSchema, limitsAboveDefault, ToolSafetySchema, resolveSafety, toolFingerprint } from '@agent-core/core'
 import type { SecretBox, ToolSafety } from '@agent-core/core'
 import { ConfigRepo, NO_REVIEW } from '@agent-core/store-postgres'
 import type { LoadedTool, StoredTool, createPool } from '@agent-core/store-postgres'
@@ -225,6 +225,15 @@ export function registerConfigRoutes(
     }
     const parsed = AgentDefinitionSchema.safeParse(req.body)
     if (!parsed.success) throw validationError(parsed.error)
+    const problems = workflowProblems(parsed.data)
+    if (problems.length > 0) {
+      throw apiError(
+        'invalid_workflow',
+        `The agent's workflows have ${problems.length} problem(s): ${problems.join('; ')}.`,
+        'Fix each path named in the message. Every step must exist, every $ref must name a step, and the steps must not form a cycle.',
+        422,
+      )
+    }
     const above = req.auth.admin ? undefined : limitsAboveDefault(parsed.data.limits)[0]
     if (above !== undefined) {
       throw apiError(

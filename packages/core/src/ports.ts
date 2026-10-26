@@ -1,5 +1,5 @@
 import type { z } from 'zod'
-import type { Message, NewEvent, StoredEvent, ToolDescriptor, Usage } from './types'
+import type { Message, NewEvent, RunStatus, StoredEvent, ToolDescriptor, Usage } from './types'
 
 export interface LLMPort {
   complete(req: {
@@ -50,4 +50,18 @@ export type GuardDenial = { reason: 'rate' | 'concurrency' | 'breaker'; retryAt:
 export interface ConnectionGuard {
   acquire(connectionId: string): Promise<{ lease: string } | { denied: GuardDenial }>
   release(lease: string, outcome: 'ok' | 'failed' | 'unused'): Promise<void>
+}
+
+/**
+ * Child runs of workflow `subrun` steps, in the same tenant. `start` is idempotent per parent step: called
+ * again, it returns the child it started before. `status` gives the child's status and final text.
+ */
+export interface SubrunPort {
+  start(r: {
+    agentId: string
+    input: string
+    parent: { runId: string; stepId: string }
+    principal?: { id: string; roles: string[] }
+  }): Promise<string>
+  status(runId: string): Promise<{ status: RunStatus; text: string | null } | null>
 }
