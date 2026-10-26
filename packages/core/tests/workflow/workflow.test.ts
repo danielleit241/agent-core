@@ -1,0 +1,272 @@
+import { MemoryRunStore } from '../support/memory-store'
+import type { LLMPort, SubrunPort, ToolInvoker } from '../../src/ports'
+import { projectRun } from '../../src/events/projection'
+import { advance } from '../../src/runner/workflow'
+import type { AgentDefinition, NewEvent, RunStatus, StoredEvent, ToolDescriptor, Workflow } from '../../src/types'
+
+const tool = (name: string, effect: 'read' | 'write'): ToolDescriptor => ({
+  name,
+  description: name,
+  inputSchema: {},
+  safety: { effect, idempotency: false, reachesOutside: true, outputLabel: 'internal' },
+  connectionId: 'shop',
+})
+const TOOLS = { 'orders.get': tool('orders.get', 'read'), 'payments.refund': tool('payments.refund', 'write') }
+
+const REFUND: Workflow = {
+  start: 'lookup',
+  steps: {
+    lookup: { kind: 'tool', tool: 'orders.get', args: { order_id: { $ref: '$input.text' } }, next: 'check' },
+    check: {
+      kind: 'approval',
+      reason: 'Refund the order?',
+      next: { when: [{ field: 'approved', is: { eq: true }, goto: 'refund' }] },
+    },
+    refund: { kind: 'tool', tool: 'payments.refund', args: { order_id: { $ref: 'lookup.id' }, amount: { $ref: 'lookup.total' } } },
+  },
+}
+
+const AGENT: AgentDefinition = {
+  id: 'ops',
+  instructions: 'You run the refund desk.',
+  connections: ['shop'],
+  autonomy: 'supervised',
+  allow: [{ tool: 'payments.refund' }],
+  model: 'm',
+}
+
+function fakeTools(results: Record<string, { content: string; isError?: boolean }> = {}) {
+  const calls: { name: string; args: Record<string, unknown> }[] = []
+  const tools: ToolInvoker & { calls: typeof calls } = {
+    calls,
+    async call(t, args) {
+      calls.push({ name: t.name, args })
+      const r = results[t.name] ?? { content: JSON.stringify({ id: '1042', total: 30 }) }
+      return { content: r.content, isError: r.isError ?? false }
+    },
+  }
+  return tools
+}
+
+const noLlm: LLMPort = {
+  complete: async () => {
+    throw new Error('no LLM call expected')
+  },
+}
+
+async function start(workflow: Workflow, o: { tools?: ToolInvoker; llm?: LLMPort; subruns?: SubrunPort; agent?: AgentDefinition; input?: string } = {}) {
+  const store = new MemoryRunStore()
+  const created: NewEvent = {
+    type: 'run.created',
+    payload: { agentId: 'ops', input: { text: o.input ?? '1042' }, workflow: { name: 'refund', definition: workflow } },
+    labels: ['untrusted'],
+  }
+  await store.append('r1', [created])
+  const deps = {
+    store,
+    llm: o.llm ?? noLlm,
+    tools: o.tools ?? fakeTools(),
+    agent: o.agent ?? AGENT,
+    toolsByName: TOOLS,
+    agentVersion: 1,
+    tenantCostToday: async () => 0,
+    random: () => 0.5,
+    sleep: async () => undefined,
+    ...(o.subruns ? { subruns: o.subruns } : {}),
+  }
+  return { store, deps }
+}
+const approve = (toolCallId: string, action: 'approve' | 'reject'): NewEvent[] => [
+  { type: 'approval.resolved', payload: { toolCallId, action }, labels: ['trusted'] },
+  { type: 'run.state_changed', payload: { from: 'waiting_human', to: 'running' }, labels: [] },
+]
+const completed = (log: StoredEvent[]) =>
+  log.flatMap((e) => (e.type === 'step.completed' ? [[e.payload.stepId, e.payload.output] as const] : []))
+
+test('the refund workflow looks up the order, waits for approval, then refunds with values from the lookup', async () => {
+  const tools = fakeTools()
+  const { store, deps } = await start(REFUND, { tools })
+  expect(await advance('r1', deps)).toBe('waiting_human')
+  let log = await store.readEvents('r1')
+  expect(log.at(-2)).toMatchObject({ type: 'approval.requested', payload: { toolCallId: 'step:check', tool: 'approval', reason: 'Refund the order?' } })
+  expect(projectRun(log, '').awaitingApproval).toEqual(['step:check'])
+  expect(tools.calls).toEqual([{ name: 'orders.get', args: { order_id: '1042' } }])
+
+  await store.append('r1', approve('step:check', 'approve'))
+  expect(await advance('r1', deps)).toBe('completed')
+  log = await store.readEvents('r1')
+  expect(tools.calls.at(-1)).toEqual({ name: 'payments.refund', args: { order_id: '1042', amount: 30 } })
+  expect(completed(log)).toEqual([
+    ['lookup', { id: '1042', total: 30 }],
+    ['check', { approved: true }],
+    ['refund', { id: '1042', total: 30 }],
+  ])
+  expect(log.filter((e) => e.type === 'step.started').map((e) => e.payload)).toEqual([
+    { stepId: 'lookup', kind: 'tool' },
+    { stepId: 'check', kind: 'approval' },
+    { stepId: 'refund', kind: 'tool' },
+  ])
+  expect(projectRun(log, '').output).toBe(JSON.stringify({ id: '1042', total: 30 }))
+})
+
+test('a rejected approval step does not fail the run: no branch matches and the run completes without the refund', async () => {
+  const tools = fakeTools()
+  const { store, deps } = await start(REFUND, { tools })
+  await advance('r1', deps)
+  await store.append('r1', approve('step:check', 'reject'))
+  expect(await advance('r1', deps)).toBe('completed')
+  expect(completed(await store.readEvents('r1')).at(-1)).toEqual(['check', { approved: false }])
+  expect(tools.calls.map((c) => c.name)).toEqual(['orders.get'])
+})
+
+test('a tool step whose rule needs approval waits like an agent run', async () => {
+  const tools = fakeTools()
+  const { store, deps } = await start(REFUND, { tools, agent: { ...AGENT, allow: [] } })
+  await advance('r1', deps)
+  await store.append('r1', approve('step:check', 'approve'))
+  expect(await advance('r1', deps)).toBe('waiting_human')
+  expect(projectRun(await store.readEvents('r1'), '').awaitingApproval).toEqual(['step:refund'])
+  expect(tools.calls.map((c) => c.name)).toEqual(['orders.get'])
+})
+
+test('a tool step that returns an error fails the run', async () => {
+  const { store, deps } = await start(REFUND, { tools: fakeTools({ 'orders.get': { content: 'no such order', isError: true } }) })
+  expect(await advance('r1', deps)).toBe('failed')
+  expect((await store.readEvents('r1')).at(-2)!.payload).toMatchObject({ message: 'Step "lookup" failed: no such order' })
+})
+
+test('a $ref to a field the output does not have fails the run', async () => {
+  const { store, deps } = await start(REFUND, { tools: fakeTools({ 'orders.get': { content: 'plain text' } }) })
+  await advance('r1', deps)
+  await store.append('r1', approve('step:check', 'approve'))
+  expect(await advance('r1', deps)).toBe('failed')
+  expect((await store.readEvents('r1')).at(-2)!.payload).toMatchObject({ message: 'Step "refund": $ref "lookup.id" has no value.' })
+})
+
+test('an llm step gets the input, the previous output and its prompt, and returns JSON that matches its output_schema', async () => {
+  const requests: Parameters<LLMPort['complete']>[0][] = []
+  const llm: LLMPort = {
+    complete: async (req) => {
+      requests.push(req)
+      return { message: { role: 'assistant', content: '{"intent":"refund"}' }, usage: { inputTokens: 3, outputTokens: 2 }, stopReason: 'end' }
+    },
+  }
+  const wf: Workflow = {
+    start: 'lookup',
+    steps: {
+      lookup: { kind: 'tool', tool: 'orders.get', args: {}, next: 'classify' },
+      classify: {
+        kind: 'llm',
+        prompt: 'Classify the request.',
+        output_schema: { type: 'object', properties: { intent: { type: 'string' } }, required: ['intent'] },
+      },
+    },
+  }
+  const { store, deps } = await start(wf, { llm })
+  expect(await advance('r1', deps)).toBe('completed')
+  const req = requests[0]!
+  expect(req.tools).toEqual([])
+  expect(req.output?.name).toBe('step_classify')
+  expect(req.output?.schema.safeParse({ intent: 'x' }).success).toBe(true)
+  expect(req.messages[0]).toEqual({ role: 'system', content: 'You run the refund desk.' })
+  expect(req.messages.slice(-3)).toEqual([
+    { role: 'user', content: '1042' },
+    { role: 'user', content: `Output of the previous step: ${JSON.stringify({ id: '1042', total: 30 })}` },
+    { role: 'user', content: 'Classify the request.' },
+  ])
+  expect(completed(await store.readEvents('r1')).at(-1)).toEqual(['classify', { intent: 'refund' }])
+  expect(projectRun(await store.readEvents('r1'), '').tokens).toBe(5)
+})
+
+test('an llm step without output_schema returns { text }; output that misses its schema fails the run', async () => {
+  const say = (content: string): LLMPort => ({
+    complete: async () => ({ message: { role: 'assistant', content }, usage: { inputTokens: 1, outputTokens: 1 }, stopReason: 'end' }),
+  })
+  const plain = await start({ start: 's', steps: { s: { kind: 'llm', prompt: 'p' } } }, { llm: say('hello') })
+  expect(await advance('r1', plain.deps)).toBe('completed')
+  expect(completed(await plain.store.readEvents('r1'))).toEqual([['s', { text: 'hello' }]])
+
+  const typed = await start(
+    { start: 's', steps: { s: { kind: 'llm', prompt: 'p', output_schema: { type: 'object', properties: { n: { type: 'number' } }, required: ['n'] } } } },
+    { llm: say('{"n":"x"}') },
+  )
+  expect(await advance('r1', typed.deps)).toBe('failed')
+  expect((await typed.store.readEvents('r1')).at(-2)!.payload).toMatchObject({ message: 'Step "s": the LLM output does not match output_schema.' })
+})
+
+test('branching takes the first matching rule, then else', async () => {
+  const wf: Workflow = {
+    start: 'lookup',
+    steps: {
+      lookup: {
+        kind: 'tool',
+        tool: 'orders.get',
+        args: {},
+        next: { when: [{ field: 'order.total', is: { gt: 100 }, goto: 'big' }, { field: 'order.total', is: { gt: 10 }, goto: 'mid' }], else: 'small' },
+      },
+      big: { kind: 'approval', reason: 'big' },
+      mid: { kind: 'approval', reason: 'mid' },
+      small: { kind: 'approval', reason: 'small' },
+    },
+  }
+  for (const [total, step] of [[500, 'step:big'], [50, 'step:mid'], [5, 'step:small']] as const) {
+    const { store, deps } = await start(wf, { tools: fakeTools({ 'orders.get': { content: JSON.stringify({ order: { total } }) } }) })
+    await advance('r1', deps)
+    expect(projectRun(await store.readEvents('r1'), '').awaitingApproval).toEqual([step])
+  }
+})
+
+test('a subrun step starts a child run, sleeps until it ends, then continues with its status and text', async () => {
+  const children = new Map<string, { status: RunStatus; text: string | null }>()
+  const started: Parameters<SubrunPort['start']>[0][] = []
+  const subruns: SubrunPort = {
+    async start(r) {
+      started.push(r)
+      const id = `child_${r.parent.stepId}`
+      if (!children.has(id)) children.set(id, { status: 'running', text: null })
+      return id
+    },
+    async status(id) {
+      return children.get(id) ?? null
+    },
+  }
+  const wf: Workflow = {
+    start: 'lookup',
+    steps: {
+      lookup: { kind: 'tool', tool: 'orders.get', args: {}, next: 'ask' },
+      ask: { kind: 'subrun', agent: 'writer', input: { $ref: 'lookup.id' } },
+    },
+  }
+  const { store, deps } = await start(wf, { subruns })
+  expect(await advance('r1', deps)).toBe('sleeping')
+  expect(started[0]).toEqual({ agentId: 'writer', input: '1042', parent: { runId: 'r1', stepId: 'ask' } })
+  expect((await store.readEvents('r1')).at(-1)!.payload).toEqual({ from: 'running', to: 'sleeping', reason: 'subrun' })
+
+  expect(await advance('r1', deps)).toBe('sleeping')
+  children.set('child_ask', { status: 'completed', text: 'Dear customer' })
+  expect(await advance('r1', deps)).toBe('completed')
+  expect(completed(await store.readEvents('r1')).at(-1)).toEqual(['ask', { status: 'completed', text: 'Dear customer' }])
+})
+
+test('a run without a workflow is an agent run', async () => {
+  const store = new MemoryRunStore()
+  await store.append('r1', [{ type: 'run.created', payload: { agentId: 'ops', input: { text: 'hi' } }, labels: ['untrusted'] }])
+  const llm: LLMPort = {
+    complete: async () => ({ message: { role: 'assistant', content: 'hello' }, usage: { inputTokens: 1, outputTokens: 1 }, stopReason: 'end' }),
+  }
+  const deps = { store, llm, tools: fakeTools(), agent: AGENT, toolsByName: TOOLS, agentVersion: 1, tenantCostToday: async () => 0 }
+  expect(await advance('r1', deps)).toBe('completed')
+  expect(projectRun(await store.readEvents('r1'), '').output).toBe('hello')
+})
+
+test('a workflow run stops at the llm_calls limit before its next step', async () => {
+  const llm: LLMPort = {
+    complete: async () => ({ message: { role: 'assistant', content: 'x' }, usage: { inputTokens: 1, outputTokens: 1 }, stopReason: 'end' }),
+  }
+  const wf: Workflow = { start: 'a', steps: { a: { kind: 'llm', prompt: 'p', next: 'b' }, b: { kind: 'llm', prompt: 'p' } } }
+  const { store, deps } = await start(wf, { llm, agent: { ...AGENT, limits: { llm_calls: 1 } } })
+  expect(await advance('r1', deps)).toBe('waiting_human')
+  const log = await store.readEvents('r1')
+  expect(log.at(-2)!.payload).toMatchObject({ limit: 'llm_calls' })
+  expect(completed(log).map(([id]) => id)).toEqual(['a'])
+})

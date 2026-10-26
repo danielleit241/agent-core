@@ -1210,3 +1210,28 @@ test('only the admin key may continue a run past the tenant daily cost', async (
   })
   expect(cancel.statusCode).toBe(202)
 })
+
+const pingWorkflow = { start: 'ask', steps: { ask: { kind: 'approval', reason: 'Go?', next: 'say' }, say: { kind: 'llm', prompt: 'Say hi.' } } }
+
+test('an agent whose workflow has a cycle or a missing step gives 422 with the path of each problem', async () => {
+  const res = await authed('POST', '/v1/agents', {
+    ...agentBody,
+    workflows: { loop: { start: 'a', steps: { a: { kind: 'approval', reason: 'x', next: 'b' }, b: { kind: 'approval', reason: 'y', next: 'a' } } } },
+  })
+  expect(res.statusCode).toBe(422)
+  expect(res.json().error).toMatchObject({ code: 'invalid_workflow', fix: expect.any(String) })
+  expect(res.json().error.message).toContain('workflows.loop.steps.a.next: the steps form a cycle (a → b → a)')
+  expect(await new ConfigRepo(pool, 'default', box).getAgent('helper')).toBeNull()
+  expect((await authed('POST', '/v1/agents', { ...agentBody, workflows: { ping: pingWorkflow } })).statusCode).toBe(201)
+})
+
+test('a run can name a workflow of its agent; run.created keeps a copy of it, and an unknown name gives 422', async () => {
+  await authed('POST', '/v1/agents', { ...agentBody, workflows: { ping: pingWorkflow } })
+  const unknown = await authed('POST', '/v1/runs', { agent: 'helper', workflow: 'pong', input: { text: 'hi' } })
+  expect(unknown.statusCode).toBe(422)
+  expect(unknown.json().error).toMatchObject({ code: 'unknown_workflow', fix: expect.any(String) })
+  const res = await authed('POST', '/v1/runs', { agent: 'helper', workflow: 'ping', input: { text: 'hi' } })
+  expect(res.statusCode).toBe(202)
+  const events = (await authed('GET', `/v1/runs/${res.json().run_id}/events`)).json().events
+  expect(events[0].payload.workflow).toEqual({ name: 'ping', definition: pingWorkflow })
+})

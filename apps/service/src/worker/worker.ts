@@ -1,5 +1,6 @@
-import { SecretDecryptError, advanceRun, expireWait, projectRun } from '@agent-core/core'
+import { SecretDecryptError, advance, expireWait, projectRun } from '@agent-core/core'
 import type { AgentDefinition, ConnectionGuard, ConnectionLimits, LLMPort, RunStatus, SecretBox, ToolDescriptor, ToolInvoker } from '@agent-core/core'
+import { createSubruns } from '../runs/subruns'
 import {
   ConfigRepo,
   LockLostError,
@@ -11,6 +12,7 @@ import {
   enqueue,
   getRun,
   heartbeat,
+  makeDue,
   release,
   requeueIfHolder,
 } from '@agent-core/store-postgres'
@@ -47,6 +49,8 @@ export type RunWorkerDeps = {
 
 const RETRY_DELAY_MS = 5000
 const MIN_REQUEUE_DELAY_MS = 1000
+// A run that sleeps on a child run is checked this often; the child's end also makes it due at once.
+const SUBRUN_POLL_MS = 60_000
 const TERMINAL: readonly RunStatus[] = ['completed', 'failed', 'cancelled']
 
 /** A permanent problem with the run's configuration: retrying cannot help. */
@@ -156,13 +160,14 @@ async function processJob(deps: RunWorkerDeps, job: { runId: string; tenantId: s
       throw err
     }
     const store = new PgRunStore(deps.pool, tenantId, { lockedBy: deps.workerId })
-    status = await advanceRun(runId, {
+    status = await advance(runId, {
       store,
       tenantCostToday: () => store.tenantCostSince(startOfUtcDay(new Date())),
       llm: deps.llm,
       tools: deps.tools(tenantId),
       ...ctx,
       signal: ctl.abort.signal,
+      subruns: createSubruns(deps.pool, deps.secrets, tenantId),
       ...(deps.now === undefined ? {} : { now: deps.now }),
     })
   } catch (err) {
@@ -214,12 +219,26 @@ async function processJob(deps: RunWorkerDeps, job: { runId: string; tenantId: s
     console.error(`worker: onRunSettled failed for run ${runId}; the job will be retried`, err)
     return
   }
+  if (TERMINAL.includes(status)) {
+    // A child run that ended wakes its parent workflow now instead of at the parent's next check.
+    try {
+      const first = (await new PgRunStore(deps.pool, tenantId).readEvents(runId))[0]
+      if (first?.type === 'run.created' && first.payload.parent !== undefined) await makeDue(deps.pool, tenantId, first.payload.parent.runId)
+    } catch (err) {
+      console.error(`worker: could not wake the parent of run ${runId}; it wakes at its next check`, err)
+    }
+  }
   if (status === 'waiting_human' || status === 'sleeping') {
     // Keep the job, due when the wait expires or the run wakes up. A human's answer makes it due at once
     // (the input route enqueues); a job claimed before the wake time sleeps on and comes back here.
     try {
       const proj = projectRun(await new PgRunStore(deps.pool, tenantId).readEvents(runId), '')
-      const due = proj.status === 'waiting_human' ? proj.waitExpiresAt : proj.status === 'sleeping' ? proj.wakeAt : null
+      const due =
+        proj.status === 'waiting_human'
+          ? proj.waitExpiresAt
+          : proj.status === 'sleeping'
+            ? (proj.wakeAt ?? new Date(Date.now() + SUBRUN_POLL_MS).toISOString())
+            : null
       if (due !== null) {
         // Same guard as the retry path: when the worker clock lags the database, the job must not spin.
         const dueAt = Math.max(new Date(due).getTime(), Date.now() + MIN_REQUEUE_DELAY_MS)

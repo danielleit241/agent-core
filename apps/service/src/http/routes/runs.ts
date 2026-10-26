@@ -13,6 +13,8 @@ const POLL_MS = 100
 
 const RunBody = z.object({
   agent: z.string().min(1),
+  /** A workflow of the agent; without it the run is an agent run. */
+  workflow: z.string().min(1).optional(),
   input: z.object({ text: z.string().min(1) }),
   // Bounded: the principal goes into the LLM context.
   principal: z.object({ id: z.string().max(200), roles: z.array(z.string().max(64)).max(20) }).optional(),
@@ -106,6 +108,17 @@ export function registerRunRoutes(app: FastifyInstance, deps: { pool: ReturnType
         422,
       )
     }
+    const workflows = agent.definition.workflows ?? {}
+    // Own keys only: a name like "constructor" must not find an inherited member.
+    const definition = body.workflow !== undefined && Object.hasOwn(workflows, body.workflow) ? workflows[body.workflow] : undefined
+    if (body.workflow !== undefined && definition === undefined) {
+      throw apiError(
+        'unknown_workflow',
+        `Agent "${body.agent}" has no workflow "${body.workflow}".`,
+        "Name a workflow from the agent's \"workflows\", or leave \"workflow\" out for an agent run.",
+        422,
+      )
+    }
     // One transaction: the run row, run.created and the queue row appear together or not at all.
     const created = await createRunWithEvent(pool, {
       tenantId,
@@ -120,6 +133,7 @@ export function registerRunRoutes(app: FastifyInstance, deps: { pool: ReturnType
           agentId: body.agent,
           input: body.input,
           ...(body.principal ? { principal: body.principal } : {}),
+          ...(definition === undefined ? {} : { workflow: { name: body.workflow!, definition } }),
         },
         labels: ['untrusted'], // the caller's text is untrusted input
       },
