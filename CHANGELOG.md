@@ -64,6 +64,7 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions exist
 
 - When the worker stops or loses its lock, an LLM call in progress is aborted at once, so the job is released quickly instead of waiting for the provider timeout.
 - A filtered or refused LLM answer now fails the run with reason `filtered` instead of completing it.
+- A private key cut off before its END line inside JSON text (line breaks escaped as `\n`) is now removed with its whole body; before, only the header was.
 - The event log refuses a state change written from a stale status, so a run cancelled while a worker was starting it stays cancelled.
 - A tool always runs with the safety computed from its source and confirmations, never a stored copy; tools stored before this change run strict until confirmed.
 - A stricter declaration now tightens every safety property, and the output of a tool that reaches outside is always untrusted.
