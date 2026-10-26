@@ -773,3 +773,62 @@ test('a wait that is nearly due is put back at least 1 s ahead, so clock skew ca
   expect(log.settled).toEqual([['r-skew', 'waiting_human']])
   expect((await queueDueAt('r-skew'))!.getTime()).toBeGreaterThanOrEqual(settledAt + 500)
 })
+
+const followupAgent: AgentDefinition = { ...agent, allow: [{ tool: 'agent_core.schedule_followup' }] }
+/** First asks for a follow-up in an hour, then answers. */
+function followupLlm(): LLMPort & { requests: Parameters<LLMPort['complete']>[0][] } {
+  const requests: Parameters<LLMPort['complete']>[0][] = []
+  return {
+    requests,
+    complete: async (req) => {
+      requests.push(req)
+      return requests.length === 1
+        ? {
+            message: { role: 'assistant', content: '', toolCalls: [{ id: 'c1', name: 'agent_core.schedule_followup', arguments: { after_seconds: 3600, note: 'check again' } }] },
+            usage: { inputTokens: 1, outputTokens: 1 },
+            stopReason: 'tool_calls',
+          }
+        : { message: { role: 'assistant', content: 'checked' }, usage: { inputTokens: 1, outputTokens: 1 }, stopReason: 'end' }
+    },
+  }
+}
+
+test('a sleeping run is settled and keeps its job, unlocked and due at its wake time', async () => {
+  const { version } = await new ConfigRepo(pool, 'default', box).putAgent(followupAgent)
+  await seedRun('r-sleep', 'helper', version)
+  const log = settledLog()
+  const worker = startRunWorker({ secrets: box, pool, llm: followupLlm(), tools, workerId: 'w1', pollMs: 20, ...log })
+  await waitFor(() => log.settled.length === 1)
+  await worker.stop()
+  expect(log.settled).toEqual([['r-sleep', 'sleeping']])
+  const events = await new PgRunStore(pool, 'default').readEvents('r-sleep')
+  const wakeAt = (events.at(-1)!.payload as { wakeAt: string }).wakeAt
+  expect(Date.parse(wakeAt) - Date.now()).toBeGreaterThan(3_590_000)
+  const row = (await pool.query<{ locked_by: string | null; available_at: Date }>('SELECT locked_by, available_at FROM queue WHERE run_id = $1', ['r-sleep'])).rows[0]
+  expect(row?.locked_by).toBeNull()
+  expect(row?.available_at.toISOString()).toBe(wakeAt)
+})
+
+test('a follow-up survives a worker restart and wakes the run when due', async () => {
+  // The store stamps events with the real time and the second worker's clock is an hour ahead, so the
+  // run time it measures includes the sleep. Room for that keeps the test about the wake-up.
+  const { version } = await new ConfigRepo(pool, 'default', box).putAgent({ ...followupAgent, limits: { run_time_s: 7200 } })
+  await seedRun('r-wake', 'helper', version)
+  const llm = followupLlm()
+  const first = settledLog()
+  const w1 = startRunWorker({ secrets: box, pool, llm, tools, workerId: 'w1', pollMs: 20, ...first })
+  await waitFor(() => first.settled.length === 1)
+  await w1.stop()
+  expect(await runStatus('r-wake')).toBe('sleeping')
+
+  // A new worker an hour later: its clock is past the wake time, and the job is due.
+  const later = () => new Date(Date.now() + 3_601_000)
+  await pool.query('UPDATE queue SET available_at = now() WHERE run_id = $1', ['r-wake'])
+  const second = settledLog()
+  const w2 = startRunWorker({ secrets: box, pool, llm, tools, workerId: 'w2', pollMs: 20, now: later, ...second })
+  await waitFor(() => second.settled.length === 1)
+  await w2.stop()
+  expect(second.settled).toEqual([['r-wake', 'completed']])
+  expect(llm.requests.at(-1)!.messages.at(-1)).toMatchObject({ role: 'tool', toolCallId: 'c1', content: expect.stringMatching(/^Follow-up at .+\. Note: check again$/) })
+  expect(await queueRows()).toBe(0)
+})

@@ -341,6 +341,30 @@ test('registering an MCP connection over a webhook connection gives 409', async 
   expect((await new ConfigRepo(pool, 'default', box).getConnection('hook'))?.kind).toBe('webhook')
 })
 
+test('a connection may not register a tool named with the built-in prefix agent_core.', async () => {
+  const reserved = { ...webhookTool, name: 'agent_core.schedule_followup' }
+  const hook = await authed('POST', '/v1/connections', { ...webhookBody, tools: [webhookTool, reserved] })
+  expect(hook.statusCode).toBe(422)
+  expect(hook.json().error).toMatchObject({ code: 'reserved_tool_name', fix: expect.any(String) })
+  const mcp = buildApp({
+    secrets: box,
+    pool,
+    adminKey: ADMIN_KEY,
+    discoverTools: async (id: string) => (await discoverTools(id)).map((d) => ({ ...d, tool: { ...d.tool, name: 'agent_core.escalate' } })),
+  })
+  const res = await mcp.inject({
+    method: 'POST',
+    url: '/v1/connections',
+    payload: { id: 'shop', url: 'http://shop.test/mcp' },
+    headers: { authorization: `Bearer ${ADMIN_KEY}` },
+  })
+  expect(res.statusCode).toBe(422)
+  expect(res.json().error.code).toBe('reserved_tool_name')
+  const config = new ConfigRepo(pool, 'default', box)
+  expect(await config.getConnection('loyalty')).toBeNull()
+  expect(await config.getConnection('shop')).toBeNull()
+})
+
 test('an unreachable connection gives 422 and a non-http url gives 400', async () => {
   const failing = buildApp({
     secrets: box,

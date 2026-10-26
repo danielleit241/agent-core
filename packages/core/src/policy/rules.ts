@@ -52,7 +52,7 @@ function conditionHolds(args: Record<string, unknown>, key: string, cond: Condit
   return true
 }
 
-function toolMatches(pattern: string, name: string): boolean {
+export function toolMatches(pattern: string, name: string): boolean {
   if (pattern.endsWith('.*')) return name.startsWith(pattern.slice(0, -1))
   return pattern === name
 }

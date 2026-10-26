@@ -1269,3 +1269,135 @@ describe('run input', () => {
     expect(projectRun(await store.readEvents('r1'), '').output).toBe('Express it is.')
   })
 })
+
+describe('follow-ups', () => {
+  const FOLLOWUP = 'agent_core.schedule_followup'
+  const T0 = Date.parse('2026-10-26T10:00:00.000Z')
+  /** A clock the test moves; the store stamps events with it too. */
+  function clock() {
+    let ms = T0
+    return { now: () => new Date(ms), advance: (s: number) => void (ms += s * 1000) }
+  }
+  function sleepDeps(o: { llm: LLMPort; store: RunStore; now: () => Date; allow?: AgentDefinition['allow'] }) {
+    const tools = fakeTools()
+    const d = deps({ llm: o.llm, store: o.store, tools, now: o.now })
+    return { tools, deps: { ...d, agent: { ...AGENT, allow: o.allow ?? [...AGENT.allow, { tool: FOLLOWUP }] } } }
+  }
+  const followup = (after_seconds: number, note: string) => callTool(FOLLOWUP, { after_seconds, note })
+
+  test('the model sees the follow-up tool only when an allow rule names it', async () => {
+    for (const [allow, seen] of [
+      [AGENT.allow, false],
+      [[{ tool: FOLLOWUP }], true],
+      [[{ tool: 'agent_core.*' }], true],
+    ] as const) {
+      const c = clock()
+      const store = new MemoryRunStore(c.now)
+      await store.append('r1', [created()])
+      const llm = scriptedLlm([say('done')])
+      await advanceRun('r1', sleepDeps({ llm, store, now: c.now, allow: [...allow] }).deps)
+      expect(llm.lastRequest().tools.some((t) => t.name === FOLLOWUP)).toBe(seen)
+    }
+  })
+
+  test('without an allow rule a follow-up call is an unknown tool', async () => {
+    const c = clock()
+    const store = new MemoryRunStore(c.now)
+    await store.append('r1', [created()])
+    const llm = scriptedLlm([followup(3600, 'check'), say('done')])
+    expect(await advanceRun('r1', sleepDeps({ llm, store, now: c.now, allow: AGENT.allow }).deps)).toBe('completed')
+    expect((await store.readEvents('r1')).find((e) => e.type === 'tool.responded')!.payload).toMatchObject({
+      content: `Unknown tool: ${FOLLOWUP}`,
+      isError: true,
+    })
+  })
+
+  test('a follow-up puts the run to sleep until its wake time without calling a tool', async () => {
+    const c = clock()
+    const store = new MemoryRunStore(c.now)
+    await store.append('r1', [created()])
+    const llm = scriptedLlm([followup(3600, 'check the parcel')])
+    const { tools, deps: d } = sleepDeps({ llm, store, now: c.now })
+    expect(await advanceRun('r1', d)).toBe('sleeping')
+    const log = await store.readEvents('r1')
+    expect(types(log).slice(-3)).toEqual(['rule.decided', 'tool.requested', 'run.state_changed'])
+    expect(log.at(-1)!.payload).toEqual({ from: 'running', to: 'sleeping', wakeAt: '2026-10-26T11:00:00.000Z' })
+    expect(tools.calls).toEqual([])
+    expect(projectRun(log, '').wakeAt).toBe('2026-10-26T11:00:00.000Z')
+  })
+
+  test('a sleeping run woken early appends nothing and sleeps on; a message does not wake it', async () => {
+    const c = clock()
+    const store = new MemoryRunStore(c.now)
+    await store.append('r1', [created()])
+    const llm = scriptedLlm([followup(3600, 'check')])
+    const { deps: d } = sleepDeps({ llm, store, now: c.now })
+    await advanceRun('r1', d)
+    await store.append('r1', [{ type: 'input.received', payload: { action: 'message', text: 'any news?' }, labels: ['untrusted'] }])
+    const before = (await store.readEvents('r1')).length
+    c.advance(3599)
+    expect(await advanceRun('r1', d)).toBe('sleeping')
+    expect((await store.readEvents('r1')).length).toBe(before)
+  })
+
+  test('at its wake time the run gets the note back as an untrusted result and continues; the sleep is not run time', async () => {
+    const c = clock()
+    const store = new MemoryRunStore(c.now)
+    await store.append('r1', [created()])
+    const llm = scriptedLlm([followup(3600, 'check the parcel'), say('Parcel delivered.')])
+    const { deps: d } = sleepDeps({ llm, store, now: c.now })
+    await advanceRun('r1', d)
+    await store.append('r1', [{ type: 'input.received', payload: { action: 'message', text: 'any news?' }, labels: ['untrusted'] }])
+    c.advance(3600)
+    expect(await advanceRun('r1', d)).toBe('completed')
+    const log = await store.readEvents('r1')
+    const woke = log.find((e) => e.type === 'tool.responded')!
+    expect(woke.payload).toEqual({
+      toolCallId: 'call_1',
+      content: 'Follow-up at 2026-10-26T11:00:00.000Z. Note: check the parcel',
+      isError: false,
+    })
+    expect(woke.labels).toEqual(['untrusted'])
+    expect(log[woke.seq]!.payload).toEqual({ from: 'sleeping', to: 'running' })
+    expect(llm.lastRequest().messages.slice(-2)).toEqual([
+      { role: 'tool', toolCallId: 'call_1', content: 'Follow-up at 2026-10-26T11:00:00.000Z. Note: check the parcel' },
+      { role: 'user', content: 'any news?' },
+    ])
+    expect(projectRun(log, '').runningMs).toBe(0)
+  })
+
+  test('a follow-up with invalid arguments gets a tool error and the run continues', async () => {
+    for (const args of [{ after_seconds: 59, note: 'x' }, { after_seconds: 2_592_001, note: 'x' }, { after_seconds: 90.5, note: 'x' }, { after_seconds: 60 }, { after_seconds: 60, note: 'x'.repeat(1001) }]) {
+      const c = clock()
+      const store = new MemoryRunStore(c.now)
+      await store.append('r1', [created()])
+      const llm = scriptedLlm([callTool(FOLLOWUP, args), say('done')])
+      expect(await advanceRun('r1', sleepDeps({ llm, store, now: c.now }).deps)).toBe('completed')
+      const result = (await store.readEvents('r1')).find((e) => e.type === 'tool.responded')!
+      expect(result.payload).toMatchObject({ isError: true })
+      expect((result.payload as { content: string }).content).toMatch(/^Invalid arguments: /)
+    }
+  })
+
+  test('the eleventh follow-up of a run gets a tool error and the run continues', async () => {
+    const c = clock()
+    const store = new MemoryRunStore(c.now)
+    await store.append('r1', [created()])
+    const llm = scriptedLlm([...Array.from({ length: 11 }, (_, i) => followup(60, `round ${i + 1}`)), say('done')])
+    const { deps: d } = sleepDeps({ llm, store, now: c.now })
+    let status = await advanceRun('r1', d)
+    for (let i = 0; i < 10; i++) {
+      expect(status).toBe('sleeping')
+      c.advance(60)
+      status = await advanceRun('r1', d)
+    }
+    expect(status).toBe('completed')
+    const results = (await store.readEvents('r1')).filter((e) => e.type === 'tool.responded')
+    expect(results).toHaveLength(11)
+    expect(results.at(-1)!.payload).toEqual({
+      toolCallId: 'call_11',
+      content: 'Follow-up limit reached: a run may schedule at most 10 follow-ups.',
+      isError: true,
+    })
+  })
+})

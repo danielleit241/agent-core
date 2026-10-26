@@ -28,6 +28,10 @@ export type RunProjection = {
   runningSince: string | null
   waitStartedAt: string | null
   waitExpiresAt: string | null
+  /** When a sleeping run wakes up, or null. */
+  wakeAt: string | null
+  /** Follow-ups the run scheduled: each one put it to sleep. */
+  followups: number
   /** A human asked to cancel the run while it was running. */
   cancelRequested: boolean
   /** Messages from a human that arrived after the last LLM request. */
@@ -69,6 +73,8 @@ export function projectRun(events: StoredEvent[], instructions: string): RunProj
   let runningSince: string | null = null
   let waitStartedAt: string | null = null
   let waitExpiresAt: string | null = null
+  let wakeAt: string | null = null
+  let followups = 0
   let cancelRequested = false
   let unreadMessages = 0
   // A user message between an LLM request and its answer, or between a tool call and its result,
@@ -91,6 +97,8 @@ export function projectRun(events: StoredEvent[], instructions: string): RunProj
         waitingReason = status === 'waiting_human' ? ((e.payload.reason as WaitingReason | undefined) ?? null) : null
         waitStartedAt = status === 'waiting_human' ? e.createdAt : null
         waitExpiresAt = status === 'waiting_human' ? (e.payload.expiresAt ?? null) : null
+        wakeAt = status === 'sleeping' ? (e.payload.wakeAt ?? null) : null
+        if (status === 'sleeping') followups++
         break
       case 'limit.continued':
         limitGrants[e.payload.limit]++
@@ -177,6 +185,8 @@ export function projectRun(events: StoredEvent[], instructions: string): RunProj
     runningSince,
     waitStartedAt,
     waitExpiresAt,
+    wakeAt,
+    followups,
     cancelRequested,
     unreadMessages,
     lastSeq: events.at(-1)!.seq,
