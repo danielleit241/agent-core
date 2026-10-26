@@ -25,3 +25,4 @@ export { beginIdempotent, completeIdempotent, abandonIdempotent } from './http/i
 export type { BeginResult } from './http/idempotency'
 export { DEFAULT_MAX_RUNS_PER_TENANT, enqueue, claim, release, heartbeat, makeDue, requeueIfHolder } from './runs/queue'
 export { PgConnectionGuard } from './guards/connection-guard'
+export { PgContentStore } from './content/content-store'

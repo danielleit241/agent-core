@@ -156,7 +156,11 @@ const payloadSchemas = {
     // Set on a run that a workflow `subrun` step started.
     parent: z.object({ runId: z.string(), stepId: z.string() }).optional(),
   }),
-  'llm.requested': z.object({ model: z.string() }),
+  'llm.requested': z.object({
+    model: z.string(),
+    // Hash of the manifest of what was sent (see `snapshotRequest`). Old events have none.
+    context: z.object({ snapshot: z.string(), chars: z.number() }).optional(),
+  }),
   'llm.responded': z.object({
     message: MessageSchema,
     usage: UsageSchema,

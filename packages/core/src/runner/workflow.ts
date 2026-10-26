@@ -1,8 +1,9 @@
 import { z } from 'zod'
+import { snapshotRequest } from '../content/snapshot'
 import { projectRun, type RunProjection } from '../events/projection'
 import { conditionHolds } from '../policy/rules'
 import type { SubrunPort } from '../ports'
-import type { Label, NewEvent, RunStatus, StoredEvent, ToolCall, Workflow } from '../types'
+import type { Label, Message, NewEvent, RunStatus, StoredEvent, ToolCall, Workflow } from '../types'
 import {
   advanceRun,
   checkRunLimits,
@@ -261,20 +262,27 @@ async function llmStep(
   const now = nowOf(deps)
   // The run waits for an LLM retry; the worker calls again once `retryAt` has passed.
   if (proj.llmRetry.retryAt !== null && Date.parse(proj.llmRetry.retryAt) > now.getTime()) return 'running'
-  await deps.store.append(runId, [{ type: 'llm.requested', payload: { model: deps.agent.model }, labels: [] }])
   const firstTurn = proj.messages.findIndex((m) => m.role !== 'system')
   const schema = outputSchema === undefined ? undefined : z.fromJSONSchema(outputSchema as Parameters<typeof z.fromJSONSchema>[0])
+  const messages: Message[] = [
+    ...proj.messages.slice(0, firstTurn === -1 ? proj.messages.length : firstTurn),
+    { role: 'system', content: `Current time: ${now.toISOString()}`, volatile: true },
+    { role: 'user', content: input },
+    ...(flow.last === undefined ? [] : [{ role: 'user' as const, content: `Output of the previous step: ${JSON.stringify(flow.last)}` }]),
+    { role: 'user', content: prompt },
+  ]
+  // Stored before the event: a crash in between leaves only blobs, and the next step stores them again as no-ops.
+  const context = await snapshotRequest(deps.content, {
+    messages,
+    tools: [],
+    ...(outputSchema === undefined ? {} : { output: { name: `step_${id}`, schema: outputSchema } }),
+  })
+  await deps.store.append(runId, [{ type: 'llm.requested', payload: { model: deps.agent.model, context }, labels: [] }])
   let res: Awaited<ReturnType<RunnerDeps['llm']['complete']>>
   try {
     res = await deps.llm.complete({
       model: deps.agent.model,
-      messages: [
-        ...proj.messages.slice(0, firstTurn === -1 ? proj.messages.length : firstTurn),
-        { role: 'system', content: `Current time: ${now.toISOString()}`, volatile: true },
-        { role: 'user', content: input },
-        ...(flow.last === undefined ? [] : [{ role: 'user' as const, content: `Output of the previous step: ${JSON.stringify(flow.last)}` }]),
-        { role: 'user', content: prompt },
-      ],
+      messages,
       tools: [],
       ...(schema === undefined ? {} : { output: { name: `step_${id}`, schema } }),
       ...(deps.signal === undefined ? {} : { signal: deps.signal }),

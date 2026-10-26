@@ -7,7 +7,7 @@ import { ConfigRepo, PgRunStore, StateConflictError, childRunIds, createRunWithE
 import type { createPool } from '@agent-core/store-postgres'
 import { ApiError, apiError, validationError } from '../errors'
 import { DEFAULT_AGENT, resolveAgent } from '../../default-agent'
-import { getRunView } from '../../runs/views'
+import { getLlmCall, getLlmCalls, getRunView } from '../../runs/views'
 import { keyReused, readIdempotencyKey, requestHash } from '../idempotency'
 
 const POLL_MS = 100
@@ -193,6 +193,22 @@ export function registerRunRoutes(app: FastifyInstance, deps: { pool: ReturnType
       chain: chain.valid ? { valid: true } : { valid: false, broken_at_seq: chain.brokenAtSeq },
       head: { last_seq: head?.lastSeq ?? null, last_hash: head?.lastHash ?? null },
     }
+  })
+
+  app.get<{ Params: { id: string } }>('/v1/runs/:id/llm-calls', async (req) => {
+    const view = await getLlmCalls(pool, req.auth.tenantId, req.params.id)
+    if (!view) throw runNotFound(req.params.id)
+    return view
+  })
+
+  app.get<{ Params: { id: string; seq: string } }>('/v1/runs/:id/llm-calls/:seq', async (req) => {
+    const { id, seq } = req.params
+    if (!(await getRun(pool, req.auth.tenantId, id))) throw runNotFound(id)
+    const call = /^\d+$/.test(seq) ? await getLlmCall(pool, req.auth.tenantId, id, Number(seq)) : null
+    if (!call) {
+      throw apiError('llm_call_not_found', `Run "${id}" has no LLM call with a snapshot at seq ${seq}.`, 'List the calls with GET /v1/runs/{id}/llm-calls and use a seq with parts above 0.', 404)
+    }
+    return call
   })
 
   /**

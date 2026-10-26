@@ -1,6 +1,8 @@
 import { MemoryRunStore } from '../support/memory-store'
-import { type ConnectionGuard, type GuardDenial, type LLMPort, type RunStore, type ToolInvoker } from '../../src/ports'
+import { MemoryContentStore } from '../support/memory-content-store'
+import { type ConnectionGuard, type ContentStore, type GuardDenial, type LLMPort, type RunStore, type ToolInvoker } from '../../src/ports'
 import { projectRun } from '../../src/events/projection'
+import type { Manifest } from '../../src/content/snapshot'
 import { advanceRun, expireWait } from '../../src/runner/runner'
 import type { AgentDefinition, Limits, Message, NewEvent, RunStatus, StoredEvent, ToolDescriptor } from '../../src/types'
 
@@ -136,6 +138,7 @@ function deps(o: {
   llm: LLMPort
   store: RunStore
   tools: ToolInvoker
+  content?: ContentStore
   limits?: Partial<Limits>
   tenantCostToday?: () => Promise<number>
   now?: () => Date
@@ -154,6 +157,7 @@ function deps(o: {
     store: o.store,
     llm: o.llm,
     tools: o.tools,
+    content: o.content ?? new MemoryContentStore(),
     agent: o.limits === undefined ? AGENT : { ...AGENT, limits: o.limits },
     toolsByName: TOOLS,
     agentVersion: 1,
@@ -1655,4 +1659,75 @@ test('an aborted LLM call leaves no error and no state change', async () => {
   expect(types(log)).not.toContain('error.raised')
   expect(projectRun(log, '').status).toBe('running')
   expect(await advanceRun('r1', { ...deps({ llm, store, tools }), signal: new AbortController().signal })).toBe('completed')
+})
+
+type Ctx = { snapshot: string; chars: number }
+const contextOf = (e: StoredEvent): Ctx | undefined => (e.payload as { context?: Ctx }).context
+const manifestOf = async (content: MemoryContentStore, ctx: Ctx): Promise<Manifest> =>
+  JSON.parse((await content.get([ctx.snapshot])).get(ctx.snapshot)!) as Manifest
+const hashesOf = (m: Manifest): string[] => [...m.messages.filter((x): x is string => typeof x === 'string'), ...m.tools]
+
+test('every LLM call has a snapshot; a part sent twice is stored once; the time item adds no blob', async () => {
+  const llm = scriptedLlm([callTool('orders.get', { order_id: '1042' }), say('Done.')])
+  const content = new MemoryContentStore()
+  const { store, tools } = await setup()
+  let tick = 0
+  const now = () => new Date(Date.UTC(2026, 0, 1, 0, 0, tick++))
+  expect(await advanceRun('r1', deps({ llm, store, tools, content, now }))).toBe('completed')
+  const requested = (await store.readEvents('r1')).filter((e) => e.type === 'llm.requested')
+  const contexts = requested.map(contextOf)
+  expect(contexts).toHaveLength(2)
+  expect(contexts.every((c) => c !== undefined)).toBe(true)
+  const [m1, m2] = await Promise.all(contexts.map((c) => manifestOf(content, c!)))
+  expect(m1!.messages.some((x) => typeof x !== 'string')).toBe(true) // the time item is inline
+  expect(m2!.messages[0]).toBe(m1!.messages[0]) // same system hash in both calls
+  expect([...content.blobs.values()].filter((t) => t.includes('You are a support agent.'))).toHaveLength(1)
+  // The clock moved between the calls, yet no blob holds the time: only the two manifests differ.
+  const manifests = new Set(contexts.map((c) => c!.snapshot))
+  expect([...content.blobs].some(([h, t]) => !manifests.has(h) && t.includes('Current time'))).toBe(false)
+  expect(content.puts).toBe(new Set([...hashesOf(m1!), ...hashesOf(m2!)]).size + 2)
+})
+
+test('the snapshot resolves to exactly the messages and tools the LLM received', async () => {
+  const llm = scriptedLlm([callTool('orders.get', { order_id: '1042' }), say('Done.')])
+  const content = new MemoryContentStore()
+  const { store, tools } = await setup()
+  await advanceRun('r1', deps({ llm, store, tools, content }))
+  const requested = (await store.readEvents('r1')).filter((e) => e.type === 'llm.requested')
+  for (const [i, e] of requested.entries()) {
+    const manifest = await manifestOf(content, contextOf(e)!)
+    const texts = await content.get(hashesOf(manifest))
+    const sent = llm.requests[i]!
+    expect(manifest.messages.map((x) => JSON.parse(typeof x === 'string' ? texts.get(x)! : x.inline))).toEqual(
+      sent.messages.map((m) => JSON.parse(JSON.stringify({ role: m.role, content: m.content, toolCalls: m.toolCalls, toolCallId: m.toolCallId }))),
+    )
+    expect(manifest.tools.map((h) => JSON.parse(texts.get(h)!))).toEqual(
+      sent.tools.map((t) => ({ name: t.name, description: t.description, inputSchema: t.inputSchema })),
+    )
+  }
+})
+
+test('a crash after the blobs are stored and before llm.requested resumes without duplicate blobs', async () => {
+  const llm = scriptedLlm([say('Done.')])
+  const content = new MemoryContentStore()
+  const { store, tools } = await setup()
+  let fail = true
+  const flaky: RunStore = {
+    readEvents: (id) => store.readEvents(id),
+    readEventsAfter: (id, n) => store.readEventsAfter(id, n),
+    append: async (id, events, opts) => {
+      if (fail && events.some((e) => e.type === 'llm.requested')) {
+        fail = false
+        throw new Error('db down')
+      }
+      return store.append(id, events, opts)
+    },
+  }
+  // A fixed clock: the time item is part of the snapshot, so a moving clock would add a new blob.
+  const now = () => new Date('2026-01-01T00:00:00Z')
+  await expect(advanceRun('r1', deps({ llm, store: flaky, tools, content, now }))).rejects.toThrow('db down')
+  const stored = content.puts
+  expect(stored).toBeGreaterThan(0)
+  expect(await advanceRun('r1', deps({ llm, store: flaky, tools, content, now }))).toBe('completed')
+  expect(content.puts).toBe(stored)
 })
