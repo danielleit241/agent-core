@@ -15,6 +15,8 @@ import {
 
 type Pool = ReturnType<typeof createPool>
 
+const startOfUtcDay = (d: Date): Date => new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()))
+
 export type RunContext = { agent: AgentDefinition; agentVersion: number; toolsByName: Record<string, ToolDescriptor> }
 
 export type RunWorkerDeps = {
@@ -121,8 +123,10 @@ async function processJob(deps: RunWorkerDeps, job: { runId: string; tenantId: s
       }
       throw err
     }
+    const store = new PgRunStore(deps.pool, tenantId, { lockedBy: deps.workerId })
     status = await advanceRun(runId, {
-      store: new PgRunStore(deps.pool, tenantId, { lockedBy: deps.workerId }),
+      store,
+      tenantCostToday: () => store.tenantCostSince(startOfUtcDay(new Date())),
       llm: deps.llm,
       tools: deps.tools(tenantId),
       ...ctx,

@@ -1,7 +1,8 @@
 import type { LLMPort, RunStore, ToolInvoker } from '../ports'
 import { projectRun, type RunProjection } from '../events/projection'
 import { decide } from '../policy/rules'
-import type { AgentDefinition, NewEvent, RunStatus, ToolCall, ToolDescriptor, WaitingReason } from '../types'
+import { resolveLimits, type LimitName, type Limits } from '../limits'
+import type { AgentDefinition, NewEvent, RunStatus, StoredEvent, ToolCall, ToolDescriptor, WaitingReason } from '../types'
 
 export type RunnerDeps = {
   store: RunStore
@@ -10,7 +11,8 @@ export type RunnerDeps = {
   agent: AgentDefinition
   toolsByName: Record<string, ToolDescriptor>
   agentVersion: number
-  maxLlmCalls?: number
+  /** The tenant's LLM cost since 00:00 UTC today, over all its runs. */
+  tenantCostToday: () => Promise<number>
   /** When aborted, `advanceRun` stops before its next step and appends nothing more. */
   signal?: AbortSignal
   /** Clock for the current-time context item. Tests inject a fixed one. */
@@ -20,10 +22,6 @@ export type RunnerDeps = {
   /** Waits between tool attempts. Tests inject one that resolves at once. */
   sleep?: (ms: number) => Promise<void>
 }
-
-const DEFAULT_MAX_LLM_CALLS = 30
-// About 12k tokens: a large tool output would fill the LLM context and every later request.
-const MAX_TOOL_OUTPUT_CHARS = 48_000
 
 const TOOL_MAX_ATTEMPTS = 3
 const TOOL_RETRY_WAITS_MS = [500, 1000]
@@ -38,10 +36,10 @@ const isRetryable = (tool: ToolDescriptor): boolean =>
 const isHighSurrogate = (code: number): boolean => code >= 0xd800 && code <= 0xdbff
 
 /** Keeps the head and the tail of a long output, so both a header and a final summary survive. */
-function capToolOutput(content: string): string {
-  if (content.length <= MAX_TOOL_OUTPUT_CHARS) return content
-  let head = MAX_TOOL_OUTPUT_CHARS / 2
-  let tail = content.length - MAX_TOOL_OUTPUT_CHARS / 2
+function capToolOutput(content: string, max: number): string {
+  if (content.length <= max) return content
+  let head = Math.floor(max / 2)
+  let tail = content.length - Math.floor(max / 2)
   // Never split a surrogate pair: Postgres refuses a lone surrogate in jsonb.
   if (isHighSurrogate(content.charCodeAt(head - 1))) head -= 1
   if (isHighSurrogate(content.charCodeAt(tail - 1))) tail += 1
@@ -62,7 +60,59 @@ const toolError = (toolCallId: string, content: string): NewEvent => ({
   labels: [],
 })
 
-const waitHuman = (from: RunStatus, reason: WaitingReason): NewEvent => stateChanged(from, 'waiting_human', reason)
+const waitHuman = (from: RunStatus, reason: WaitingReason, expiresAt: string): NewEvent => ({
+  type: 'run.state_changed',
+  payload: { from, to: 'waiting_human', reason, expiresAt },
+  labels: [],
+})
+
+type Breach = { limit: LimitName; max: number; value: number }
+const limitReached = (b: Breach): NewEvent => ({ type: 'limit.reached', payload: b, labels: [] })
+
+const nowOf = (deps: RunnerDeps): Date => (deps.now ?? (() => new Date()))()
+const limitsOf = (deps: RunnerDeps): Limits => resolveLimits(deps.agent.limits)
+/** When a wait for a human that starts now expires. */
+const expiresAt = (deps: RunnerDeps): string => new Date(nowOf(deps).getTime() + limitsOf(deps).wait_human_s * 1000).toISOString()
+
+/** One grant from a human gives one more full allowance. */
+function breach(proj: RunProjection, limits: Limits, limit: LimitName, value: number): Breach | null {
+  const max = limits[limit] * (1 + proj.limitGrants[limit])
+  return value >= max ? { limit, max, value } : null
+}
+
+/** Checks the run limits before a step. The tenant cost is read only before an LLM step. */
+async function checkRunLimits(deps: RunnerDeps, proj: RunProjection, llmStep: boolean): Promise<Breach | null> {
+  const limits = limitsOf(deps)
+  const now = nowOf(deps).getTime()
+  const runningMs = proj.runningMs + (proj.runningSince === null ? 0 : now - Date.parse(proj.runningSince))
+  const time = breach(proj, limits, 'run_time_s', Math.floor(runningMs / 1000))
+  if (time !== null || !llmStep) return time
+  return (
+    breach(proj, limits, 'llm_calls', proj.llmCalls) ??
+    breach(proj, limits, 'tokens', proj.tokens) ??
+    breach(proj, limits, 'cost_usd', proj.costUsd) ??
+    breach(proj, limits, 'tenant_cost_usd_per_day', await deps.tenantCostToday())
+  )
+}
+
+/**
+ * Fails a run whose wait for a human has expired. Returns the events to append, or null when the run
+ * does not wait, waits without `expiresAt` (an old log), or has time left.
+ */
+export function expireWait(events: StoredEvent[], now: Date): NewEvent[] | null {
+  const proj = projectRun(events, '')
+  if (proj.status !== 'waiting_human' || proj.waitExpiresAt === null || proj.waitStartedAt === null) return null
+  if (now.getTime() < Date.parse(proj.waitExpiresAt)) return null
+  const started = Date.parse(proj.waitStartedAt)
+  return [
+    limitReached({
+      limit: 'wait_human_s',
+      max: Math.round((Date.parse(proj.waitExpiresAt) - started) / 1000),
+      value: Math.floor((now.getTime() - started) / 1000),
+    }),
+    stateChanged('waiting_human', 'failed', 'wait_expired'),
+  ]
+}
 
 const isNotSent = (err: unknown): boolean => (err as { notSent?: unknown } | null)?.notSent === true
 const errorMessage = (err: unknown): string => (err instanceof Error ? err.message : String(err))
@@ -80,9 +130,9 @@ const failedAfterSend = (err: unknown): string => {
   return `The tool call failed after it was sent (${c}${d}). It may have run.`
 }
 /** The evidence of why a run waits on an unknown outcome. The text is fixed, so it is safe for events. */
-const unknownOutcome = (why: string): NewEvent[] => [
+const unknownOutcome = (why: string, expires: string): NewEvent[] => [
   { type: 'error.raised', payload: { message: why, retryable: false }, labels: [] },
-  waitHuman('running', 'unknown_outcome'),
+  waitHuman('running', 'unknown_outcome', expires),
 ]
 
 /**
@@ -91,7 +141,6 @@ const unknownOutcome = (why: string): NewEvent[] => [
  * at most the step in progress and calling `advanceRun` again resumes the run.
  */
 export async function advanceRun(runId: string, deps: RunnerDeps): Promise<RunStatus> {
-  const maxLlmCalls = deps.maxLlmCalls ?? DEFAULT_MAX_LLM_CALLS
   for (;;) {
     const proj = projectRun(await deps.store.readEvents(runId), deps.agent.instructions)
     if (deps.signal?.aborted) return proj.status
@@ -102,7 +151,15 @@ export async function advanceRun(runId: string, deps: RunnerDeps): Promise<RunSt
     if (proj.status !== 'running') return proj.status
 
     const call = proj.pendingToolCalls[0]
-    const outcome = call !== undefined ? await handleToolCall(runId, deps, proj, call) : await llmStep(runId, deps, proj, maxLlmCalls)
+    // A call in flight finishes first: stopping there would leave its outcome unknown.
+    if (call === undefined || !proj.inFlight.includes(call.id)) {
+      const b = await checkRunLimits(deps, proj, call === undefined)
+      if (b !== null) {
+        await deps.store.append(runId, [limitReached(b), waitHuman('running', 'limit', expiresAt(deps))])
+        return 'waiting_human'
+      }
+    }
+    const outcome = call !== undefined ? await handleToolCall(runId, deps, proj, call) : await llmStep(runId, deps, proj)
     if (outcome !== 'continue') return outcome
   }
 }
@@ -128,7 +185,7 @@ async function handleToolCall(
           : changed
             ? 'The run stopped after the tool call was sent, and the tool changed since review. It may have run.'
             : 'The run stopped after the tool call was sent. It may have run.'
-      await append(...unknownOutcome(why))
+      await append(...unknownOutcome(why, expiresAt(deps)))
       return 'waiting_human'
     }
     return execute(runId, deps, proj, call, tool, false)
@@ -174,7 +231,7 @@ async function handleToolCall(
         labels: [],
       })
     }
-    events.push(waitHuman('running', 'approval'))
+    events.push(waitHuman('running', 'approval', expiresAt(deps)))
     await append(...events)
     return 'waiting_human'
   }
@@ -233,15 +290,19 @@ async function execute(
           await deps.store.append(runId, [toolError(call.id, toolUnavailable(err))])
           return 'continue'
         }
-        await deps.store.append(runId, unknownOutcome(failedAfterSend(err)))
+        await deps.store.append(runId, unknownOutcome(failedAfterSend(err), expiresAt(deps)))
         return 'waiting_human'
       }
     }
   }
+  const maxChars = limitsOf(deps).tool_output_chars
+  // The cut keeps the run safe, so a long output is recorded but does not stop the run.
+  const tooLong = result.content.length > maxChars ? [limitReached({ limit: 'tool_output_chars', max: maxChars, value: result.content.length })] : []
   await deps.store.append(runId, [
+    ...tooLong,
     {
       type: 'tool.responded',
-      payload: { toolCallId: call.id, content: capToolOutput(result.content), isError: result.isError },
+      payload: { toolCallId: call.id, content: capToolOutput(result.content, maxChars), isError: result.isError },
       labels: [tool.safety.outputLabel],
     },
   ])
@@ -252,16 +313,11 @@ async function llmStep(
   runId: string,
   deps: RunnerDeps,
   proj: RunProjection,
-  maxLlmCalls: number,
 ): Promise<RunStatus | 'continue'> {
   const { store } = deps
   const now = deps.now ?? (() => new Date())
   // The run waits for an LLM retry; the worker calls again once `retryAt` has passed.
   if (proj.llmRetry.retryAt !== null && new Date(proj.llmRetry.retryAt).getTime() > now().getTime()) return 'running'
-  if (proj.llmCalls >= maxLlmCalls) {
-    await store.append(runId, [waitHuman('running', 'breaker')])
-    return 'waiting_human'
-  }
   await store.append(runId, [{ type: 'llm.requested', payload: { model: deps.agent.model }, labels: [] }])
   let res: Awaited<ReturnType<LLMPort['complete']>>
   try {
