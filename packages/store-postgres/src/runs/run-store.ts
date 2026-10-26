@@ -1,6 +1,7 @@
 import pg from 'pg'
 import { GENESIS_HASH, NewEventSchema, hashEvent } from '@agent-core/core'
 import type { NewEvent, RunStatus, RunStore, StoredEvent, WaitingReason } from '@agent-core/core'
+import { withTenant } from '../db/scope'
 import { enqueueWith } from './queue'
 
 /** Refuses any database whose name does not end in `_test`; test setups reset their database. */
@@ -8,6 +9,15 @@ export function assertTestDatabase(url: string): void {
   if (!new URL(url).pathname.endsWith('_test')) {
     throw new Error('refusing to reset the database: TEST_DATABASE_URL must name a database ending in _test')
   }
+}
+
+/** Login URL of the runtime user for tests: `TEST_RUNTIME_DATABASE_URL`, else the migrator URL with `agentcore_runtime` credentials. */
+export function runtimeTestUrl(migratorUrl: string): string {
+  if (process.env.TEST_RUNTIME_DATABASE_URL) return process.env.TEST_RUNTIME_DATABASE_URL
+  const u = new URL(migratorUrl)
+  u.username = 'agentcore_runtime'
+  u.password = 'agentcore_runtime'
+  return u.toString()
 }
 
 /** Checks the database the pool really reaches; a crafted URL can hide it from `assertTestDatabase`. */
@@ -43,26 +53,29 @@ export async function createRun(
   },
 ): Promise<{ runId: string; created: boolean }> {
   // `input` and `principal` travel in the run.created event, which the caller appends.
-  const inserted = await pool.query<{ id: string }>(
-    `INSERT INTO runs (tenant_id, id, agent_id, agent_version, status, idempotency_key)
-     VALUES ($1, $2, $3, $4, 'queued', $5)
-     ON CONFLICT (tenant_id, idempotency_key) DO NOTHING
-     RETURNING id`,
-    [r.tenantId, r.runId, r.agentId, r.agentVersion, r.idempotencyKey ?? null],
-  )
-  if (inserted.rowCount === 1) return { runId: r.runId, created: true }
-  const existing = await pool.query<{ id: string }>(
-    'SELECT id FROM runs WHERE tenant_id = $1 AND idempotency_key = $2',
-    [r.tenantId, r.idempotencyKey],
-  )
-  return { runId: existing.rows[0]!.id, created: false }
+  return withTenant(pool, r.tenantId, async (client) => {
+    const inserted = await client.query<{ id: string }>(
+      `INSERT INTO runs (tenant_id, id, agent_id, agent_version, status, idempotency_key)
+       VALUES ($1, $2, $3, $4, 'queued', $5)
+       ON CONFLICT (tenant_id, idempotency_key) DO NOTHING
+       RETURNING id`,
+      [r.tenantId, r.runId, r.agentId, r.agentVersion, r.idempotencyKey ?? null],
+    )
+    if (inserted.rowCount === 1) return { runId: r.runId, created: true }
+    const existing = await client.query<{ id: string }>('SELECT id FROM runs WHERE tenant_id = $1 AND idempotency_key = $2', [
+      r.tenantId,
+      r.idempotencyKey,
+    ])
+    return { runId: existing.rows[0]!.id, created: false }
+  })
 }
 
 export async function getRun(pool: pg.Pool, tenantId: string, runId: string): Promise<RunRow | null> {
-  const res = await pool.query(
+  const res = await withTenant(pool, tenantId, (client) =>
+    client.query(
     'SELECT id, agent_id, status, waiting_reason, created_at FROM runs WHERE tenant_id = $1 AND id = $2',
     [tenantId, runId],
-  )
+  ))
   const row = res.rows[0]
   if (!row) return null
   return {
@@ -123,23 +136,6 @@ function sanitize(v: unknown): unknown {
     return Object.fromEntries(Object.entries(v).map(([k, x]) => [k.replace(NUL_OR_LONE_SURROGATE, '\ufffd'), sanitize(x)]))
   }
   return v
-}
-
-async function inTransaction<T>(pool: pg.Pool, fn: (client: pg.PoolClient) => Promise<T>): Promise<T> {
-  const client = await pool.connect()
-  let release: Error | undefined
-  try {
-    await client.query('BEGIN')
-    const result = await fn(client)
-    await client.query('COMMIT')
-    return result
-  } catch (err) {
-    await client.query('ROLLBACK').catch(() => {}) // must not mask the original error
-    release = err instanceof Error ? err : new Error(String(err))
-    throw err
-  } finally {
-    client.release(release)
-  }
 }
 
 type AppendOpts = { expect?: { status: RunStatus; waitingReason?: string; lastSeq?: number }; enqueue?: boolean }
@@ -254,7 +250,7 @@ export async function createRunWithEvent(
     created: NewEvent
   },
 ): Promise<{ id: string; created: boolean; requestHash: string | null }> {
-  return inTransaction(pool, async (client) => {
+  return withTenant(pool, r.tenantId, async (client) => {
     const inserted = await client.query(
       `INSERT INTO runs (tenant_id, id, agent_id, agent_version, status, idempotency_key, idempotency_request_hash)
        VALUES ($1, $2, $3, $4, 'queued', $5, $6)
@@ -281,10 +277,11 @@ export async function getRunHead(
   tenantId: string,
   runId: string,
 ): Promise<{ lastSeq: number | null; lastHash: string | null } | null> {
-  const res = await pool.query<{ last_seq: number | null; last_hash: string | null }>(
+  const res = await withTenant(pool, tenantId, (client) =>
+    client.query<{ last_seq: number | null; last_hash: string | null }>(
     'SELECT last_seq, last_hash FROM runs WHERE tenant_id = $1 AND id = $2',
     [tenantId, runId],
-  )
+  ))
   const row = res.rows[0]
   return row ? { lastSeq: row.last_seq, lastHash: row.last_hash } : null
 }
@@ -297,14 +294,15 @@ export class PgRunStore implements RunStore {
   ) {}
 
   async readEvents(runId: string): Promise<StoredEvent[]> {
-    const res = await this.pool.query(
+    const res = await withTenant(this.pool, this.tenantId, (client) =>
+      client.query(
       'SELECT * FROM events WHERE tenant_id = $1 AND run_id = $2 ORDER BY seq',
       [this.tenantId, runId],
-    )
+    ))
     return res.rows.map(toStored)
   }
 
   async append(runId: string, events: NewEvent[], opts?: AppendOpts): Promise<StoredEvent[]> {
-    return inTransaction(this.pool, (client) => appendInTransaction(client, this.tenantId, runId, events, opts, this.fence?.lockedBy))
+    return withTenant(this.pool, this.tenantId, (client) => appendInTransaction(client, this.tenantId, runId, events, opts, this.fence?.lockedBy))
   }
 }

@@ -18,9 +18,11 @@ import {
   getRunHead,
   requeueIfHolder,
   runMigrations,
+  runtimeTestUrl,
 } from '../../src'
 
 const url = process.env.TEST_DATABASE_URL ?? 'postgres://agentcore:agentcore@localhost:5433/agentcore_test'
+let migrator: pg.Pool
 let pool: pg.Pool
 
 const ev = {
@@ -39,14 +41,16 @@ const ev = {
 
 beforeAll(() => {
   assertTestDatabase(url)
-  pool = createPool(url)
+  migrator = createPool(url)
+  pool = createPool(runtimeTestUrl(url))
 })
 beforeEach(async () => {
-  await pool.query('DROP SCHEMA public CASCADE; CREATE SCHEMA public')
-  await runMigrations(pool)
+  await migrator.query('DROP SCHEMA public CASCADE; CREATE SCHEMA public')
+  await runMigrations(migrator, { runtimeUser: 'agentcore_runtime' })
 })
 afterAll(async () => {
   await pool.end()
+  await migrator.end()
 })
 
 test('append assigns consecutive seq and a valid chain', async () => {
@@ -103,10 +107,10 @@ test('readEvents is filtered by tenant', async () => {
 })
 
 test('runMigrations is a no-op the second time', async () => {
-  const before = await pool.query('SELECT name FROM schema_migrations ORDER BY name')
+  const before = await migrator.query('SELECT name FROM schema_migrations ORDER BY name')
   expect(before.rows.length).toBeGreaterThan(0)
-  await runMigrations(pool)
-  const after = await pool.query('SELECT name FROM schema_migrations ORDER BY name')
+  await runMigrations(migrator, { runtimeUser: 'agentcore_runtime' })
+  const after = await migrator.query('SELECT name FROM schema_migrations ORDER BY name')
   expect(after.rows).toEqual(before.rows)
 })
 
@@ -160,8 +164,8 @@ test('a state change from a status the run is no longer in throws StateConflictE
 test('updating or deleting an event is rejected by the database', async () => {
   await createRun(pool, { tenantId: 'default', runId: 'r10', agentId: 'a', agentVersion: 1, input: { text: 'x' } })
   await new PgRunStore(pool, 'default').append('r10', [ev.llmRequested()])
-  await expect(pool.query("UPDATE events SET type = 'x' WHERE run_id = 'r10'")).rejects.toThrow(/append-only/)
-  await expect(pool.query("DELETE FROM events WHERE run_id = 'r10'")).rejects.toThrow(/append-only/)
+  await expect(migrator.query("UPDATE events SET type = 'x' WHERE run_id = 'r10'")).rejects.toThrow(/append-only/)
+  await expect(migrator.query("DELETE FROM events WHERE run_id = 'r10'")).rejects.toThrow(/append-only/)
 })
 
 test('append keeps the log head on the run row', async () => {
@@ -197,7 +201,7 @@ const newRun = (runId: string, idempotencyKey?: string) => ({
   created: ev.runCreated(),
 })
 const queueRows = async (runId: string): Promise<number> =>
-  (await pool.query('SELECT 1 FROM queue WHERE run_id = $1', [runId])).rowCount ?? 0
+  (await migrator.query('SELECT 1 FROM queue WHERE run_id = $1', [runId])).rowCount ?? 0
 
 test('createRunWithEvent inserts the run, run.created and the queue row together', async () => {
   const res = await createRunWithEvent(pool, newRun('r13', 'k13'))
@@ -211,12 +215,12 @@ test('createRunWithEvent inserts the run, run.created and the queue row together
 
 test('createRunWithEvent on a replayed key appends and enqueues nothing', async () => {
   await createRunWithEvent(pool, newRun('r14', 'k14'))
-  await pool.query('DELETE FROM queue')
+  await migrator.query('DELETE FROM queue')
   const again = await createRunWithEvent(pool, newRun('r15', 'k14'))
   expect(again).toEqual({ id: 'r14', created: false, requestHash: null })
   expect(await new PgRunStore(pool, 'default').readEvents('r14')).toHaveLength(1)
   expect(await queueRows('r14')).toBe(0)
-  expect((await pool.query("SELECT 1 FROM runs WHERE id = 'r15'")).rowCount).toBe(0)
+  expect((await migrator.query("SELECT 1 FROM runs WHERE id = 'r15'")).rowCount).toBe(0)
 })
 
 test('createRunWithEvent stores the request hash and returns it on a replay', async () => {
@@ -230,9 +234,9 @@ test('createRunWithEvent stores the request hash and returns it on a replay', as
 test('createRunWithEvent leaves nothing behind when the event is invalid', async () => {
   const bad = { ...newRun('r16', 'k16'), created: { type: 'run.created', payload: {}, labels: [] } as unknown as NewEvent }
   await expect(createRunWithEvent(pool, bad)).rejects.toThrow()
-  expect((await pool.query('SELECT 1 FROM runs')).rowCount).toBe(0)
-  expect((await pool.query('SELECT 1 FROM events')).rowCount).toBe(0)
-  expect((await pool.query('SELECT 1 FROM queue')).rowCount).toBe(0)
+  expect((await migrator.query('SELECT 1 FROM runs')).rowCount).toBe(0)
+  expect((await migrator.query('SELECT 1 FROM events')).rowCount).toBe(0)
+  expect((await migrator.query('SELECT 1 FROM queue')).rowCount).toBe(0)
 })
 
 test('append with enqueue puts the queue row in the same transaction', async () => {
@@ -263,17 +267,17 @@ test('assertTestDatabase accepts *_test databases only', () => {
 })
 
 test('concurrent migrators on an empty database do not fail', async () => {
-  await pool.query('DROP SCHEMA public CASCADE; CREATE SCHEMA public')
-  await Promise.all(Array.from({ length: 6 }, () => runMigrations(pool)))
-  expect((await pool.query('SELECT name FROM schema_migrations')).rowCount).toBeGreaterThanOrEqual(2)
+  await migrator.query('DROP SCHEMA public CASCADE; CREATE SCHEMA public')
+  await Promise.all(Array.from({ length: 6 }, () => runMigrations(migrator, { runtimeUser: 'agentcore_runtime' })))
+  expect((await migrator.query('SELECT name FROM schema_migrations')).rowCount).toBeGreaterThanOrEqual(2)
 })
 
 test('append refuses a run whose tail events were deleted, and writes nothing', async () => {
   await createRun(pool, { tenantId: 'default', runId: 'c4', agentId: 'a', agentVersion: 1, input: { text: 'x' } })
   const store = new PgRunStore(pool, 'default')
   await store.append('c4', [ev.runCreated(), ev.llmRequested(), ev.llmRequested()])
-  await pool.query('ALTER TABLE events DISABLE TRIGGER events_append_only')
-  await pool.query('DELETE FROM events WHERE run_id = $1 AND seq = 3', ['c4'])
+  await migrator.query('ALTER TABLE events DISABLE TRIGGER events_append_only')
+  await migrator.query('DELETE FROM events WHERE run_id = $1 AND seq = 3', ['c4'])
   await expect(store.append('c4', [ev.llmRequested()])).rejects.toBeInstanceOf(ChainIntegrityError)
   expect((await store.readEvents('c4')).map((e) => e.seq)).toEqual([1, 2])
   expect(await getRunHead(pool, 'default', 'c4')).toMatchObject({ lastSeq: 3 })
@@ -283,8 +287,8 @@ test('append refuses a run whose events were all deleted', async () => {
   await createRun(pool, { tenantId: 'default', runId: 'c4b', agentId: 'a', agentVersion: 1, input: { text: 'x' } })
   const store = new PgRunStore(pool, 'default')
   await store.append('c4b', [ev.runCreated()])
-  await pool.query('ALTER TABLE events DISABLE TRIGGER events_append_only')
-  await pool.query('DELETE FROM events WHERE run_id = $1', ['c4b'])
+  await migrator.query('ALTER TABLE events DISABLE TRIGGER events_append_only')
+  await migrator.query('DELETE FROM events WHERE run_id = $1', ['c4b'])
   await expect(store.append('c4b', [ev.llmRequested()])).rejects.toBeInstanceOf(ChainIntegrityError)
 })
 
@@ -294,10 +298,10 @@ test('a fenced store appends only while it holds the queue lock', async () => {
   await claim(pool, 'w1')
   const w1 = new PgRunStore(pool, 'default', { lockedBy: 'w1' })
   await w1.append('c5', [ev.runCreated()])
-  await pool.query("UPDATE queue SET locked_by = 'w2' WHERE run_id = 'c5'")
+  await migrator.query("UPDATE queue SET locked_by = 'w2' WHERE run_id = 'c5'")
   await expect(w1.append('c5', [ev.llmRequested()])).rejects.toBeInstanceOf(LockLostError)
   expect((await w1.readEvents('c5')).map((e) => e.seq)).toEqual([1])
-  await pool.query("DELETE FROM queue WHERE run_id = 'c5'")
+  await migrator.query("DELETE FROM queue WHERE run_id = 'c5'")
   await expect(w1.append('c5', [ev.llmRequested()])).rejects.toBeInstanceOf(LockLostError)
   await new PgRunStore(pool, 'default').append('c5', [ev.llmRequested()]) // the unfenced store is not affected
 })
@@ -306,7 +310,7 @@ test('requeueIfHolder unlocks the job only for the lock holder', async () => {
   await enqueue(pool, { runId: 'q1', tenantId: 'default' })
   await claim(pool, 'w1')
   await requeueIfHolder(pool, 'q1', 'w2')
-  expect((await pool.query('SELECT locked_by FROM queue')).rows).toEqual([{ locked_by: 'w1' }])
+  expect((await migrator.query('SELECT locked_by FROM queue')).rows).toEqual([{ locked_by: 'w1' }])
   await requeueIfHolder(pool, 'q1', 'w1')
-  expect((await pool.query('SELECT locked_by FROM queue')).rows).toEqual([{ locked_by: null }])
+  expect((await migrator.query('SELECT locked_by FROM queue')).rows).toEqual([{ locked_by: null }])
 })

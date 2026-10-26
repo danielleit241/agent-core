@@ -1,9 +1,11 @@
 import { afterAll, beforeAll, beforeEach, expect, test } from 'vitest'
 import type { AgentDefinition, LLMPort, RunStatus, ToolInvoker } from '@agent-core/core'
-import { ConfigRepo, PgRunStore, assertTestDatabase, createPool, createRun, enqueue, getRun, runMigrations } from '@agent-core/store-postgres'
+import { ConfigRepo, PgRunStore, assertTestDatabase, createPool, createRun, createTenant, enqueue, getRun, runMigrations } from '@agent-core/store-postgres'
 import { startRunWorker } from '../../src/worker/worker'
 import type { RunWorkerDeps } from '../../src/worker/worker'
+import { createSecretBox } from '@agent-core/core'
 
+const box = createSecretBox(Buffer.alloc(32, 7))
 const url = process.env.TEST_DATABASE_URL ?? 'postgres://agentcore:agentcore@localhost:5433/agentcore_test'
 let pool: ReturnType<typeof createPool>
 
@@ -26,11 +28,12 @@ const llm: LLMPort = {
     stopReason: 'end',
   }),
 }
-const tools: ToolInvoker = {
+const noTools: ToolInvoker = {
   call: async () => {
     throw new Error('no tools expected')
   },
 }
+const tools = (): ToolInvoker => noTools
 const agent: AgentDefinition = {
   id: 'helper',
   instructions: 'help',
@@ -56,16 +59,17 @@ async function waitFor(cond: () => boolean): Promise<void> {
 const queueRows = async (): Promise<number> => (await pool.query('SELECT 1 FROM queue')).rowCount ?? 0
 
 test('a queued run is claimed, completed and released', async () => {
-  const { version } = await new ConfigRepo(pool, 'default').putAgent(agent)
+  const { version } = await new ConfigRepo(pool, 'default', box).putAgent(agent)
   await seedRun('r1', 'helper', version)
   const settled: Array<[string, RunStatus]> = []
   const worker = startRunWorker({
+    secrets: box,
     pool,
     llm,
     tools,
     workerId: 'w1',
     pollMs: 20,
-    onRunSettled: async (id, status) => {
+    onRunSettled: async (id, _tenantId, status) => {
       settled.push([id, status])
     },
   })
@@ -80,12 +84,13 @@ test('a run whose agent is missing fails with error.raised and is released', asy
   await seedRun('r2', 'ghost', 1)
   const settled: Array<[string, RunStatus]> = []
   const worker = startRunWorker({
+    secrets: box,
     pool,
     llm,
     tools,
     workerId: 'w1',
     pollMs: 20,
-    onRunSettled: async (id, status) => {
+    onRunSettled: async (id, _tenantId, status) => {
       settled.push([id, status])
     },
   })
@@ -99,7 +104,7 @@ test('a run whose agent is missing fails with error.raised and is released', asy
 })
 
 test('stop resolves while idle', async () => {
-  const worker = startRunWorker({ pool, llm, tools, workerId: 'w1', pollMs: 20 })
+  const worker = startRunWorker({ secrets: box, pool, llm, tools, workerId: 'w1', pollMs: 20 })
   await new Promise((r) => setTimeout(r, 60))
   await worker.stop()
 })
@@ -113,12 +118,13 @@ test('a failure on a completed run appends nothing and reports the real status',
   const before = (await store.readEvents('r3')).length
   const settled: Array<[string, RunStatus]> = []
   const worker = startRunWorker({
+    secrets: box,
     pool,
     llm,
     tools,
     workerId: 'w1',
     pollMs: 20,
-    onRunSettled: async (id, status) => {
+    onRunSettled: async (id, _tenantId, status) => {
       settled.push([id, status])
     },
   })
@@ -134,6 +140,7 @@ test('when the failure cannot be recorded the job stays locked and onRunSettled 
   await enqueue(pool, { runId: 'orphan', tenantId: 'default' })
   const settled: string[] = []
   const worker = startRunWorker({
+    secrets: box,
     pool,
     llm,
     tools,
@@ -151,7 +158,7 @@ test('when the failure cannot be recorded the job stays locked and onRunSettled 
 })
 
 test('two connections exposing the same tool name fail the run', async () => {
-  const config = new ConfigRepo(pool, 'default')
+  const config = new ConfigRepo(pool, 'default', box)
   const tool = (connectionId: string) => ({
     name: 'dup',
     description: 'd',
@@ -167,12 +174,13 @@ test('two connections exposing the same tool name fail the run', async () => {
   await seedRun('r4', 'helper', version)
   const settled: Array<[string, RunStatus]> = []
   const worker = startRunWorker({
+    secrets: box,
     pool,
     llm,
     tools,
     workerId: 'w1',
     pollMs: 20,
-    onRunSettled: async (id, status) => {
+    onRunSettled: async (id, _tenantId, status) => {
       settled.push([id, status])
     },
   })
@@ -185,13 +193,14 @@ test('two connections exposing the same tool name fail the run', async () => {
 })
 
 test('a transient load error re-enqueues the run 5 s ahead without failing it', async () => {
-  const { version } = await new ConfigRepo(pool, 'default').putAgent(agent)
+  const { version } = await new ConfigRepo(pool, 'default', box).putAgent(agent)
   await seedRun('r5', 'helper', version)
   const settled: string[] = []
   const loadContext: RunWorkerDeps['loadContext'] = async () => {
     throw new Error('connection reset')
   }
   const worker = startRunWorker({
+    secrets: box,
     pool,
     llm,
     tools,
@@ -213,7 +222,7 @@ test('a transient load error re-enqueues the run 5 s ahead without failing it', 
 })
 
 test('the worker heartbeats the lock while a job is processing', async () => {
-  const { version } = await new ConfigRepo(pool, 'default').putAgent(agent)
+  const { version } = await new ConfigRepo(pool, 'default', box).putAgent(agent)
   await seedRun('r6', 'helper', version)
   await pool.query("UPDATE queue SET available_at = now()")
   let lockedAtDuring: Date | undefined
@@ -228,6 +237,7 @@ test('the worker heartbeats the lock while a job is processing', async () => {
   }
   const settled: string[] = []
   const worker = startRunWorker({
+    secrets: box,
     pool,
     llm: slowLlm,
     tools,
@@ -244,7 +254,7 @@ test('the worker heartbeats the lock while a job is processing', async () => {
 })
 
 test('a tool named like an Object.prototype member is not reported as a duplicate', async () => {
-  const config = new ConfigRepo(pool, 'default')
+  const config = new ConfigRepo(pool, 'default', box)
   const tool = {
     name: 'toString',
     description: 'd',
@@ -259,12 +269,13 @@ test('a tool named like an Object.prototype member is not reported as a duplicat
   await seedRun('r7', 'helper', version)
   const settled: Array<[string, RunStatus]> = []
   const worker = startRunWorker({
+    secrets: box,
     pool,
     llm,
     tools,
     workerId: 'w1',
     pollMs: 20,
-    onRunSettled: async (id, status) => {
+    onRunSettled: async (id, _tenantId, status) => {
       settled.push([id, status])
     },
   })
@@ -274,10 +285,11 @@ test('a tool named like an Object.prototype member is not reported as a duplicat
 })
 
 test('when onRunSettled fails the queue row stays so the job is retried', async () => {
-  const { version } = await new ConfigRepo(pool, 'default').putAgent(agent)
+  const { version } = await new ConfigRepo(pool, 'default', box).putAgent(agent)
   await seedRun('r8', 'helper', version)
   let attempts = 0
   const worker = startRunWorker({
+    secrets: box,
     pool,
     llm,
     tools,
@@ -312,7 +324,7 @@ function toolCallingLlm(onFirstCall: () => Promise<void>): LLMPort & { calls: nu
 }
 
 test('a lost lock aborts the run: no failure, no release, no settle', async () => {
-  const { version } = await new ConfigRepo(pool, 'default').putAgent(agent)
+  const { version } = await new ConfigRepo(pool, 'default', box).putAgent(agent)
   await seedRun('r9', 'helper', version)
   const slow = toolCallingLlm(async () => {
     await pool.query("UPDATE queue SET locked_by = 'w2' WHERE run_id = 'r9'")
@@ -320,6 +332,7 @@ test('a lost lock aborts the run: no failure, no release, no settle', async () =
   })
   const settled: string[] = []
   const worker = startRunWorker({
+    secrets: box,
     pool,
     llm: slow,
     tools,
@@ -342,13 +355,14 @@ test('a lost lock aborts the run: no failure, no release, no settle', async () =
 })
 
 test('stop aborts the in-flight run and puts the job back for another worker', async () => {
-  const { version } = await new ConfigRepo(pool, 'default').putAgent(agent)
+  const { version } = await new ConfigRepo(pool, 'default', box).putAgent(agent)
   await seedRun('r10', 'helper', version)
   let open!: () => void
   const gate = new Promise<void>((r) => (open = r))
   const slow = toolCallingLlm(() => gate)
   const settled: string[] = []
   const worker = startRunWorker({
+    secrets: box,
     pool,
     llm: slow,
     tools,
@@ -370,10 +384,11 @@ test('stop aborts the in-flight run and puts the job back for another worker', a
 })
 
 test('a worker whose lock was taken writes nothing and does not fail, settle or release the run', async () => {
-  await new ConfigRepo(pool, 'default').putAgent({ ...agent, model: 'default' })
+  await new ConfigRepo(pool, 'default', box).putAgent({ ...agent, model: 'default' })
   await seedRun('r-lost', 'helper', 1)
   const settled: string[] = []
   const worker = startRunWorker({
+    secrets: box,
     pool,
     llm,
     tools,
@@ -399,7 +414,7 @@ class RetryableLlmError extends Error {
 }
 
 test('a retryable LLM error re-enqueues the run at retryAt without failing or settling it', async () => {
-  const { version } = await new ConfigRepo(pool, 'default').putAgent(agent)
+  const { version } = await new ConfigRepo(pool, 'default', box).putAgent(agent)
   await seedRun('r11', 'helper', version)
   const failing: LLMPort = {
     complete: async () => {
@@ -408,6 +423,7 @@ test('a retryable LLM error re-enqueues the run at retryAt without failing or se
   }
   const settled: string[] = []
   const worker = startRunWorker({
+    secrets: box,
     pool,
     llm: failing,
     tools,
@@ -485,18 +501,19 @@ function recordingTools(): ToolInvoker & { keys: string[] } {
 }
 
 test('a run resumed after tool.requested calls a keyed write again with the same key', async () => {
-  const { version } = await new ConfigRepo(pool, 'default').putAgent(agent)
+  const { version } = await new ConfigRepo(pool, 'default', box).putAgent(agent)
   await seedInFlight('r12', version, 'pay')
   const recorder = recordingTools()
   const settled: Array<[string, RunStatus]> = []
   const worker = startRunWorker({
+    secrets: box,
     pool,
     llm,
-    tools: recorder,
+    tools: () => recorder,
     workerId: 'w1',
     pollMs: 20,
     loadContext: async () => ({ agent, agentVersion: version, toolsByName: { pay: writeTool(true) } }),
-    onRunSettled: async (id, status) => {
+    onRunSettled: async (id, _tenantId, status) => {
       settled.push([id, status])
     },
   })
@@ -508,18 +525,19 @@ test('a run resumed after tool.requested calls a keyed write again with the same
 })
 
 test('a run resumed after tool.requested for an unkeyed write waits for a human', async () => {
-  const { version } = await new ConfigRepo(pool, 'default').putAgent(agent)
+  const { version } = await new ConfigRepo(pool, 'default', box).putAgent(agent)
   await seedInFlight('r13', version, 'pay')
   const recorder = recordingTools()
   const settled: Array<[string, RunStatus]> = []
   const worker = startRunWorker({
+    secrets: box,
     pool,
     llm,
-    tools: recorder,
+    tools: () => recorder,
     workerId: 'w1',
     pollMs: 20,
     loadContext: async () => ({ agent, agentVersion: version, toolsByName: { pay: writeTool(false) } }),
-    onRunSettled: async (id, status) => {
+    onRunSettled: async (id, _tenantId, status) => {
       settled.push([id, status])
     },
   })
@@ -529,4 +547,101 @@ test('a run resumed after tool.requested for an unkeyed write waits for a human'
   expect(settled).toEqual([['r13', 'waiting_human']])
   const row = await pool.query('SELECT status, waiting_reason FROM runs WHERE id = $1', ['r13'])
   expect(row.rows).toEqual([{ status: 'waiting_human', waiting_reason: 'unknown_outcome' }])
+})
+
+async function seedTenantRun(tenantId: string, runId: string, versionNo: number): Promise<void> {
+  await createRun(pool, { tenantId, runId, agentId: 'helper', agentVersion: versionNo, input: { text: 'hi' } })
+  await new PgRunStore(pool, tenantId).append(runId, [
+    { type: 'run.created', payload: { agentId: 'helper', input: { text: 'hi' } }, labels: ['trusted'] },
+  ])
+  await enqueue(pool, { runId, tenantId })
+}
+
+test("a run of b whose agent names a connection that only a has fails with connection not found and never calls a's tool", async () => {
+  await createTenant(pool, 'a')
+  await createTenant(pool, 'b')
+  const tool = {
+    name: 'shop.get',
+    description: 'd',
+    inputSchema: {},
+    safety: { effect: 'read' as const, idempotency: true, reachesOutside: false, outputLabel: 'trusted' as const },
+    connectionId: 'shop',
+    source: {},
+    confirmed: {},
+  }
+  await new ConfigRepo(pool, 'a', box).putConnection({ id: 'shop', kind: 'mcp', url: 'http://x', tools: [tool] })
+  const { version } = await new ConfigRepo(pool, 'b', box).putAgent({ ...agent, connections: ['shop'] })
+  await seedTenantRun('b', 'rb1', version)
+  const asked: string[] = []
+  const recorder = recordingTools()
+  const settled: Array<[string, string, RunStatus]> = []
+  const worker = startRunWorker({
+    secrets: box,
+    pool,
+    llm,
+    tools: (tenantId) => {
+      asked.push(tenantId)
+      return recorder
+    },
+    workerId: 'w1',
+    pollMs: 20,
+    onRunSettled: async (id, tenantId, status) => {
+      settled.push([id, tenantId, status])
+    },
+  })
+  await waitFor(() => settled.length === 1)
+  await worker.stop()
+  expect(settled).toEqual([['rb1', 'b', 'failed']])
+  const events = await new PgRunStore(pool, 'b').readEvents('rb1')
+  expect(events.find((e) => e.type === 'error.raised')?.payload).toMatchObject({ message: 'connection not found: shop' })
+  expect(asked.filter((t) => t !== 'b')).toEqual([])
+  expect(recorder.keys).toEqual([])
+})
+
+test("onRunSettled receives the run's tenant", async () => {
+  await createTenant(pool, 'a')
+  const { version } = await new ConfigRepo(pool, 'a', box).putAgent(agent)
+  await seedTenantRun('a', 'ra1', version)
+  const settled: Array<[string, string, RunStatus]> = []
+  const worker = startRunWorker({
+    secrets: box,
+    pool,
+    llm,
+    tools,
+    workerId: 'w1',
+    pollMs: 20,
+    onRunSettled: async (id, tenantId, status) => {
+      settled.push([id, tenantId, status])
+    },
+  })
+  await waitFor(() => settled.length === 1)
+  await worker.stop()
+  expect(settled).toEqual([['ra1', 'a', 'completed']])
+})
+
+test('a connection secret that cannot be decrypted fails the run once and does not retry', async () => {
+  const config = new ConfigRepo(pool, 'default', box)
+  await config.putConnection({ id: 'hook', kind: 'webhook', url: 'http://h/x', secret: 'plain-secret', tools: [] })
+  const { version } = await config.putAgent({ ...agent, connections: ['hook'] })
+  await seedRun('rd1', 'helper', version)
+  const settled: Array<[string, RunStatus]> = []
+  const worker = startRunWorker({
+    secrets: createSecretBox(Buffer.alloc(32, 9)), // another master key: the stored secret does not open
+    pool,
+    llm,
+    tools,
+    workerId: 'w1',
+    pollMs: 20,
+    onRunSettled: async (id, _tenantId, status) => {
+      settled.push([id, status])
+    },
+  })
+  await waitFor(() => settled.length === 1)
+  await worker.stop()
+  expect(settled).toEqual([['rd1', 'failed']])
+  expect(await queueRows()).toBe(0)
+  const events = await new PgRunStore(pool, 'default').readEvents('rd1')
+  const raised = events.find((e) => e.type === 'error.raised')
+  expect(raised?.payload).toMatchObject({ message: 'connection secret could not be decrypted: hook', retryable: false })
+  expect(JSON.stringify(events)).not.toContain('plain-secret')
 })

@@ -1,5 +1,6 @@
-import type { ToolInvoker } from '@agent-core/core'
-import type { ConfigRepo } from '@agent-core/store-postgres'
+import type { SecretBox, ToolInvoker } from '@agent-core/core'
+import { ConfigRepo } from '@agent-core/store-postgres'
+import type { createPool } from '@agent-core/store-postgres'
 import { createMcpInvoker, createWebhookInvoker, ToolInvocationError } from '@agent-core/tools'
 
 /** Sends each call to the MCP or the webhook invoker, by the kind of the tool's connection. */
@@ -33,5 +34,26 @@ export function createToolRouter(config: ConfigRepo): ToolInvoker & { close(): P
       throw new ToolInvocationError(`connection_unavailable: ${tool.connectionId}`, 'connection_unavailable', true)
     },
     close: () => mcp.close(),
+  }
+}
+
+/** One tool router per tenant, so a connection id of one tenant never resolves to another tenant's URL or cache. */
+export function createToolRouters(
+  pool: ReturnType<typeof createPool>,
+  secrets: SecretBox,
+): { forTenant(tenantId: string): ToolInvoker; close(): Promise<void> } {
+  const routers = new Map<string, ReturnType<typeof createToolRouter>>()
+  return {
+    forTenant(tenantId) {
+      let router = routers.get(tenantId)
+      if (!router) {
+        router = createToolRouter(new ConfigRepo(pool, tenantId, secrets))
+        routers.set(tenantId, router)
+      }
+      return router
+    },
+    async close() {
+      await Promise.all([...routers.values()].map((r) => r.close()))
+    },
   }
 }
