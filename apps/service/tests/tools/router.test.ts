@@ -3,7 +3,7 @@ import type { AddressInfo } from 'node:net'
 import { afterEach, expect, test } from 'vitest'
 import type { ToolDescriptor } from '@agent-core/core'
 import type { ConfigRepo, Connection } from '@agent-core/store-postgres'
-import { createToolRouter } from '../../src/tools/router'
+import { createToolRouter, createToolRouters } from '../../src/tools/router'
 
 const servers: ReturnType<typeof createServer>[] = []
 afterEach(async () => {
@@ -56,4 +56,12 @@ test('a missing connection is not remembered: it works once it exists', async ()
   state.conn = { id: 'loyalty', kind: 'webhook', url: await hook(), secret: 's', tools: [] }
   expect((await router.call(tool, {}, ctx)).content).toBe('ok')
   await router.close()
+})
+
+test('createToolRouters keeps one router per tenant and closes them all', async () => {
+  const routers = createToolRouters({} as never, {} as never)
+  const a = routers.forTenant('a')
+  expect(routers.forTenant('a')).toBe(a)
+  expect(routers.forTenant('b')).not.toBe(a)
+  await routers.close()
 })

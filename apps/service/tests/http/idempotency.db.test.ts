@@ -1,25 +1,30 @@
 import type { FastifyInstance } from 'fastify'
 import { afterAll, beforeAll, beforeEach, expect, test } from 'vitest'
 import type { NewEvent } from '@agent-core/core'
-import { ConfigRepo, PgRunStore, assertTestDatabase, createPool, createRun, runMigrations } from '@agent-core/store-postgres'
+import { ConfigRepo, PgRunStore, assertTestDatabase, createPool, runtimeTestUrl, createRun, runMigrations } from '@agent-core/store-postgres'
 import { buildApp } from '../../src/http/app'
+import { createSecretBox } from '@agent-core/core'
 
+const box = createSecretBox(Buffer.alloc(32, 7))
 const url = process.env.TEST_DATABASE_URL ?? 'postgres://agentcore:agentcore@localhost:5433/agentcore_test'
 const ADMIN_KEY = 'test-admin-key'
+let migrator: ReturnType<typeof createPool>
 let pool: ReturnType<typeof createPool>
 let app: FastifyInstance
 
 beforeAll(() => {
   assertTestDatabase(url)
-  pool = createPool(url)
+  migrator = createPool(url)
+  pool = createPool(runtimeTestUrl(url))
 })
 beforeEach(async () => {
-  await pool.query('DROP SCHEMA public CASCADE; CREATE SCHEMA public')
-  await runMigrations(pool)
-  app = buildApp({ pool, adminKey: ADMIN_KEY })
+  await migrator.query('DROP SCHEMA public CASCADE; CREATE SCHEMA public')
+  await runMigrations(migrator, { runtimeUser: 'agentcore_runtime' })
+  app = buildApp({ secrets: box, pool, adminKey: ADMIN_KEY })
 })
 afterAll(async () => {
   await pool.end()
+  await migrator.end()
 })
 
 const agentBody = { id: 'helper', instructions: 'help', connections: [] as string[], autonomy: 'supervised', allow: [] }
@@ -34,8 +39,8 @@ function send(method: 'POST' | 'PATCH', path: string, payload: unknown, key?: st
   })
 }
 
-const count = async (table: string) => Number((await pool.query(`SELECT count(*) FROM ${table}`)).rows[0].count)
-const seedAgent = () => new ConfigRepo(pool, 'default').putAgent({ ...agentBody, autonomy: 'supervised', model: 'default' })
+const count = async (table: string) => Number((await migrator.query(`SELECT count(*) FROM ${table}`)).rows[0].count)
+const seedAgent = () => new ConfigRepo(pool, 'default', box).putAgent({ ...agentBody, autonomy: 'supervised', model: 'default' })
 
 async function waitingRun(runId = 'r-wait'): Promise<string> {
   const { version } = await seedAgent()
@@ -63,7 +68,7 @@ test('POST /v1/runs: same key with a different body is refused, the same body re
 test('POST /v1/runs: a stored NULL hash (old row) matches any request', async () => {
   await seedAgent()
   const a = await send('POST', '/v1/runs', runBody, 'k-old')
-  await pool.query('UPDATE runs SET idempotency_request_hash = NULL')
+  await migrator.query('UPDATE runs SET idempotency_request_hash = NULL')
   const b = await send('POST', '/v1/runs', { ...runBody, input: { text: 'other' } }, 'k-old')
   expect(b.statusCode).toBe(202)
   expect(b.json().run_id).toBe(a.json().run_id)
@@ -89,7 +94,7 @@ test('POST /v1/webhooks: a replay has the same id, no secret, and no secret at r
   expect(b.json().id).toBe(a.json().id)
   expect(b.json()).not.toHaveProperty('secret')
   expect(await count('webhooks')).toBe(1)
-  const stored = (await pool.query('SELECT response_body FROM idempotency_keys')).rows[0].response_body as string
+  const stored = (await migrator.query('SELECT response_body FROM idempotency_keys')).rows[0].response_body as string
   expect(stored).not.toContain(a.json().secret)
 })
 
@@ -132,12 +137,12 @@ test('a request still running gives 409, a crashed one (older than 60 s) is take
   const body = { url: 'https://hook.test/in', events: ['run.completed'] }
   // A first request on another key gives the hash of this request.
   expect((await send('POST', '/v1/webhooks', body, 'seed')).statusCode).toBe(201)
-  const { request_hash } = (await pool.query('SELECT request_hash FROM idempotency_keys')).rows[0]
-  await pool.query('INSERT INTO idempotency_keys (tenant_id, key, request_hash) VALUES ($1, $2, $3)', ['default', 'busy', request_hash])
+  const { request_hash } = (await migrator.query('SELECT request_hash FROM idempotency_keys')).rows[0]
+  await migrator.query('INSERT INTO idempotency_keys (tenant_id, key, request_hash) VALUES ($1, $2, $3)', ['default', 'busy', request_hash])
   const busy = await send('POST', '/v1/webhooks', body, 'busy')
   expect(busy.statusCode).toBe(409)
   expect(busy.json().error.code).toBe('idempotency_key_in_use')
-  await pool.query("UPDATE idempotency_keys SET created_at = now() - interval '61 seconds' WHERE key = 'busy'")
+  await migrator.query("UPDATE idempotency_keys SET created_at = now() - interval '61 seconds' WHERE key = 'busy'")
   const taken = await send('POST', '/v1/webhooks', body, 'busy')
   expect(taken.statusCode).toBe(201)
   expect(await count('webhooks')).toBe(2)

@@ -1,5 +1,5 @@
-import { advanceRun, projectRun } from '@agent-core/core'
-import type { AgentDefinition, LLMPort, RunStatus, ToolDescriptor, ToolInvoker } from '@agent-core/core'
+import { SecretDecryptError, advanceRun, projectRun } from '@agent-core/core'
+import type { AgentDefinition, LLMPort, RunStatus, SecretBox, ToolDescriptor, ToolInvoker } from '@agent-core/core'
 import {
   ConfigRepo,
   LockLostError,
@@ -19,8 +19,10 @@ export type RunContext = { agent: AgentDefinition; agentVersion: number; toolsBy
 
 export type RunWorkerDeps = {
   pool: Pool
+  secrets: SecretBox
   llm: LLMPort
-  tools: ToolInvoker
+  /** Gives the invoker for one tenant's tools. */
+  tools: (tenantId: string) => ToolInvoker
   workerId: string
   pollMs?: number
   /** Running jobs allowed per tenant; defaults to `DEFAULT_MAX_RUNS_PER_TENANT`. */
@@ -29,7 +31,7 @@ export type RunWorkerDeps = {
   heartbeatMs?: number
   /** Replaces the default loader; used by tests to simulate load errors. */
   loadContext?: (runId: string, tenantId: string) => Promise<RunContext>
-  onRunSettled?: (runId: string, status: RunStatus) => Promise<void>
+  onRunSettled?: (runId: string, tenantId: string, status: RunStatus) => Promise<void>
 }
 
 const RETRY_DELAY_MS = 5000
@@ -41,16 +43,23 @@ export class ConfigError extends Error {}
 
 const errorMessage = (err: unknown): string => (err instanceof Error ? err.message : String(err))
 
-async function loadContext(pool: Pool, runId: string, tenantId: string): Promise<RunContext> {
+async function loadContext(pool: Pool, secrets: SecretBox, runId: string, tenantId: string): Promise<RunContext> {
   const run = await getRun(pool, tenantId, runId)
   if (!run) throw new ConfigError(`run not found: ${runId}`)
-  const config = new ConfigRepo(pool, tenantId)
+  const config = new ConfigRepo(pool, tenantId, secrets)
   const agent = await config.getAgent(run.agentId)
   if (!agent) throw new ConfigError(`agent not found: ${run.agentId}`)
   // No prototype: a tool named `toString` must not collide with inherited members.
   const toolsByName: Record<string, ToolDescriptor> = Object.create(null)
   for (const connectionId of agent.definition.connections) {
-    const connection = await config.getConnection(connectionId)
+    let connection: Awaited<ReturnType<typeof config.getConnection>>
+    try {
+      connection = await config.getConnection(connectionId)
+    } catch (err) {
+      // Wrong master key or damaged data: retrying cannot help. The message names the connection only.
+      if (err instanceof SecretDecryptError) throw new ConfigError(`connection secret could not be decrypted: ${connectionId}`)
+      throw err
+    }
     if (!connection) throw new ConfigError(`connection not found: ${connectionId}`)
     for (const tool of connection.tools) {
       if (Object.hasOwn(toolsByName, tool.name)) throw new ConfigError(`duplicate tool name: ${tool.name}`)
@@ -98,7 +107,7 @@ async function processJob(deps: RunWorkerDeps, job: { runId: string; tenantId: s
   try {
     let ctx: RunContext
     try {
-      ctx = await (deps.loadContext ?? ((r, t) => loadContext(deps.pool, r, t)))(runId, tenantId)
+      ctx = await (deps.loadContext ?? ((r, t) => loadContext(deps.pool, deps.secrets, r, t)))(runId, tenantId)
     } catch (err) {
       if (!(err instanceof ConfigError)) {
         // Transient: put the job back, unlocked, and retry later. The run is not failed.
@@ -115,7 +124,7 @@ async function processJob(deps: RunWorkerDeps, job: { runId: string; tenantId: s
     status = await advanceRun(runId, {
       store: new PgRunStore(deps.pool, tenantId, { lockedBy: deps.workerId }),
       llm: deps.llm,
-      tools: deps.tools,
+      tools: deps.tools(tenantId),
       ...ctx,
       signal: ctl.abort.signal,
     })
@@ -162,7 +171,7 @@ async function processJob(deps: RunWorkerDeps, job: { runId: string; tenantId: s
   // Settle before release: when settling fails the row stays locked, the lock expires and the job
   // runs again. The settle step is idempotent, so the repeat is safe.
   try {
-    await deps.onRunSettled?.(runId, status)
+    await deps.onRunSettled?.(runId, tenantId, status)
   } catch (err) {
     console.error(`worker: onRunSettled failed for run ${runId}; the job will be retried`, err)
     return

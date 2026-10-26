@@ -1,8 +1,10 @@
 import Fastify from 'fastify'
 import type { FastifyInstance } from 'fastify'
 import { discoverMcpTools } from '@agent-core/tools'
+import type { SecretBox } from '@agent-core/core'
+import { resolveApiKey, withTenant } from '@agent-core/store-postgres'
 import type { createPool } from '@agent-core/store-postgres'
-import { checkAdminKey } from './auth'
+import { applyTenantHeader, authenticate } from './auth'
 import { ApiError, apiError } from './errors'
 import { registerIdempotency } from './idempotency'
 import { registerConfigRoutes } from './routes/config'
@@ -10,10 +12,12 @@ import { registerHealthRoutes } from './routes/health'
 import { registerModelRoutes } from './routes/models'
 import type { ProbeResult } from './routes/models'
 import { registerRunRoutes } from './routes/runs'
+import { registerTenantRoutes } from './routes/tenants'
 
 export type AppDeps = {
   pool: ReturnType<typeof createPool>
   adminKey: string
+  secrets: SecretBox
   discoverTools?: typeof discoverMcpTools
   /** Alias to real model id. */
   models?: Record<string, string>
@@ -57,13 +61,20 @@ export function buildApp(deps: AppDeps): FastifyInstance {
   registerHealthRoutes(app, deps.pool)
   // The auth hook is bound to this plugin's routes, not to the URL text, so path encoding cannot bypass it.
   void app.register(async (v1) => {
+    v1.decorateRequest('auth')
     v1.addHook('onRequest', async (req) => {
-      checkAdminKey(req.headers.authorization, deps.adminKey)
+      const auth = await authenticate(req.headers.authorization, deps.adminKey, (key) => resolveApiKey(deps.pool, key))
+      // Resolved here, before the idempotency hook, so idempotency rows live in the target tenant.
+      req.auth = await applyTenantHeader(auth, req.headers['x-tenant-id'], req.routeOptions.url ?? req.url, async (id) => {
+        const found = await withTenant(deps.pool, id, (client) => client.query('SELECT 1 FROM tenants WHERE id = $1', [id]))
+        return found.rowCount === 1
+      })
     })
     registerIdempotency(v1, { pool: deps.pool })
-    registerConfigRoutes(v1, { pool: deps.pool, discoverTools: deps.discoverTools ?? discoverMcpTools })
+    registerConfigRoutes(v1, { pool: deps.pool, secrets: deps.secrets, discoverTools: deps.discoverTools ?? discoverMcpTools })
+    registerTenantRoutes(v1, { pool: deps.pool })
     registerModelRoutes(v1, { pool: deps.pool, models: deps.models ?? {}, probe: deps.probe })
-    registerRunRoutes(v1, { pool: deps.pool, closing: closing.signal })
+    registerRunRoutes(v1, { pool: deps.pool, secrets: deps.secrets, closing: closing.signal })
   })
   return app
 }

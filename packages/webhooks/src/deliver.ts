@@ -9,20 +9,30 @@ export type WebhookEventType = 'run.completed' | 'run.failed' | 'approval.reques
 const LEASE_S = 60
 const SEND_TIMEOUT_MS = 10_000
 const MAX_ERROR_LEN = 500
+const DECRYPT_ERROR = 'secret could not be decrypted'
+
+export type Queryable = Pick<Pool, 'query'>
+
+/** Transactions the worker runs in: `claim` sees scheduling columns of every tenant; `tenant` sees one tenant's rows. */
+export interface DeliveryScope {
+  claim<T>(fn: (db: Queryable) => Promise<T>): Promise<T>
+  tenant<T>(tenantId: string, fn: (db: Queryable) => Promise<T>): Promise<T>
+}
 
 /**
  * Creates one pending delivery per webhook subscribed to `type`. All deliveries share one body and event id.
  * A caller that passes a deterministic `eventId` can repeat the call safely: a second call adds nothing.
+ * The caller supplies a tenant-scoped client.
  */
 export async function enqueueWebhookEvent(
-  pool: Pool,
+  db: Queryable,
   tenantId: string,
   type: WebhookEventType,
   data: object,
   eventId: string = `evt_${randomUUID()}`,
 ): Promise<void> {
   const body = JSON.stringify({ event_id: eventId, type, created_at: new Date().toISOString(), data })
-  await pool.query(
+  await db.query(
     `INSERT INTO webhook_deliveries (id, tenant_id, webhook_id, event_id, type, body)
      SELECT 'whd_' || gen_random_uuid(), tenant_id, id, $2, $3, $4
        FROM webhooks WHERE tenant_id = $1 AND $3 = ANY(events)
@@ -32,7 +42,8 @@ export async function enqueueWebhookEvent(
 }
 
 export interface DeliveryWorkerDeps {
-  pool: Pool
+  scope: DeliveryScope
+  openSecret: (tenantId: string, webhookId: string, sealed: string) => string
   fetch?: typeof fetch
   pollMs?: number
   nowSec?: () => number
@@ -41,30 +52,40 @@ export interface DeliveryWorkerDeps {
 
 interface Claimed {
   id: string
+  tenant_id: string
+}
+
+interface Loaded {
   event_id: string
   body: string
   attempts: number
+  webhook_id: string
+  url: string
+  secret: string
+}
+
+interface ToSend {
+  event_id: string
+  body: string
   url: string
   secret: string
 }
 
 // Claims one due delivery with a single statement. The 60 s lease means a crash mid-send retries later.
+// It touches only the columns the claim role may read and update.
 export const CLAIM_SQL = `
   UPDATE webhook_deliveries d
      SET next_attempt_at = now() + interval '${LEASE_S} seconds'
-    FROM webhooks w
    WHERE d.id = (
            SELECT id FROM webhook_deliveries
             WHERE status = 'pending' AND next_attempt_at <= now()
-              AND EXISTS (SELECT 1 FROM webhooks w2 WHERE w2.tenant_id = webhook_deliveries.tenant_id AND w2.id = webhook_deliveries.webhook_id)
             ORDER BY next_attempt_at
               FOR UPDATE SKIP LOCKED
             LIMIT 1)
-     AND w.tenant_id = d.tenant_id AND w.id = d.webhook_id
-  RETURNING d.id, d.event_id, d.body, d.attempts, w.url, w.secret`
+  RETURNING d.id, d.tenant_id`
 
 export function startDeliveryWorker(deps: DeliveryWorkerDeps): { stop(): Promise<void> } {
-  const { pool } = deps
+  const { scope, openSecret } = deps
   const doFetch = deps.fetch ?? fetch
   const pollMs = deps.pollMs ?? 1000
   const nowSec = deps.nowSec ?? ((): number => Math.floor(Date.now() / 1000))
@@ -72,7 +93,7 @@ export function startDeliveryWorker(deps: DeliveryWorkerDeps): { stop(): Promise
   let stopped = false
   let wake: (() => void) | undefined
 
-  async function send(d: Claimed): Promise<string | null> {
+  async function send(d: ToSend): Promise<string | null> {
     try {
       const res = await doFetch(d.url, {
         method: 'POST',
@@ -96,33 +117,56 @@ export function startDeliveryWorker(deps: DeliveryWorkerDeps): { stop(): Promise
     }
   }
 
+  // Loads the delivery with its webhook. A missing webhook ends the delivery as failed, so it never blocks the queue.
+  const load = (id: string) => async (db: Queryable): Promise<Loaded | null> => {
+    const { rows } = await db.query<Loaded>(
+      `SELECT d.event_id, d.body, d.attempts, d.webhook_id, w.url, w.secret
+         FROM webhook_deliveries d
+         JOIN webhooks w ON w.tenant_id = d.tenant_id AND w.id = d.webhook_id
+        WHERE d.id = $1`,
+      [id],
+    )
+    if (rows[0]) return rows[0]
+    await db.query(`UPDATE webhook_deliveries SET status = 'failed', last_error = 'webhook not found' WHERE id = $1 AND status = 'pending'`, [id])
+    return null
+  }
+
   // Returns false when nothing was due.
   async function deliverOne(): Promise<boolean> {
-    const { rows } = await pool.query<Claimed>(CLAIM_SQL)
-    const d = rows[0]
-    if (!d) return false
-    const error = await send(d)
-    if (error === null) {
-      await pool.query(
-        `UPDATE webhook_deliveries SET status = 'delivered', attempts = attempts + 1, last_error = NULL WHERE id = $1 AND status = 'pending'`,
-        [d.id],
-      )
-      return true
+    const claimed = (await scope.claim((db) => db.query<Claimed>(CLAIM_SQL))).rows[0]
+    if (!claimed) return false
+    const { id, tenant_id: tenantId } = claimed
+    const d = await scope.tenant(tenantId, load(id))
+    if (!d) return true
+    let secret: string | undefined
+    try {
+      secret = openSecret(tenantId, d.webhook_id, d.secret)
+    } catch {
+      // Never put the secret or the ciphertext in the error.
     }
-    const attempts = d.attempts + 1
-    const delay = delaysS[attempts - 1]
-    if (delay === undefined) {
-      await pool.query(`UPDATE webhook_deliveries SET status = 'failed', attempts = $2, last_error = $3 WHERE id = $1 AND status = 'pending'`, [
-        d.id,
-        attempts,
-        error,
-      ])
-    } else {
-      await pool.query(
-        `UPDATE webhook_deliveries SET attempts = $2, last_error = $3, next_attempt_at = now() + make_interval(secs => $4) WHERE id = $1 AND status = 'pending'`,
-        [d.id, attempts, error, delay],
-      )
-    }
+    const error = secret === undefined ? DECRYPT_ERROR : await send({ ...d, secret })
+    await scope.tenant(tenantId, async (db) => {
+      if (error === null) {
+        await db.query(`UPDATE webhook_deliveries SET status = 'delivered', attempts = attempts + 1, last_error = NULL WHERE id = $1 AND status = 'pending'`, [
+          id,
+        ])
+        return
+      }
+      const attempts = d.attempts + 1
+      const delay = delaysS[attempts - 1]
+      if (delay === undefined) {
+        await db.query(`UPDATE webhook_deliveries SET status = 'failed', attempts = $2, last_error = $3 WHERE id = $1 AND status = 'pending'`, [
+          id,
+          attempts,
+          error,
+        ])
+      } else {
+        await db.query(
+          `UPDATE webhook_deliveries SET attempts = $2, last_error = $3, next_attempt_at = now() + make_interval(secs => $4) WHERE id = $1 AND status = 'pending'`,
+          [id, attempts, error, delay],
+        )
+      }
+    })
     return true
   }
 

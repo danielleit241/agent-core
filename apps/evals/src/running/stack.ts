@@ -1,9 +1,10 @@
 import { readFile } from 'node:fs/promises'
 import type { AddressInfo } from 'node:net'
 import { fileURLToPath } from 'node:url'
+import { createSecretBox } from '@agent-core/core'
 import type { LLMPort } from '@agent-core/core'
 import { createServiceStack } from '@agent-core/service'
-import { assertTestDatabase, assertTestPool, createPool, runMigrations } from '@agent-core/store-postgres'
+import { assertTestDatabase, assertTestPool, createPool, runMigrations, runtimeTestUrl } from '@agent-core/store-postgres'
 import { startShop } from '@agent-core/shop'
 import { withoutLlmRetry } from './no-llm-retry'
 
@@ -25,17 +26,20 @@ export async function startEvalStack(opts: { llm: LLMPort }): Promise<EvalStack>
     process.env.TEST_DATABASE_URL ??
     'postgres://agentcore:agentcore@localhost:5433/agentcore_test'
   assertTestDatabase(databaseUrl) // the reset below drops every table
-  const pool = createPool(databaseUrl)
+  const migrator = createPool(databaseUrl)
+  const pool = createPool(runtimeTestUrl(databaseUrl))
   let shop: EvalStack['shop'] | undefined
   let service: ReturnType<typeof createServiceStack> | undefined
   try {
-    await assertTestPool(pool)
-    await pool.query('DROP SCHEMA public CASCADE; CREATE SCHEMA public')
-    await runMigrations(pool)
+    await assertTestPool(migrator)
+    await migrator.query('DROP SCHEMA public CASCADE; CREATE SCHEMA public')
+    await runMigrations(migrator, { runtimeUser: 'agentcore_runtime' })
+    await migrator.end()
     shop = await startShop()
     service = createServiceStack({
       pool,
       adminKey: ADMIN_KEY,
+      secrets: createSecretBox(Buffer.alloc(32, 7)),
       llm: withoutLlmRetry(opts.llm),
       workerId: 'eval-worker',
       runPollMs: 20,
@@ -79,6 +83,7 @@ export async function startEvalStack(opts: { llm: LLMPort }): Promise<EvalStack>
   } catch (err) {
     await service?.close().catch(() => undefined)
     await shop?.close().catch(() => undefined)
+    await migrator.end().catch(() => undefined)
     await pool.end().catch(() => undefined)
     throw err
   }

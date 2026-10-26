@@ -11,7 +11,6 @@ declare module 'fastify' {
   }
 }
 
-const TENANT = 'default'
 const KEY_PATTERN = /^[\x21-\x7e]{1,255}$/
 
 /** Returns the `Idempotency-Key` header, undefined when absent. Throws 400 when it is not 1 to 255 printable ASCII characters. */
@@ -57,13 +56,14 @@ export function requestHash(req: FastifyRequest): string {
   return createHash('sha256').update(json).digest('hex')
 }
 
-/** Removes a top-level `secret`, which an endpoint returns only once and which must not get a second copy at rest. */
+/** Removes a top-level `secret` or `api_key`, which an endpoint returns only once and which must not get a second copy at rest. */
 function stripSecret(body: string): string {
   try {
     const parsed: unknown = JSON.parse(body)
-    if (parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed) && 'secret' in parsed) {
+    if (parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed) && ('secret' in parsed || 'api_key' in parsed)) {
       const rest = { ...(parsed as Record<string, unknown>) }
       delete rest.secret
+      delete rest.api_key
       return JSON.stringify(rest)
     }
   } catch {
@@ -82,7 +82,7 @@ export function registerIdempotency(app: FastifyInstance, deps: { pool: ReturnTy
     if (!req.routeOptions.config.idempotent) return
     const key = readIdempotencyKey(req)
     if (key === undefined) return
-    const result = await beginIdempotent(pool, TENANT, key, requestHash(req))
+    const result = await beginIdempotent(pool, req.auth.tenantId, key, requestHash(req))
     switch (result.state) {
       case 'started':
         owned.set(req, key)
@@ -110,9 +110,9 @@ export function registerIdempotency(app: FastifyInstance, deps: { pool: ReturnTy
     if (key === undefined) return payload
     owned.delete(req)
     if (reply.statusCode >= 200 && reply.statusCode < 300) {
-      await completeIdempotent(pool, TENANT, key, reply.statusCode, stripSecret(typeof payload === 'string' ? payload : String(payload ?? '')))
+      await completeIdempotent(pool, req.auth.tenantId, key, reply.statusCode, stripSecret(typeof payload === 'string' ? payload : String(payload ?? '')))
     } else {
-      await abandonIdempotent(pool, TENANT, key)
+      await abandonIdempotent(pool, req.auth.tenantId, key)
     }
     return payload
   })

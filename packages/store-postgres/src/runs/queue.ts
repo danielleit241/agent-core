@@ -1,9 +1,10 @@
 import type pg from 'pg'
+import { withClaim, withTenant } from '../db/scope'
 
 type Job = { runId: string; tenantId: string; availableAt?: Date }
 
 export async function enqueue(pool: pg.Pool, job: Job): Promise<void> {
-  await enqueueWith(pool, job)
+  await withTenant(pool, job.tenantId, (client) => enqueueWith(client, job))
 }
 
 /**
@@ -36,10 +37,7 @@ export async function claim(
 ): Promise<{ runId: string; tenantId: string } | null> {
   const lockTimeoutMs = opts.lockTimeoutMs ?? 300000
   const maxPerTenant = opts.maxPerTenant ?? DEFAULT_MAX_RUNS_PER_TENANT
-  const client = await pool.connect()
-  let failure: Error | undefined
-  try {
-    await client.query('BEGIN')
+  return withClaim(pool, async (client) => {
     await client.query('SELECT pg_advisory_xact_lock($1)', [CLAIM_LOCK_KEY])
     const res = await client.query<{ run_id: string; tenant_id: string }>(
       `WITH running AS (
@@ -56,32 +54,29 @@ export async function claim(
        RETURNING run_id, tenant_id`,
       [workerId, lockTimeoutMs, maxPerTenant],
     )
-    await client.query('COMMIT')
     const row = res.rows[0]
     return row ? { runId: row.run_id, tenantId: row.tenant_id } : null
-  } catch (err) {
-    await client.query('ROLLBACK').catch(() => {}) // must not mask the original error
-    failure = err instanceof Error ? err : new Error(String(err))
-    throw err
-  } finally {
-    client.release(failure)
-  }
+  })
 }
 
 export async function release(pool: pg.Pool, runId: string, workerId: string): Promise<void> {
-  await pool.query('DELETE FROM queue WHERE run_id = $1 AND locked_by = $2', [runId, workerId])
+  await withClaim(pool, (client) => client.query('DELETE FROM queue WHERE run_id = $1 AND locked_by = $2', [runId, workerId]))
 }
 
 /** Refreshes the lock timestamp. Returns false when this worker no longer holds the job. */
 export async function heartbeat(pool: pg.Pool, runId: string, workerId: string): Promise<boolean> {
-  const res = await pool.query('UPDATE queue SET locked_at = now() WHERE run_id = $1 AND locked_by = $2', [runId, workerId])
+  const res = await withClaim(pool, (client) =>
+    client.query('UPDATE queue SET locked_at = now() WHERE run_id = $1 AND locked_by = $2', [runId, workerId]),
+  )
   return (res.rowCount ?? 0) > 0
 }
 
 /** Unlocks the job and makes it due at `availableAt` (default now), but only while this worker still holds the lock. */
 export async function requeueIfHolder(pool: pg.Pool, runId: string, workerId: string, availableAt?: Date): Promise<void> {
-  await pool.query(
-    'UPDATE queue SET available_at = COALESCE($3, now()), locked_by = NULL, locked_at = NULL WHERE run_id = $1 AND locked_by = $2',
-    [runId, workerId, availableAt ?? null],
+  await withClaim(pool, (client) =>
+    client.query(
+      'UPDATE queue SET available_at = COALESCE($3, now()), locked_by = NULL, locked_at = NULL WHERE run_id = $1 AND locked_by = $2',
+      [runId, workerId, availableAt ?? null],
+    ),
   )
 }

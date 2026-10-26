@@ -22,7 +22,7 @@ Prerequisites: Node.js 24, pnpm 10 and Docker.
 
 ```bash
 pnpm install
-cp .env.example .env     # set LLM_API_KEY and LLM_MODEL_DEFAULT; any OpenAI-compatible endpoint works
+cp .env.example .env     # set LLM_API_KEY, LLM_MODEL_DEFAULT and AGENT_CORE_MASTER_KEY (openssl rand -base64 32); any OpenAI-compatible endpoint works
 pnpm db:up               # Postgres on localhost:5433
 pnpm mock:shop           # terminal 2: mock shop MCP server on http://127.0.0.1:7400/mcp
 pnpm dev                 # terminal 1: agent-core on http://localhost:7300
