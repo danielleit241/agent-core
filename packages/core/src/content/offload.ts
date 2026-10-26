@@ -15,7 +15,7 @@ export const formatCount = (n: number): string => n.toLocaleString('en-US')
 
 /** What a cleared tool output reads as in the context (compaction). */
 export const compactionStub = (handle: string, chars: number): string =>
-  `[Output cleared to keep the context small: ${handle}, ${formatCount(chars)} characters. Read it again with agent_core.read_output.]`
+  `[Output cleared to keep the context small: ${handle}, ${formatCount(chars)} characters. You have already read it; call agent_core.read_output only for a detail you did not note.]`
 
 // Every handle has the same length, so a stub's size is known before its handle is.
 export const stubSize = (chars: number): number => compactionStub(handleOf('0'.repeat(12)), chars).length

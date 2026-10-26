@@ -121,7 +121,7 @@ test('a result that was offloaded is cleared by its preview and its stub says th
 
 test('the stub text names the handle and the size with thousands separators', () => {
   expect(compactionStub('out_3f9a1c2b7d4e', 12345)).toBe(
-    '[Output cleared to keep the context small: out_3f9a1c2b7d4e, 12,345 characters. Read it again with agent_core.read_output.]',
+    '[Output cleared to keep the context small: out_3f9a1c2b7d4e, 12,345 characters. You have already read it; call agent_core.read_output only for a detail you did not note.]',
   )
 })
 

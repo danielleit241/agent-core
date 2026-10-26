@@ -234,7 +234,7 @@ describe('context compaction', () => {
     labels: [],
   })
   const stub = (handle: string, chars: number) =>
-    `[Output cleared to keep the context small: ${handle}, ${chars.toLocaleString('en-US')} characters. Read it again with agent_core.read_output.]`
+    `[Output cleared to keep the context small: ${handle}, ${chars.toLocaleString('en-US')} characters. You have already read it; call agent_core.read_output only for a detail you did not note.]`
 
   test('a cleared inline output reads as its stub, and the stub handle resolves with the labels of the original', () => {
     const hash = 'a'.repeat(64)
