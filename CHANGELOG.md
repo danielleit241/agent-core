@@ -25,9 +25,9 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions exist
 - Row-level security: the service connects as a login role without table rights and switches to `agentcore_app` or `agentcore_claim` inside each transaction, so the database refuses a query that reaches another tenant's rows.
 - Connection and webhook secrets are encrypted at rest (AES-256-GCM, bound to tenant, table and row).
 - The admin key may send `X-Tenant-Id` on `/v1/connections` and `/v1/webhooks` routes to act for a tenant.
-- Limits: an agent may carry a `limits` block (`llm_calls` 30, `tokens` 500000, `cost_usd` 1, `tenant_cost_usd_per_day` 20, `run_time_s` 1800, `wait_human_s` 86400, `tool_output_chars` 48000 by default). A tenant key may only lower a limit; `403 limit_above_default` otherwise. Every breach appends `limit.reached` with the limit's name.
+- Limits: an agent may carry a `limits` block (`llm_calls` 30, `tokens` 500000, `cost_usd` 1, `tenant_cost_usd_per_day` 20, `run_time_s` 1800, `wait_human_s` 86400, `tool_output_chars` 48000 by default). A tenant key may only lower a limit; `403 limit_above_default` otherwise. Every breach appends `limit.reached` with the limit's name. A model without a price and without a provider-reported cost counts as cost 0, so only `tokens` bounds it; give the model profile prices to enforce the cost limits.
 - A run that breaches a run limit waits with `"waiting_reason":"limit"`. The resolve action `continue` gives it one more full allowance of that limit (`limit.continued`); `cancel` ends it.
-- A run that waits for a human longer than `wait_human_s` fails with reason `wait_expired`. Waits recorded before this change never expire.
+- A run that waits for a human longer than `wait_human_s` (24 hours by default) fails with reason `wait_expired`. This applies to every wait, approvals and unknown outcomes included, which used to wait forever. Waits recorded before this change never expire.
 
 ### Fixed
 
