@@ -35,6 +35,8 @@ export type RunWorkerDeps = {
   /** Replaces the default loader; used by tests to simulate load errors. */
   loadContext?: (runId: string, tenantId: string) => Promise<RunContext>
   onRunSettled?: (runId: string, tenantId: string, status: RunStatus) => Promise<void>
+  /** Clock for the runner. Tests inject one that is past a follow-up's wake time. */
+  now?: () => Date
 }
 
 const RETRY_DELAY_MS = 5000
@@ -153,6 +155,7 @@ async function processJob(deps: RunWorkerDeps, job: { runId: string; tenantId: s
       tools: deps.tools(tenantId),
       ...ctx,
       signal: ctl.abort.signal,
+      ...(deps.now === undefined ? {} : { now: deps.now }),
     })
   } catch (err) {
     if (err instanceof LockLostError && !ctl.abort.signal.aborted) {
@@ -202,18 +205,20 @@ async function processJob(deps: RunWorkerDeps, job: { runId: string; tenantId: s
     console.error(`worker: onRunSettled failed for run ${runId}; the job will be retried`, err)
     return
   }
-  if (status === 'waiting_human') {
-    // Keep the job, due when the wait expires; a human's answer makes it due at once (the input route enqueues).
+  if (status === 'waiting_human' || status === 'sleeping') {
+    // Keep the job, due when the wait expires or the run wakes up. A human's answer makes it due at once
+    // (the input route enqueues); a job claimed before the wake time sleeps on and comes back here.
     try {
       const proj = projectRun(await new PgRunStore(deps.pool, tenantId).readEvents(runId), '')
-      if (proj.status === 'waiting_human' && proj.waitExpiresAt !== null) {
+      const due = proj.status === 'waiting_human' ? proj.waitExpiresAt : proj.status === 'sleeping' ? proj.wakeAt : null
+      if (due !== null) {
         // Same guard as the retry path: when the worker clock lags the database, the job must not spin.
-        const dueAt = Math.max(new Date(proj.waitExpiresAt).getTime(), Date.now() + MIN_REQUEUE_DELAY_MS)
+        const dueAt = Math.max(new Date(due).getTime(), Date.now() + MIN_REQUEUE_DELAY_MS)
         await requeueIfHolder(deps.pool, runId, deps.workerId, new Date(dueAt))
         return
       }
     } catch (err) {
-      console.error(`worker: could not keep the wait expiry of run ${runId}; the lock will expire`, err)
+      console.error(`worker: could not keep the due time of run ${runId}; the lock will expire`, err)
       return
     }
   }

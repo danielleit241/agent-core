@@ -86,6 +86,7 @@ curl -s localhost:7300/v1/runs/$RUN/events -H "$AUTH"
 - **Webhook tools.** Register a connection with `"kind":"webhook"`. Each call is a signed `POST` with an idempotency key. Contract: [packages/tools/README.md](packages/tools/README.md).
 - **Run input.** Everything a human sends to a run goes to `POST /v1/runs/{id}/input` with an `action`: `approve`, `reject`, `outcome_happened`, `outcome_not_happened`, `continue`, `cancel`, or `message` with a `text` that steers the run at its next LLM call. `cancel` also stops a running run before its next step.
 - **Unknown outcomes.** When a write's result is lost, the run waits with `"waiting_reason":"unknown_outcome"`. Answer with `outcome_happened`, `outcome_not_happened` or `cancel`.
+- **Follow-ups.** An agent whose `allow` names `agent_core.schedule_followup` can pause a run with `after_seconds` (60 s to 30 days) and a `note`. The run is `sleeping` until then, survives a restart, and gets the note back when it wakes. At most 10 follow-ups per run.
 - **Limits.** An agent's `limits` block bounds LLM calls, tokens, cost per run and per tenant per day, run time, time waiting for a human and tool output size. A breach pauses the run with `"waiting_reason":"limit"`; answer with `continue` (one more allowance) or `cancel`. A wait past `wait_human_s` fails the run.
 - **Models.** `pnpm models:check` probes each model alias and proposes a profile; `GET /v1/models` shows the profiles.
 

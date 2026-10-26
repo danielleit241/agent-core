@@ -3,6 +3,7 @@ import { projectRun, type RunProjection } from '../events/projection'
 import { decide } from '../policy/rules'
 import { resolveLimits, type LimitName, type Limits } from '../limits'
 import { repeatedCalls, stalledTurns } from './loops'
+import { MAX_FOLLOWUPS, builtinTools, isBuiltin, parseFollowup } from './builtins'
 import type { AgentDefinition, NewEvent, RunStatus, StoredEvent, ToolCall, ToolDescriptor, WaitingReason } from '../types'
 
 export type RunnerDeps = {
@@ -147,11 +148,24 @@ const unknownOutcome = (why: string, expires: string): NewEvent[] => [
  * at most the step in progress and calling `advanceRun` again resumes the run.
  */
 export async function advanceRun(runId: string, deps: RunnerDeps): Promise<RunStatus> {
+  const builtins = builtinTools(deps.agent)
+  if (builtins.length > 0) {
+    // No prototype, as in the worker: a tool name must not collide with inherited members.
+    const toolsByName: Record<string, ToolDescriptor> = Object.assign(Object.create(null), deps.toolsByName)
+    for (const t of builtins) toolsByName[t.name] = t
+    deps = { ...deps, toolsByName }
+  }
   for (;;) {
     const proj = projectRun(await deps.store.readEvents(runId), deps.agent.instructions)
     if (deps.signal?.aborted) return proj.status
     if (proj.status === 'queued') {
       await deps.store.append(runId, [stateChanged('queued', 'running')])
+      continue
+    }
+    if (proj.status === 'sleeping') {
+      // Woken early (for example by a message): sleep on. The worker puts the job back for `wakeAt`.
+      if (proj.wakeAt !== null && nowOf(deps).getTime() < Date.parse(proj.wakeAt)) return 'sleeping'
+      await deps.store.append(runId, [...wakeUp(deps, proj), stateChanged('sleeping', 'running')])
       continue
     }
     if (proj.status !== 'running') return proj.status
@@ -198,6 +212,7 @@ async function handleToolCall(
       await append(...unknownOutcome(why, expiresAt(deps)))
       return 'waiting_human'
     }
+    if (isBuiltin(tool.name)) return scheduleFollowup(runId, deps, proj, call, false)
     return execute(runId, deps, proj, call, tool, false)
   }
   if (call.argumentsError !== undefined) {
@@ -245,7 +260,51 @@ async function handleToolCall(
     await append(...events)
     return 'waiting_human'
   }
+  if (isBuiltin(tool.name)) return scheduleFollowup(runId, deps, proj, call, true)
   return execute(runId, deps, proj, call, tool, true)
+}
+
+/** Puts the run to sleep. The call stays open until the run wakes up; see `wakeUp`. */
+async function scheduleFollowup(
+  runId: string,
+  deps: RunnerDeps,
+  proj: RunProjection,
+  call: ToolCall,
+  recordRequest: boolean,
+): Promise<RunStatus | 'continue'> {
+  const args = parseFollowup(call.arguments)
+  if (!args.success) {
+    await deps.store.append(runId, [
+      toolError(call.id, 'Invalid arguments: after_seconds must be an integer from 60 to 2592000, and note a string of at most 1000 characters.'),
+    ])
+    return 'continue'
+  }
+  if (proj.followups >= MAX_FOLLOWUPS) {
+    await deps.store.append(runId, [toolError(call.id, `Follow-up limit reached: a run may schedule at most ${MAX_FOLLOWUPS} follow-ups.`)])
+    return 'continue'
+  }
+  const wakeAt = new Date(nowOf(deps).getTime() + args.data.after_seconds * 1000).toISOString()
+  await deps.store.append(runId, [
+    ...(recordRequest
+      ? [{ type: 'tool.requested' as const, payload: { toolCallId: call.id, tool: call.name, args: call.arguments, idempotencyKey: `${runId}:${call.id}` }, labels: [] }]
+      : []),
+    { type: 'run.state_changed', payload: { from: 'running', to: 'sleeping', wakeAt }, labels: [] },
+  ])
+  return 'sleeping'
+}
+
+/** The result of the follow-up call that put the run to sleep. */
+function wakeUp(deps: RunnerDeps, proj: RunProjection): NewEvent[] {
+  const call = proj.pendingToolCalls.find((c) => isBuiltin(c.name) && proj.inFlight.includes(c.id))
+  if (call === undefined) return []
+  const note = typeof call.arguments.note === 'string' ? call.arguments.note : ''
+  return [
+    {
+      type: 'tool.responded',
+      payload: { toolCallId: call.id, content: `Follow-up at ${proj.wakeAt ?? nowOf(deps).toISOString()}. Note: ${note}`, isError: false },
+      labels: ['untrusted'],
+    },
+  ]
 }
 
 async function execute(

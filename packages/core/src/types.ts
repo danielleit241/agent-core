@@ -169,6 +169,8 @@ const payloadSchemas = {
     reason: z.string().optional(), // a WaitingReason or free text
     // ISO 8601; set when a run starts to wait for a human. A wait without it never expires.
     expiresAt: z.string().optional(),
+    // ISO 8601; set when a run starts to sleep until a follow-up.
+    wakeAt: z.string().optional(),
   }),
   'limit.reached': z.object({ limit: LimitNameSchema, max: z.number(), value: z.number() }),
   'limit.continued': z.object({ limit: LimitNameSchema }),

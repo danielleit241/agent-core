@@ -1,7 +1,7 @@
 import { randomBytes, randomUUID } from 'node:crypto'
 import type { FastifyInstance, FastifyRequest } from 'fastify'
 import { z } from 'zod'
-import { AgentDefinitionSchema, DEFAULT_LIMITS, SupportSchema, limitsAboveDefault, ToolSafetySchema, resolveSafety, toolFingerprint } from '@agent-core/core'
+import { AgentDefinitionSchema, BUILTIN_PREFIX, DEFAULT_LIMITS, SupportSchema, limitsAboveDefault, ToolSafetySchema, resolveSafety, toolFingerprint } from '@agent-core/core'
 import type { SecretBox, ToolSafety } from '@agent-core/core'
 import { ConfigRepo, NO_REVIEW } from '@agent-core/store-postgres'
 import type { LoadedTool, StoredTool, createPool } from '@agent-core/store-postgres'
@@ -73,6 +73,17 @@ export function registerConfigRoutes(
   const configFor = (req: FastifyRequest) => new ConfigRepo(deps.pool, req.auth.tenantId, deps.secrets)
   const kindConflict = (id: string, kind: string, wanted: string) =>
     apiError('connection_kind_conflict', `Connection "${id}" exists with kind "${kind}".`, `Use a different id for the ${wanted} connection.`, 409)
+  // Built-in tools own the prefix: a connection tool with it could pass for one.
+  const rejectReserved = (names: string[]) => {
+    const name = names.find((n) => n.startsWith(BUILTIN_PREFIX))
+    if (name === undefined) return
+    throw apiError(
+      'reserved_tool_name',
+      `Tool "${name}" uses the prefix "${BUILTIN_PREFIX}", which only built-in tools may use.`,
+      `Rename the tool so its name does not start with "${BUILTIN_PREFIX}".`,
+      422,
+    )
+  }
 
   // Registering a URL is admin-only until the SSRF guard exists; the admin picks the tenant with X-Tenant-Id.
   app.post('/v1/connections', { config: { idempotent: true } }, async (req, reply) => {
@@ -82,6 +93,7 @@ export function registerConfigRoutes(
       const wh = WebhookConnectionBody.safeParse(req.body)
       if (!wh.success) throw validationError(wh.error)
       const { id, url } = wh.data
+      rejectReserved(wh.data.tools.map((t) => t.name))
       // The admin gives the safety at registration, so it counts as confirmed.
       const tools: StoredTool[] = wh.data.tools.map(({ supports, ...tool }) => {
         const source = { declared: tool.safety, ...(supports === undefined ? {} : { supports }) }
@@ -121,6 +133,7 @@ export function registerConfigRoutes(
         422,
       )
     }
+    rejectReserved(found.map(({ tool }) => tool.name))
     const saved = await config.upsertConnection(id, (existing) => {
       if (existing && existing.kind !== 'mcp') throw kindConflict(id, existing.kind, 'mcp')
       // Re-registration at the same URL keeps the confirmations and the reviewed fingerprint of tools with the
