@@ -2,10 +2,11 @@ import { AppendConflictError, type ConnectionGuard, type ContentStore, type LLMP
 import { projectRun, type RunProjection } from '../events/projection'
 import { snapshotRequest } from '../content/snapshot'
 import { createSecretMatcher } from '../content/secrets'
-import { screenedToolResponse } from '../content/pipeline'
+import { screenContent, screenedToolResponse } from '../content/pipeline'
 import { decide } from '../policy/rules'
 import { resolveLimits, type LimitName, type Limits } from '../limits'
 import { repeatedCalls, stalledTurns } from './loops'
+import { findCachedRead } from './read-cache'
 import { FOLLOWUP_TOOL, MAX_FOLLOWUPS, builtinTools, isBuiltin, parseFollowup, parseHumanWait } from './builtins'
 import type { AgentDefinition, Message, NewEvent, RunStatus, StoredEvent, ToolCall, ToolDescriptor, WaitingReason } from '../types'
 
@@ -19,6 +20,8 @@ export type RunnerDeps = {
   secretValues?: string[]
   /** Called with the kind → count of secrets removed from a tool output (not called when none). */
   onRedacted?: (redactions: Record<string, number>) => void
+  /** Called once for each read served from the cache. */
+  onCacheHit?: () => void
   /** Rate, concurrency and breaker of each connection. Without one, calls are not limited. */
   guard?: ConnectionGuard
   /** Child runs of workflow `subrun` steps. */
@@ -279,7 +282,29 @@ export async function handleToolCall(
     return 'waiting_human'
   }
   if (isBuiltin(tool.name)) return runBuiltin(runId, deps, proj, call, true)
+  // A fresh call only (an in-flight one returned above). After the rule gate, before the guard: no slot is taken.
+  const hit = findCachedRead(proj, call, tool, deps.toolsByName, nowOf(deps))
+  if (hit !== null) return serveFromCache(runId, deps, call, hit)
   return execute(runId, deps, proj, call, tool, true)
+}
+
+/** Answers a read from an earlier identical one. The content is screened again: the known secrets may have grown since. */
+async function serveFromCache(runId: string, deps: RunnerDeps, call: ToolCall, hit: NonNullable<ReturnType<typeof findCachedRead>>): Promise<'continue'> {
+  // The original's own redaction counts are not carried over: only what is removed now is counted.
+  const original = { ...hit.payload }
+  delete original.redactions
+  const { content, redactions } = await screenContent(hit.payload.content, { secrets: createSecretMatcher(deps.secretValues ?? []) })
+  if (Object.keys(redactions).length > 0) deps.onRedacted?.(redactions)
+  await deps.store.append(runId, [
+    { type: 'tool.cache_hit', payload: { toolCallId: call.id, tool: call.name, fromToolCallId: hit.fromToolCallId, ageS: hit.ageS }, labels: [] },
+    {
+      type: 'tool.responded',
+      payload: { ...original, toolCallId: call.id, content, ...(Object.keys(redactions).length === 0 ? {} : { redactions }) },
+      labels: hit.labels,
+    },
+  ])
+  deps.onCacheHit?.()
+  return 'continue'
 }
 
 /** Built-in tools do not go through the tool invoker; each one changes the run state itself. */

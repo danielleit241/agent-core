@@ -62,6 +62,7 @@ export function createServiceStack(deps: ServiceStackDeps) {
     llm,
     llmApiKey: deps.llmApiKey,
     onRedacted: (redactions) => metrics.redacted(redactions),
+    onCacheHit: () => metrics.toolCacheHit(),
     tools: tools.forTenant,
     workerId: deps.workerId,
     pollMs: deps.runPollMs,

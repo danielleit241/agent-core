@@ -1,7 +1,7 @@
 import { randomBytes, randomUUID } from 'node:crypto'
 import type { FastifyInstance, FastifyRequest } from 'fastify'
 import { z } from 'zod'
-import { AgentDefinitionSchema, BUILTIN_PREFIX, ConnectionLimitsSchema, DEFAULT_LIMITS, resolveConnectionLimits, workflowProblems, SupportSchema, limitsAboveDefault, ToolSafetySchema, resolveSafety, toolFingerprint } from '@agent-core/core'
+import { AgentDefinitionSchema, BUILTIN_PREFIX, ConnectionLimitsSchema, DEFAULT_LIMITS, MAX_CACHE_TTL_S, resolveConnectionLimits, workflowProblems, SupportSchema, limitsAboveDefault, ToolSafetySchema, resolveSafety, toolFingerprint } from '@agent-core/core'
 import type { SecretBox, ToolSafety } from '@agent-core/core'
 import { ConfigRepo, NO_REVIEW } from '@agent-core/store-postgres'
 import type { LoadedTool, StoredTool, createPool } from '@agent-core/store-postgres'
@@ -12,6 +12,7 @@ import { apiError, validationError } from '../errors'
 
 const WEBHOOK_EVENTS = ['run.completed', 'run.failed', 'approval.requested', 'run.waiting_human'] as const
 
+const CacheTtl = z.number().int().min(0).max(MAX_CACHE_TTL_S)
 const httpUrl = z.url().refine((u) => /^https?:\/\//i.test(u), { message: 'must be an http(s) URL' })
 const ConnectionBody = z.object({ id: z.string().min(1), url: httpUrl, limits: ConnectionLimitsSchema.optional() })
 const WebhookConnectionBody = z.object({
@@ -27,6 +28,8 @@ const WebhookConnectionBody = z.object({
         inputSchema: z.record(z.string(), z.unknown()),
         safety: ToolSafetySchema,
         supports: z.array(SupportSchema).optional(),
+        // Seconds a repeated read is served from the run's log (0 = off).
+        cache_ttl_s: CacheTtl.optional(),
       }),
     )
     .min(1)
@@ -37,13 +40,22 @@ const SAFETY_FIELDS = ['effect', 'idempotency', 'reachesOutside', 'outputLabel']
 const ConfirmBody = ToolSafetySchema.partial()
   .extend({
     confirm: z.literal('proposed').optional(),
+    // Not a safety value and not a review: it changes neither the fingerprint nor `changedSinceReview`.
+    // null removes the value: back to the default.
+    cache_ttl_s: CacheTtl.nullable().optional(),
     // The fingerprint the admin reviewed. When it is given and the tool changed since, nothing is confirmed.
     fingerprint: z.string().regex(/^[0-9a-f]{64}$/, { message: 'must be the 64-character fingerprint from GET /v1/connections/{id}/tools' }).optional(),
   })
   .strict()
-  .refine((b) => (b.confirm !== undefined) !== SAFETY_FIELDS.some((k) => b[k] !== undefined), {
-    message: 'set either "confirm": "proposed" or at least one of effect, idempotency, reachesOutside, outputLabel',
-  })
+  .refine(
+    (b) =>
+      b.cache_ttl_s === undefined
+        ? (b.confirm !== undefined) !== SAFETY_FIELDS.some((k) => b[k] !== undefined)
+        : b.confirm === undefined && b.fingerprint === undefined && !SAFETY_FIELDS.some((k) => b[k] !== undefined),
+    {
+      message: 'set either "confirm": "proposed", at least one of effect, idempotency, reachesOutside, outputLabel, or "cache_ttl_s" alone',
+    },
+  )
 const WebhookBody = z.object({ url: httpUrl, events: z.array(z.enum(WEBHOOK_EVENTS)).min(1) })
 
 type ToolView = {
@@ -57,6 +69,8 @@ type ToolView = {
   fingerprint: string
   /** True when the definition changed after an admin last reviewed it: the tool runs strict, behind approval, until confirmed again. */
   changedSinceReview: boolean
+  /** Seconds a repeated read in one run is served from the log (0 = off). Absent: the default. */
+  cacheTtlS?: number
 }
 
 const toView = (t: LoadedTool): ToolView => ({
@@ -66,6 +80,7 @@ const toView = (t: LoadedTool): ToolView => ({
   ...resolveSafety(t.source, t.confirmed),
   fingerprint: t.fingerprint,
   changedSinceReview: t.changedSinceReview,
+  ...(t.cacheTtlS === undefined ? {} : { cacheTtlS: t.cacheTtlS }),
 })
 
 export function registerConfigRoutes(
@@ -97,12 +112,13 @@ export function registerConfigRoutes(
       const { id, url } = wh.data
       rejectReserved(wh.data.tools.map((t) => t.name))
       // The admin gives the safety at registration, so it counts as confirmed.
-      const tools: StoredTool[] = wh.data.tools.map(({ supports, ...tool }) => {
+      const tools: StoredTool[] = wh.data.tools.map(({ supports, cache_ttl_s: cacheTtlS, ...tool }) => {
         const source = { declared: tool.safety, ...(supports === undefined ? {} : { supports }) }
         return {
           ...tool,
           connectionId: id,
           ...(supports === undefined ? {} : { supports }),
+          ...(cacheTtlS === undefined ? {} : { cacheTtlS }),
           safety: resolveSafety(source, tool.safety).safety,
           source,
           confirmed: tool.safety,
@@ -114,7 +130,12 @@ export function registerConfigRoutes(
         if (existing && existing.kind !== 'webhook') throw kindConflict(id, existing.kind, 'webhook')
         created = existing === null
         // Re-registration keeps the secret; a new connection gets one, returned once.
-        return { kind: 'webhook', url, secret: existing?.secret ?? randomBytes(32).toString('hex'), tools, limits: wh.data.limits ?? existing?.limits ?? null }
+        // A tool registered again without a TTL keeps the one it had.
+        const kept = tools.map((t) => {
+          const before = existing?.tools.find((x) => x.name === t.name)
+          return t.cacheTtlS === undefined && before?.cacheTtlS !== undefined ? { ...t, cacheTtlS: before.cacheTtlS } : t
+        })
+        return { kind: 'webhook', url, secret: existing?.secret ?? randomBytes(32).toString('hex'), tools: kept, limits: wh.data.limits ?? existing?.limits ?? null }
       })
       return reply.code(201).send({
         id,
@@ -157,6 +178,7 @@ export function registerConfigRoutes(
           safety: resolveSafety(source, confirmed).safety,
           source,
           confirmed,
+          ...(before?.cacheTtlS === undefined ? {} : { cacheTtlS: before.cacheTtlS }),
           reviewedFor: before?.reviewedFor ?? (existing ? NO_REVIEW : toolFingerprint({ ...tool, source })),
         }
       })
@@ -179,8 +201,14 @@ export function registerConfigRoutes(
     const config = configFor(req)
     const parsed = ConfirmBody.safeParse(req.body)
     if (!parsed.success) throw validationError(parsed.error)
-    const { confirm, fingerprint, ...values } = parsed.data
+    const { confirm, fingerprint, cache_ttl_s: cacheTtlS, ...values } = parsed.data
     const updated = await config.updateTool(req.params.id, req.params.tool, (tool) => {
+      if (cacheTtlS !== undefined) {
+        const next = { ...tool }
+        if (cacheTtlS === null) delete next.cacheTtlS
+        else next.cacheTtlS = cacheTtlS
+        return next
+      }
       if (fingerprint === undefined && tool.changedSinceReview) {
         throw apiError(
           'fingerprint_required',

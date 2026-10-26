@@ -1,5 +1,20 @@
 import { LIMIT_NAMES, type LimitName } from '../limits'
-import type { Message, RunStatus, StoredEvent, ToolCall, WaitingReason } from '../types'
+import type { EventPayloads, Label, Message, RunStatus, StoredEvent, ToolCall, WaitingReason } from '../types'
+
+/** Stands in `RunProjection.sentTools` for a workflow `subrun` step: the child run may write anywhere. */
+export const SUBRUN_STARTED = 'workflow.subrun'
+
+/** A tool call that was sent and answered: what the read cache looks up. */
+export type CompletedCall = {
+  toolCallId: string
+  tool: string
+  args: Record<string, unknown>
+  respondedAt: string
+  payload: EventPayloads['tool.responded']
+  labels: Label[]
+  /** How many calls had been sent (`RunProjection.sentTools`) when it was requested, itself included. */
+  sentBefore: number
+}
 
 export type RunProjection = {
   status: RunStatus
@@ -38,6 +53,10 @@ export type RunProjection = {
   unreadMessages: number
   /** The guard deferrals in a row of the pending call, until it is requested or answered. */
   deferral: { toolCallId: string; count: number; since: string; retryAt: string } | null
+  /** Calls that were sent and answered, oldest first. A call served from the cache is not in it. */
+  completedCalls: CompletedCall[]
+  /** Tool name of every `tool.requested`, in order: the calls that were sent. A started `subrun` step adds `SUBRUN_STARTED`. */
+  sentTools: string[]
   /** Seq of the last event. */
   lastSeq: number
 }
@@ -64,6 +83,10 @@ export function projectRun(events: StoredEvent[], instructions: string): RunProj
   let llmRetry: RunProjection['llmRetry'] = { attempts: 0, retryAt: null }
   const responded = new Set<string>()
   const requested = new Set<string>()
+  const sent = new Map<string, { tool: string; args: Record<string, unknown>; sentBefore: number }>()
+  const settled = new Set<string>()
+  const sentTools: string[] = []
+  const completedCalls: CompletedCall[] = []
   const approvalRequested = new Set<string>()
   const approvals: RunProjection['approvals'] = new Map()
   const ruleDecisions: RunProjection['ruleDecisions'] = new Map()
@@ -157,14 +180,26 @@ export function projectRun(events: StoredEvent[], instructions: string): RunProj
       case 'tool.responded':
         if (deferral?.toolCallId === e.payload.toolCallId) deferral = null
         responded.add(e.payload.toolCallId)
+        {
+          const req = sent.get(e.payload.toolCallId)
+          if (req !== undefined) {
+            completedCalls.push({ toolCallId: e.payload.toolCallId, ...req, respondedAt: e.createdAt, payload: e.payload, labels: e.labels })
+          }
+        }
         messages.push({ role: 'tool', toolCallId: e.payload.toolCallId, content: e.payload.content })
         flush()
         break
       case 'tool.requested':
         if (deferral?.toolCallId === e.payload.toolCallId) deferral = null
         requested.add(e.payload.toolCallId)
+        sentTools.push(e.payload.tool)
+        sent.set(e.payload.toolCallId, { tool: e.payload.tool, args: e.payload.args, sentBefore: sentTools.length })
+        break
+      case 'step.started':
+        if (e.payload.kind === 'subrun') sentTools.push(SUBRUN_STARTED)
         break
       case 'outcome.settled':
+        settled.add(e.payload.toolCallId)
         // Not happened: the call goes back to pending and may run again. Happened changes nothing here;
         // the API also appends a `tool.responded`.
         if (e.payload.outcome === 'not_happened') requested.delete(e.payload.toolCallId)
@@ -219,6 +254,9 @@ export function projectRun(events: StoredEvent[], instructions: string): RunProj
     cancelRequested,
     unreadMessages,
     deferral,
+    // A settled call's answer is a fixed text from a human, not a read result.
+    completedCalls: completedCalls.filter((c) => !settled.has(c.toolCallId)),
+    sentTools,
     lastSeq: events.at(-1)!.seq,
     output,
     principal: principal === undefined ? null : { id: principal.id, roles: principal.roles },

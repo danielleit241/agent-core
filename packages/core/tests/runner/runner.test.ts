@@ -246,6 +246,11 @@ test('returns a tool error for an unknown tool', async () => {
   expect(llm.lastRequest().messages.at(-1)).toMatchObject({ role: 'tool', content: 'Unknown tool: nope.tool' })
 })
 
+/** These tests count the tool calls of repeated reads, so the read cache is off for `orders.get`. */
+const uncached = <D extends { toolsByName: Record<string, ToolDescriptor> }>(d: D): D => ({
+  ...d,
+  toolsByName: { ...d.toolsByName, 'orders.get': { ...d.toolsByName['orders.get']!, cacheTtlS: 0 } },
+})
 const lastLimit = async (store: RunStore) =>
   (await store.readEvents('r1')).filter((e) => e.type === 'limit.reached').at(-1)?.payload
 // Each lookup asks for a different order, so the loop limit stays out of the way.
@@ -342,7 +347,7 @@ test('a grant lets the run take one more full allowance, then it stops again', a
 test('loop stops the fourth identical tool call and waits with reason limit', async () => {
   const llm = scriptedLlm([...Array.from({ length: 4 }, () => callTool('orders.get', { order_id: '1042' })), say('done')])
   const { store, tools } = await setup()
-  expect(await advanceRun('r1', deps({ llm, store, tools }))).toBe('waiting_human')
+  expect(await advanceRun('r1', uncached(deps({ llm, store, tools })))).toBe('waiting_human')
   expect(projectRun(await store.readEvents('r1'), '').waitingReason).toBe('limit')
   expect(await lastLimit(store)).toEqual({ limit: 'loop', max: 3, value: 3 })
   expect(tools.calls).toHaveLength(3)
@@ -353,7 +358,7 @@ test('loop stops a run whose turns add no new tool result, before the next LLM c
   const b = { name: 'orders.get', args: { order_id: '2' } }
   const llm = scriptedLlm([callTools([a, b]), callTools([a]), callTools([b]), callTools([a]), say('done')])
   const { store, tools } = await setup()
-  expect(await advanceRun('r1', deps({ llm, store, tools }))).toBe('waiting_human')
+  expect(await advanceRun('r1', uncached(deps({ llm, store, tools })))).toBe('waiting_human')
   expect(await lastLimit(store)).toEqual({ limit: 'loop', max: 3, value: 3 })
   expect(llm.requests).toHaveLength(4)
   expect(tools.calls).toHaveLength(5)
@@ -1765,4 +1770,113 @@ test('an output without secrets has the same tool.responded payload as before (n
   await advanceRun('r1', deps({ llm, store, tools }))
   const responded = (await store.readEvents('r1')).find((e) => e.type === 'tool.responded')!
   expect(responded.payload).toEqual({ toolCallId: 'call_1', content: JSON.stringify({ id: '1042', status: 'delivered' }), isError: false })
+})
+
+describe('read cache', () => {
+  const sameRead = (args: Record<string, unknown> = { order_id: '1042' }) => callTool('orders.get', args)
+
+  test('an identical read is served from the log: one tool call, a cache_hit, no second tool.requested', async () => {
+    const llm = scriptedLlm([sameRead({ order_id: '1042', x: 1 }), sameRead({ x: 1, order_id: '1042' }), say('done')])
+    const { store, tools } = await setup()
+    expect(await advanceRun('r1', deps({ llm, store, tools }))).toBe('completed')
+    expect(tools.calls).toHaveLength(1)
+    const log = await store.readEvents('r1')
+    expect(types(log).filter((t) => t === 'tool.requested')).toHaveLength(1)
+    const hit = log.findIndex((e) => e.type === 'tool.cache_hit')
+    expect(log[hit]!.payload).toEqual({ toolCallId: 'call_2', tool: 'orders.get', fromToolCallId: 'call_1', ageS: expect.any(Number) })
+    expect(log[hit - 1]!.type).toBe('rule.decided')
+    const [first, second] = log.filter((e) => e.type === 'tool.responded')
+    expect(second!.payload).toEqual({ ...first!.payload, toolCallId: 'call_2' })
+    expect(second!.labels).toEqual(first!.labels)
+    expect(llm.lastRequest().messages.filter((m) => m.role === 'tool').map((m) => m.content)).toEqual([first!.payload.content, first!.payload.content])
+  })
+
+  test('the cache hit is reported to onCacheHit', async () => {
+    const llm = scriptedLlm([sameRead(), sameRead(), say('done')])
+    const { store, tools } = await setup()
+    let hits = 0
+    await advanceRun('r1', { ...deps({ llm, store, tools }), onCacheHit: () => void hits++ })
+    expect(hits).toBe(1)
+  })
+
+  test('a write to the same connection in between forces a second tool call', async () => {
+    const llm = scriptedLlm([sameRead(), callTool('payments.refund', { order_id: '1042', amount: 100 }), sameRead(), say('done')])
+    const { store, tools } = await setup()
+    expect(await advanceRun('r1', deps({ llm, store, tools }))).toBe('completed')
+    expect(tools.calls.map((c) => c.name)).toEqual(['orders.get', 'payments.refund', 'orders.get'])
+  })
+
+  test('the loop limit still counts a cached repeat', async () => {
+    const llm = scriptedLlm([...Array.from({ length: 4 }, () => sameRead()), say('done')])
+    const { store, tools } = await setup()
+    expect(await advanceRun('r1', deps({ llm, store, tools }))).toBe('waiting_human')
+    expect(await lastLimit(store)).toEqual({ limit: 'loop', max: 3, value: 3 })
+    expect(tools.calls).toHaveLength(1)
+  })
+
+  test('the TTL runs on the injected clock: a read 59 s later hits, 61 s later misses', async () => {
+    for (const [gapS, calls] of [[59, 1], [61, 2]] as const) {
+      let t = Date.parse('2026-01-01T00:00:00Z')
+      const store = new MemoryRunStore(() => new Date(t))
+      await store.append('r1', [created()])
+      const inner = scriptedLlm([sameRead(), sameRead(), say('done')])
+      let n = 0
+      // The first call is made at t0; the clock moves before the second LLM answer.
+      const llm: LLMPort = {
+        async complete(req) {
+          if (++n === 2) t += gapS * 1000
+          return inner.complete(req)
+        },
+      }
+      const tools = fakeTools()
+      await advanceRun('r1', deps({ llm, store, tools, now: () => new Date(t) }))
+      expect(tools.calls).toHaveLength(calls)
+    }
+  })
+
+  test('a resume after tool.requested calls the tool again, not the cache', async () => {
+    const llm = scriptedLlm([say('done')])
+    const { store, tools } = await setupWithEvents([
+      ...logAfterToolResponded('orders.get'),
+      { type: 'llm.requested', payload: { model: 'test-model' }, labels: [] },
+      {
+        type: 'llm.responded',
+        payload: {
+          message: { role: 'assistant', content: '', toolCalls: [{ id: 'call_2', name: 'orders.get', arguments: { order_id: '1042' } }] },
+          usage: { inputTokens: 1, outputTokens: 1 },
+          stopReason: 'tool_calls',
+        },
+        labels: [],
+      },
+      { type: 'rule.decided', payload: { toolCallId: 'call_2', tool: 'orders.get', decision: 'allow', reason: 'x' }, labels: [] },
+      { type: 'tool.requested', payload: { toolCallId: 'call_2', tool: 'orders.get', args: { order_id: '1042' }, idempotencyKey: 'r1:call_2' }, labels: [] },
+    ])
+    await advanceRun('r1', deps({ llm, store, tools }))
+    expect(tools.calls.map((c) => c.idempotencyKey)).toEqual(['r1:call_2'])
+    expect(types(await store.readEvents('r1'))).not.toContain('tool.cache_hit')
+  })
+
+  test('cached content is screened again with the secrets known now', async () => {
+    const known = 'conn-secret-9f8e7d6c'
+    const inner = scriptedLlm([sameRead(), sameRead(), say('done')])
+    // The secret becomes known between the two reads, so the first read is stored in the clear.
+    const secretValues: string[] = []
+    let n = 0
+    const llm = {
+      requests: inner.requests,
+      async complete(req: Parameters<LLMPort['complete']>[0]) {
+        if (++n === 2) secretValues.push(known)
+        return inner.complete(req)
+      },
+    }
+    const { store } = await setup()
+    const tools: ToolInvoker = { call: async () => ({ content: `key ${known}`, isError: false }) }
+    const seen: Record<string, number>[] = []
+    await advanceRun('r1', { ...deps({ llm, store, tools }), secretValues, onRedacted: (r: Record<string, number>) => seen.push(r) })
+    const responded = (await store.readEvents('r1')).filter((e) => e.type === 'tool.responded')
+    expect(responded[0]!.payload.content).toContain(known)
+    expect(responded[1]!.payload).toMatchObject({ content: 'key [REDACTED:known_secret]', redactions: { known_secret: 1 } })
+    expect(inner.requests.at(-1)!.messages.filter((m) => m.role === 'tool').at(-1)!.content).toBe('key [REDACTED:known_secret]')
+    expect(seen).toEqual([{ known_secret: 1 }])
+  })
 })

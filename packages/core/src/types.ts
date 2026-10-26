@@ -35,6 +35,10 @@ export type ToolSafety = z.infer<typeof ToolSafetySchema>
 export const SupportSchema = z.enum(['principal', 'idempotency-key', 'dry-run'])
 export type Support = z.infer<typeof SupportSchema>
 
+/** Seconds a repeated read in one run is served from the log, unless the tool sets its own. */
+export const DEFAULT_CACHE_TTL_S = 60
+export const MAX_CACHE_TTL_S = 3600
+
 export const ToolDescriptorSchema = z.object({
   name: z.string(),
   description: z.string(),
@@ -44,6 +48,8 @@ export const ToolDescriptorSchema = z.object({
   supports: z.array(SupportSchema).optional(),
   /** True when the definition changed after an admin last reviewed it: the tool never runs without approval. */
   changedSinceReview: z.boolean().optional(),
+  /** How long a repeated read of this tool in one run is served from the log, in seconds. 0 = off; unset = the default. */
+  cacheTtlS: z.number().int().min(0).max(MAX_CACHE_TTL_S).optional(),
 })
 export type ToolDescriptor = z.infer<typeof ToolDescriptorSchema>
 
@@ -197,6 +203,13 @@ const payloadSchemas = {
     isError: z.boolean(),
     redactions: RedactionsSchema.optional(),
   }),
+  // A read served from an earlier identical read in the same run: the tool was not called.
+  'tool.cache_hit': z.object({
+    toolCallId: z.string(),
+    tool: z.string(),
+    fromToolCallId: z.string(),
+    ageS: z.number(),
+  }),
   'outcome.settled': z.object({
     toolCallId: z.string(),
     outcome: z.enum(['happened', 'not_happened']),
@@ -249,6 +262,7 @@ export const NewEventSchema = z.discriminatedUnion('type', [
   eventSchema('approval.resolved', payloadSchemas['approval.resolved']),
   eventSchema('tool.requested', payloadSchemas['tool.requested']),
   eventSchema('tool.responded', payloadSchemas['tool.responded']),
+  eventSchema('tool.cache_hit', payloadSchemas['tool.cache_hit']),
   eventSchema('outcome.settled', payloadSchemas['outcome.settled']),
   eventSchema('run.state_changed', payloadSchemas['run.state_changed']),
   eventSchema('error.raised', payloadSchemas['error.raised']),

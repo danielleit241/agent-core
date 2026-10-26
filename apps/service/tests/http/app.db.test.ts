@@ -248,8 +248,58 @@ test('a PATCH error names the fields to send', async () => {
   await authed('POST', '/v1/connections', { id: 'shop', url: 'http://shop.test/mcp' })
   const res = await authed('PATCH', '/v1/connections/shop/tools/orders.get', {})
   expect(res.json().error.message).toBe(
-    'body: set either "confirm": "proposed" or at least one of effect, idempotency, reachesOutside, outputLabel',
+    'body: set either "confirm": "proposed", at least one of effect, idempotency, reachesOutside, outputLabel, or "cache_ttl_s" alone',
   )
+})
+
+test('PATCH cache_ttl_s needs no confirm, is no review, and is shown by GET', async () => {
+  await authed('POST', '/v1/connections', { id: 'shop', url: 'http://shop.test/mcp' })
+  await register(changedApp({ description: 'get an order; also refunds it' }))
+  const before = (await authed('GET', '/v1/connections/shop/tools')).json().tools[0]
+  expect(before.changedSinceReview).toBe(true)
+  const res = await authed('PATCH', '/v1/connections/shop/tools/orders.get', { cache_ttl_s: 0 })
+  expect(res.statusCode).toBe(200)
+  expect(res.json()).toMatchObject({ cacheTtlS: 0, changedSinceReview: true, fingerprint: before.fingerprint })
+  expect((await authed('GET', '/v1/connections/shop/tools')).json().tools[0]).toMatchObject({ cacheTtlS: 0, changedSinceReview: true, safety: strict })
+  const stored = await new ConfigRepo(pool, 'default', box).getConnection('shop')
+  expect(stored?.tools[0]).toMatchObject({ cacheTtlS: 0, changedSinceReview: true })
+})
+
+test('PATCH cache_ttl_s outside 0..3600 or mixed with a confirmation is 400', async () => {
+  await authed('POST', '/v1/connections', { id: 'shop', url: 'http://shop.test/mcp' })
+  for (const body of [{ cache_ttl_s: 3601 }, { cache_ttl_s: -1 }, { cache_ttl_s: 1.5 }, { cache_ttl_s: 10, confirm: 'proposed' }, { cache_ttl_s: 10, effect: 'read' }]) {
+    const bad = await authed('PATCH', '/v1/connections/shop/tools/orders.get', body)
+    expect(bad.statusCode).toBe(400)
+  }
+  expect((await authed('PATCH', '/v1/connections/shop/tools/orders.get', { cache_ttl_s: 3600 })).statusCode).toBe(200)
+})
+
+test('PATCH cache_ttl_s null removes the explicit value', async () => {
+  await authed('POST', '/v1/connections', { id: 'shop', url: 'http://shop.test/mcp' })
+  await authed('PATCH', '/v1/connections/shop/tools/orders.get', { cache_ttl_s: 5 })
+  const res = await authed('PATCH', '/v1/connections/shop/tools/orders.get', { cache_ttl_s: null })
+  expect(res.statusCode).toBe(200)
+  expect(res.json()).not.toHaveProperty('cacheTtlS')
+  expect((await new ConfigRepo(pool, 'default', box).getConnection('shop'))?.tools[0]).not.toHaveProperty('cacheTtlS')
+})
+
+test('a webhook tool takes cache_ttl_s at registration and keeps it when registered again without one', async () => {
+  const body = { ...webhookBody, tools: [{ ...webhookTool, cache_ttl_s: 0 }] }
+  const first = await authed('POST', '/v1/connections', body)
+  expect(first.statusCode).toBe(201)
+  expect(first.json().tools[0]).toMatchObject({ cacheTtlS: 0 })
+  expect((await authed('POST', '/v1/connections', { ...body, tools: [{ ...webhookTool, cache_ttl_s: 3601 }] })).statusCode).toBe(400)
+  const again = await authed('POST', '/v1/connections', webhookBody)
+  expect(again.json().tools[0]).toMatchObject({ cacheTtlS: 0 })
+  const set = await authed('POST', '/v1/connections', { ...webhookBody, tools: [{ ...webhookTool, cache_ttl_s: 30 }] })
+  expect(set.json().tools[0]).toMatchObject({ cacheTtlS: 30 })
+})
+
+test('a tool keeps its cache_ttl_s when the same server is registered again', async () => {
+  await authed('POST', '/v1/connections', { id: 'shop', url: 'http://shop.test/mcp' })
+  await authed('PATCH', '/v1/connections/shop/tools/orders.get', { cache_ttl_s: 5 })
+  const again = await authed('POST', '/v1/connections', { id: 'shop', url: 'http://shop.test/mcp' })
+  expect(again.json().tools[0]).toMatchObject({ cacheTtlS: 5 })
 })
 
 /** An app whose MCP server now describes `orders.get` differently. */
