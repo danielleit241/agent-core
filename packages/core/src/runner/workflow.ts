@@ -1,6 +1,7 @@
 import { z } from 'zod'
 import { projectRun, type RunProjection } from '../events/projection'
 import { conditionHolds } from '../policy/rules'
+import type { SubrunPort } from '../ports'
 import type { Label, NewEvent, RunStatus, StoredEvent, ToolCall, Workflow } from '../types'
 import {
   advanceRun,
@@ -35,7 +36,8 @@ function valueAt(output: unknown, path: string[]): { present: boolean; value: un
 export function nextStep(wf: Workflow, id: string, output: unknown): string | null {
   const next = wf.steps[id]?.next
   if (next === undefined) return null
-  if (typeof next === 'string') return next
+  // A rejection ends the run unless the step branches on it: a plain `next` would go ahead without the human.
+  if (typeof next === 'string') return wf.steps[id]?.kind === 'approval' && valueAt(output, ['approved']).value === false ? null : next
   for (const rule of next.when) {
     const { present, value } = valueAt(output, rule.field.split('.'))
     if (conditionHolds(present ? { v: value } : {}, 'v', rule.is)) return rule.goto
@@ -132,8 +134,19 @@ export async function advanceWorkflow(runId: string, deps: RunnerDeps, wf: Workf
     if (proj.status === 'sleeping') {
       // Only a subrun step sleeps; it wakes when its child run has ended.
       if (id === null || step?.kind !== 'subrun' || deps.subruns === undefined) return 'sleeping'
-      const child = await deps.subruns.status(await startChild(runId, deps, id, step.agent, step.input, input, flow))
+      let child: Awaited<ReturnType<SubrunPort['status']>>
+      try {
+        child = await deps.subruns.status(await startChild(runId, deps, proj, id, step.agent, step.input, input, flow))
+      } catch {
+        // Most likely transient; the worker checks again later. The child keeps running meanwhile.
+        return 'sleeping'
+      }
       if (child === null || !ENDED.includes(child.status)) return 'sleeping'
+      // Like a tool error: a step after a child that did not complete runs only when the workflow branches on it.
+      if (child.status !== 'completed' && typeof step.next !== 'object') {
+        await deps.store.append(runId, [stateChanged('sleeping', 'running')])
+        return fail(`Step "${id}": the child run ended ${child.status}.`)
+      }
       await deps.store.append(runId, [stepCompleted(id, { status: child.status, text: child.text }, 'untrusted'), stateChanged('sleeping', 'running')])
       continue
     }
@@ -163,7 +176,7 @@ export async function advanceWorkflow(runId: string, deps: RunnerDeps, wf: Workf
       else if (step.kind === 'llm') outcome = await llmStep(runId, deps, proj, id, step.prompt, step.output_schema, input, flow, fail)
       else {
         if (deps.subruns === undefined) return fail(`Step "${id}": subruns are not available.`)
-        await startChild(runId, deps, id, step.agent, step.input, input, flow)
+        await startChild(runId, deps, proj, id, step.agent, step.input, input, flow)
         await deps.store.append(runId, [stateChanged('running', 'sleeping', 'subrun')])
         outcome = 'sleeping'
       }
@@ -179,6 +192,7 @@ export async function advanceWorkflow(runId: string, deps: RunnerDeps, wf: Workf
 async function startChild(
   runId: string,
   deps: RunnerDeps,
+  proj: RunProjection,
   stepId: string,
   agentId: string,
   stepInput: unknown,
@@ -186,7 +200,13 @@ async function startChild(
   flow: WorkflowProjection,
 ): Promise<string> {
   const value = resolve(stepInput, input, flow.outputs)
-  return deps.subruns!.start({ agentId, input: typeof value === 'string' ? value : JSON.stringify(value), parent: { runId, stepId } })
+  return deps.subruns!.start({
+    agentId,
+    input: typeof value === 'string' ? value : JSON.stringify(value),
+    parent: { runId, stepId },
+    // The child acts for the same requester.
+    ...(proj.principal === null ? {} : { principal: proj.principal }),
+  })
 }
 
 async function toolStep(

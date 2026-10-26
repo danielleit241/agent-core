@@ -44,3 +44,12 @@ test('a cycle, a missing step, a bad $ref, a built-in tool and a bad output_sche
 test('an agent without workflows has no problems', () => {
   expect(workflowProblems(agent(undefined))).toEqual([])
 })
+
+test('an output_schema with pattern, patternProperties or format is refused: a tenant regex could block a worker', () => {
+  for (const extra of [{ pattern: '^(a+)+$' }, { format: 'email' }]) {
+    const def = agent({ w: { start: 's', steps: { s: { kind: 'llm', prompt: 'p', output_schema: { type: 'object', properties: { a: { type: 'string', ...extra } } } } } } })
+    expect(workflowProblems(def)).toEqual(['workflows.w.steps.s.output_schema: pattern, patternProperties and format are not allowed'])
+  }
+  const props = agent({ w: { start: 's', steps: { s: { kind: 'llm', prompt: 'p', output_schema: { type: 'object', patternProperties: { '^x': {} } } } } } })
+  expect(workflowProblems(props)).toEqual(['workflows.w.steps.s.output_schema: pattern, patternProperties and format are not allowed'])
+})

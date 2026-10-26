@@ -57,6 +57,11 @@ export interface ConnectionGuard {
  * again, it returns the child it started before. `status` gives the child's status and final text.
  */
 export interface SubrunPort {
-  start(r: { agentId: string; input: string; parent: { runId: string; stepId: string } }): Promise<string>
+  start(r: {
+    agentId: string
+    input: string
+    parent: { runId: string; stepId: string }
+    principal?: { id: string; roles: string[] }
+  }): Promise<string>
   status(runId: string): Promise<{ status: RunStatus; text: string | null } | null>
 }

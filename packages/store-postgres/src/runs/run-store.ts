@@ -318,3 +318,12 @@ export class PgRunStore implements RunStore {
     return withTenant(this.pool, this.tenantId, (client) => appendInTransaction(client, this.tenantId, runId, events, opts, this.fence?.lockedBy))
   }
 }
+
+/** Ids of the child runs that a workflow run's subrun steps started (their idempotency key is `subrun:<runId>:<stepId>`). */
+export async function childRunIds(pool: pg.Pool, tenantId: string, runId: string): Promise<string[]> {
+  const prefix = `subrun:${runId}:`
+  const res = await withTenant(pool, tenantId, (client) =>
+    client.query<{ id: string }>('SELECT id FROM runs WHERE tenant_id = $1 AND left(idempotency_key, length($2)) = $2', [tenantId, prefix]),
+  )
+  return res.rows.map((r) => r.id)
+}

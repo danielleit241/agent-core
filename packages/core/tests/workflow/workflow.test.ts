@@ -270,3 +270,68 @@ test('a workflow run stops at the llm_calls limit before its next step', async (
   expect(log.at(-2)!.payload).toMatchObject({ limit: 'llm_calls' })
   expect(completed(log).map(([id]) => id)).toEqual(['a'])
 })
+
+test('a rejected approval step whose next is a plain step id ends the run there', async () => {
+  const tools = fakeTools()
+  const wf: Workflow = { start: 'check', steps: { check: { kind: 'approval', reason: 'Refund?', next: 'refund' }, refund: REFUND.steps.refund! } }
+  const { store, deps } = await start({ ...wf, steps: { ...wf.steps, refund: { kind: 'tool', tool: 'payments.refund', args: { order_id: '1042', amount: 1 } } } }, { tools })
+  await advance('r1', deps)
+  await store.append('r1', approve('step:check', 'reject'))
+  expect(await advance('r1', deps)).toBe('completed')
+  expect(tools.calls).toEqual([])
+})
+
+function fakeSubruns(child: { status: RunStatus; text: string | null } | (() => never)) {
+  const started: Parameters<SubrunPort['start']>[0][] = []
+  const subruns: SubrunPort & { started: typeof started } = {
+    started,
+    async start(r) {
+      started.push(r)
+      return 'child'
+    },
+    async status() {
+      return typeof child === 'function' ? child() : child
+    },
+  }
+  return subruns
+}
+const subrunThen = (next: Workflow['steps'][string]['next']): Workflow => ({
+  start: 'ask',
+  steps: { ask: { kind: 'subrun', agent: 'writer', input: 'x', ...(next === undefined ? {} : { next }) }, done: { kind: 'approval', reason: 'r' } },
+})
+
+test('a child run that did not complete fails the parent unless the step branches on it', async () => {
+  const failedChild = fakeSubruns({ status: 'failed', text: null })
+  const plain = await start(subrunThen('done'), { subruns: failedChild })
+  await advance('r1', plain.deps)
+  expect(await advance('r1', plain.deps)).toBe('failed')
+  expect((await plain.store.readEvents('r1')).at(-2)!.payload).toMatchObject({ message: 'Step "ask": the child run ended failed.' })
+
+  const branching = await start(subrunThen({ when: [{ field: 'status', is: { eq: 'failed' }, goto: 'done' }] }), { subruns: failedChild })
+  await advance('r1', branching.deps)
+  expect(await advance('r1', branching.deps)).toBe('waiting_human')
+})
+
+test('a subrun port error while the parent sleeps keeps it sleeping', async () => {
+  const subruns = fakeSubruns(() => {
+    throw new Error('connection reset')
+  })
+  const { deps } = await start(subrunThen(undefined), { subruns })
+  expect(await advance('r1', deps)).toBe('sleeping')
+  expect(await advance('r1', deps)).toBe('sleeping')
+})
+
+test("a child run gets the parent's principal", async () => {
+  const subruns = fakeSubruns({ status: 'running', text: null })
+  const store = new MemoryRunStore()
+  await store.append('r1', [
+    {
+      type: 'run.created',
+      payload: { agentId: 'ops', input: { text: 'x' }, principal: { id: 'cus_1', roles: ['customer'] }, workflow: { name: 'w', definition: subrunThen(undefined) } },
+      labels: ['untrusted'],
+    },
+  ])
+  const deps = { store, llm: noLlm, tools: fakeTools(), agent: AGENT, toolsByName: TOOLS, agentVersion: 1, tenantCostToday: async () => 0, subruns }
+  await advance('r1', deps)
+  expect(subruns.started[0]!.principal).toEqual({ id: 'cus_1', roles: ['customer'] })
+})

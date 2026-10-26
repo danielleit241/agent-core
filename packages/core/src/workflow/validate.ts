@@ -18,6 +18,21 @@ export function refsIn(value: unknown): string[] {
   return Object.values(value).flatMap(refsIn)
 }
 
+const REGEX_KEYWORDS = ['pattern', 'patternProperties', 'format']
+
+/** True when a JSON Schema uses a keyword that runs a tenant regex. Property names under `properties` are not keywords. */
+function usesRegex(schema: unknown): boolean {
+  if (Array.isArray(schema)) return schema.some(usesRegex)
+  if (schema === null || typeof schema !== 'object') return false
+  return Object.entries(schema).some(([key, value]) =>
+    REGEX_KEYWORDS.includes(key)
+      ? true
+      : key === 'properties' && value !== null && typeof value === 'object'
+        ? Object.values(value).some(usesRegex)
+        : usesRegex(value),
+  )
+}
+
 function cycles(wf: Workflow): string[][] {
   const found: string[][] = []
   const done = new Set<string>()
@@ -50,7 +65,10 @@ export function workflowProblems(agent: AgentDefinition): string[] {
         if (ref !== '$input.text' && !exists(ref.split('.')[0]!)) problems.push(`${here}.${refs!.field}: $ref "${ref}" names no step`)
       }
       if (step.kind === 'tool' && step.tool.startsWith(BUILTIN_PREFIX)) problems.push(`${here}.tool: built-in tools cannot be workflow steps`)
-      if (step.kind === 'llm' && step.output_schema !== undefined) {
+      if (step.kind === 'llm' && step.output_schema !== undefined && usesRegex(step.output_schema)) {
+        // The output is checked in the worker: a slow regex from one tenant would block every tenant's runs.
+        problems.push(`${here}.output_schema: pattern, patternProperties and format are not allowed`)
+      } else if (step.kind === 'llm' && step.output_schema !== undefined) {
         try {
           z.fromJSONSchema(step.output_schema as Parameters<typeof z.fromJSONSchema>[0])
         } catch {
