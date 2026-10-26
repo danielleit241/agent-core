@@ -207,7 +207,9 @@ async function processJob(deps: RunWorkerDeps, job: { runId: string; tenantId: s
     try {
       const proj = projectRun(await new PgRunStore(deps.pool, tenantId).readEvents(runId), '')
       if (proj.status === 'waiting_human' && proj.waitExpiresAt !== null) {
-        await requeueIfHolder(deps.pool, runId, deps.workerId, new Date(proj.waitExpiresAt))
+        // Same guard as the retry path: when the worker clock lags the database, the job must not spin.
+        const dueAt = Math.max(new Date(proj.waitExpiresAt).getTime(), Date.now() + MIN_REQUEUE_DELAY_MS)
+        await requeueIfHolder(deps.pool, runId, deps.workerId, new Date(dueAt))
         return
       }
     } catch (err) {

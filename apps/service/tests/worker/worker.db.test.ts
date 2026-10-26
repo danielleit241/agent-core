@@ -717,3 +717,23 @@ test('a job claimed before the wait expires changes nothing and is put back for 
   expect((await new PgRunStore(pool, 'default').readEvents('r-early')).length).toBe(before)
   expect((await queueDueAt('r-early'))?.toISOString()).toBe(expiresAt)
 })
+
+test('a wait that is nearly due is put back at least 1 s ahead, so clock skew cannot spin the job', async () => {
+  const { version } = await new ConfigRepo(pool, 'default', box).putAgent(agent)
+  await seedRun('r-skew', 'helper', version)
+  await new PgRunStore(pool, 'default').append('r-skew', [
+    { type: 'run.state_changed', payload: { from: 'queued', to: 'running' }, labels: [] },
+    {
+      type: 'run.state_changed',
+      payload: { from: 'running', to: 'waiting_human', reason: 'approval', expiresAt: new Date(Date.now() + 300).toISOString() },
+      labels: [],
+    },
+  ])
+  const log = settledLog()
+  const worker = startRunWorker({ secrets: box, pool, llm, tools, workerId: 'w1', pollMs: 20, ...log })
+  await waitFor(() => log.settled.length === 1)
+  const settledAt = Date.now()
+  await worker.stop()
+  expect(log.settled).toEqual([['r-skew', 'waiting_human']])
+  expect((await queueDueAt('r-skew'))!.getTime()).toBeGreaterThanOrEqual(settledAt + 500)
+})
