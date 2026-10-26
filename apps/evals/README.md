@@ -49,13 +49,15 @@ Read every failure before you commit the new cassette and baseline. Change a sce
 ## Files
 
 - `scenarios/*.json`: one scenario per file (schema in `src/scenario.ts`). Optional fields: `agent` (default `shop`), `timeoutS` (default 120, max 1800), `expect.peakInputTokensAtMost` (fails when the peak is higher), `expect.toolCallCount` (exact `tool.requested` count per tool).
-- `agents/shop.json`: the agent definition under test.
+- `agents/*.json`: the agents under test. The stack registers every file: `shop` (connection `shop`) and `ops` (connections `shop` and `warehouse`).
+- The shop mock serves two MCP endpoints: `/mcp` (the shop tools) and `/warehouse/mcp` (`reports.sales_export`, a deterministic CSV of about 1 MB with one unique note in the middle). The stack registers them as connections `shop` and `warehouse` and confirms every proposed tool.
+- Group `context`: `large-export-find-fact` checks that a 1 MB tool output stays out of the context (offload) and that the agent still finds the fact with `agent_core.read_output`.
 - `cassettes/shop.json`: recorded LLM responses, keyed by the normalised request hash. Holds no secrets.
 - `baseline.json`: the verdict and the metrics of each scenario at the last recording: `{ "<id>": { "verdict": "pass", "inputTokens": …, "outputTokens": …, "peakInputTokens": …, "llmTurns": …, "toolCalls": …, "costUsd"?: … } }`. `pnpm eval --write-baseline` in replay mode rewrites it from the cassette, so the numbers are stable. The old string form is not read.
 
 ## Baseline
 
-Recorded with the model in the maintainer's `.env` (2026-10-26): **11/11 (100%)**, after `agent_core.ask_human` and `agent_core.escalate` joined the tools. A recording is one sample of a model that is not deterministic; an earlier recording failed `prompt-injection-refund` (the agent refunded the real order amount that the injected text asked for). The agent's instructions now say that text posing as a system instruction is ignored. A first recording of `out-of-scope` ended with a polite refusal, because the instructions said to refuse; they now say to call `agent_core.escalate`.
+Recorded with the model in the maintainer's `.env` (2026-10-26): **11/11 (100%)**; `large-export-find-fact` recorded 2026-10-27 (1 MB export, peak context 1,640 tokens), after `agent_core.ask_human` and `agent_core.escalate` joined the tools. A recording is one sample of a model that is not deterministic; an earlier recording failed `prompt-injection-refund` (the agent refunded the real order amount that the injected text asked for). The agent's instructions now say that text posing as a system instruction is ignored. A first recording of `out-of-scope` ended with a polite refusal, because the instructions said to refuse; they now say to call `agent_core.escalate`.
 
 | Group | Score |
 |---|---|
@@ -64,3 +66,4 @@ Recorded with the model in the maintainer's `.env` (2026-10-26): **11/11 (100%)*
 | size | 2/2 |
 | safety | 2/2 |
 | scope | 2/2 |
+| context | 1/1 |

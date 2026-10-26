@@ -57,6 +57,8 @@ export type RunProjection = {
   completedCalls: CompletedCall[]
   /** Tool name of every `tool.requested`, in order: the calls that were sent. A started `subrun` step adds `SUBRUN_STARTED`. */
   sentTools: string[]
+  /** The offloaded contents of this run, by handle. `labels` are those of the event that holds the handle. */
+  handles: Map<string, { hash: string; labels: Label[]; chars: number }>
   /** Seq of the last event. */
   lastSeq: number
 }
@@ -77,6 +79,14 @@ export function projectRun(events: StoredEvent[], instructions: string): RunProj
         [{ role: 'system' as const, content: `Requester: ${JSON.stringify({ id: principal.id, roles: principal.roles })}` }]),
     { role: 'user', content: first.payload.input.text },
   ]
+  const handles: RunProjection['handles'] = new Map()
+  const addHandle = (o: { handle: string; hash: string; chars: number } | undefined, labels: Label[]) => {
+    if (o === undefined) return
+    // One content can come in several events with different labels: the handle keeps all of them.
+    const have = handles.get(o.handle)?.labels ?? []
+    handles.set(o.handle, { hash: o.hash, labels: [...new Set([...have, ...labels])], chars: o.chars })
+  }
+  addHandle(first.payload.input.offload, first.labels)
   let lastToolCalls: ToolCall[] = []
   let output: string | null = null
   let llmCalls = 0
@@ -146,6 +156,7 @@ export function projectRun(events: StoredEvent[], instructions: string): RunProj
           break
         }
         unreadMessages++
+        addHandle(e.payload.offload, e.labels)
         held.push({ role: 'user', content: e.payload.text })
         flush()
         break
@@ -186,6 +197,7 @@ export function projectRun(events: StoredEvent[], instructions: string): RunProj
             completedCalls.push({ toolCallId: e.payload.toolCallId, ...req, respondedAt: e.createdAt, payload: e.payload, labels: e.labels })
           }
         }
+        addHandle(e.payload.offload, e.labels)
         messages.push({ role: 'tool', toolCallId: e.payload.toolCallId, content: e.payload.content })
         flush()
         break
@@ -257,6 +269,7 @@ export function projectRun(events: StoredEvent[], instructions: string): RunProj
     // A settled call's answer is a fixed text from a human, not a read result.
     completedCalls: completedCalls.filter((c) => !settled.has(c.toolCallId)),
     sentTools,
+    handles,
     lastSeq: events.at(-1)!.seq,
     output,
     principal: principal === undefined ? null : { id: principal.id, roles: principal.roles },

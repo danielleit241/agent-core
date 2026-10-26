@@ -1,9 +1,9 @@
 import { randomUUID } from 'node:crypto'
 import type { FastifyInstance, FastifyRequest } from 'fastify'
 import { z } from 'zod'
-import { createSecretMatcher, projectRun, screenContent, screenedToolResponse, verifyChain } from '@agent-core/core'
-import type { NewEvent, RunStatus, SecretBox, StoredEvent, WaitingReason } from '@agent-core/core'
-import { ConfigRepo, PgRunStore, StateConflictError, childRunIds, createRunWithEvent, getRun, getRunHead, makeDue } from '@agent-core/store-postgres'
+import { createSecretMatcher, projectRun, resolveLimits, screenContent, screenedToolResponse, verifyChain } from '@agent-core/core'
+import type { Limits, NewEvent, Offload, RunStatus, SecretBox, StoredEvent, WaitingReason } from '@agent-core/core'
+import { ConfigRepo, PgContentStore, PgRunStore, StateConflictError, childRunIds, createRunWithEvent, getRun, getRunHead, makeDue } from '@agent-core/store-postgres'
 import type { createPool } from '@agent-core/store-postgres'
 import { ApiError, apiError, validationError } from '../errors'
 import { DEFAULT_AGENT, resolveAgent } from '../../default-agent'
@@ -92,10 +92,28 @@ export function registerRunRoutes(app: FastifyInstance, deps: { pool: ReturnType
     return createSecretMatcher(await knownSecretValues(configFor(req), agent, deps.llmApiKey))
   }
 
-  /** Screens a run input or a message. The caller counts the redactions in the metrics once the event is stored. */
-  async function screenInput(req: FastifyRequest, agent: { connections: string[] }, text: string): Promise<{ text: string; redactions?: Record<string, number> }> {
-    const screened = await screenContent(text, { secrets: await secretsFor(req, agent) })
-    return Object.keys(screened.redactions).length === 0 ? { text: screened.content } : { text: screened.content, redactions: screened.redactions }
+  /** Text longer than the agent's `tool_output_chars` is offloaded: stored whole, and its preview is what the run sees. */
+  const offloadFor = (req: FastifyRequest, agent: { limits?: Partial<Limits> }) => ({
+    store: new PgContentStore(pool, req.auth.tenantId),
+    atChars: resolveLimits(agent.limits).tool_output_chars,
+  })
+
+  /**
+   * Screens a run input or a message. The caller counts the redactions in the metrics once the event is stored.
+   * `offload: false` keeps the text whole, for the input of a workflow run (`$input.text` must stay exact).
+   */
+  async function screenInput(
+    req: FastifyRequest,
+    agent: { connections: string[]; limits?: Partial<Limits> },
+    text: string,
+    offload = true,
+  ): Promise<{ text: string; redactions?: Record<string, number>; offload?: Offload }> {
+    const screened = await screenContent(text, { secrets: await secretsFor(req, agent), ...(offload ? { offload: offloadFor(req, agent) } : {}) })
+    return {
+      text: screened.content,
+      ...(Object.keys(screened.redactions).length === 0 ? {} : { redactions: screened.redactions }),
+      ...(screened.offload === undefined ? {} : { offload: screened.offload }),
+    }
   }
 
   /** Polls until the run settles, the time runs out, the client disconnects or the app closes. */
@@ -152,7 +170,7 @@ export function registerRunRoutes(app: FastifyInstance, deps: { pool: ReturnType
         422,
       )
     }
-    const input = await screenInput(req, agent.definition, body.input.text)
+    const input = await screenInput(req, agent.definition, body.input.text, definition === undefined)
     // One transaction: the run row, run.created and the queue row appear together or not at all.
     const created = await createRunWithEvent(pool, {
       tenantId,
@@ -165,7 +183,7 @@ export function registerRunRoutes(app: FastifyInstance, deps: { pool: ReturnType
         type: 'run.created',
         payload: {
           agentId,
-          input: { text: input.text, ...(input.redactions === undefined ? {} : { redactions: input.redactions }) },
+          input: { text: input.text, ...(input.redactions === undefined ? {} : { redactions: input.redactions }), ...(input.offload === undefined ? {} : { offload: input.offload }) },
           ...(body.principal ? { principal: body.principal } : {}),
           ...(definition === undefined ? {} : { workflow: { name: body.workflow!, definition } }),
         },
@@ -226,6 +244,18 @@ export function registerRunRoutes(app: FastifyInstance, deps: { pool: ReturnType
     return call
   })
 
+  /** The full text of an offloaded content of the run: its input, a message, a tool result. Only handles of this run. */
+  app.get<{ Params: { id: string; handle: string } }>('/v1/runs/:id/outputs/:handle', async (req, reply) => {
+    const { id, handle } = req.params
+    if (!(await getRun(pool, req.auth.tenantId, id))) throw runNotFound(id)
+    const entry = projectRun(await storeFor(req).readEvents(id), '').handles.get(handle)
+    const text = entry === undefined ? undefined : (await new PgContentStore(pool, req.auth.tenantId).get([entry.hash])).get(entry.hash)
+    if (text === undefined) {
+      throw apiError('output_not_found', `Run "${id}" has no output with handle "${handle}".`, 'Use a handle named in a preview of this run, for example in its events.', 404)
+    }
+    return reply.type('text/plain; charset=utf-8').send(text)
+  })
+
   /**
    * A run that is not running is cancelled at once. A running run gets a cancel input and its job is made due:
    * the runner stops it before its next step, so a tool call in flight still finishes.
@@ -274,13 +304,13 @@ export function registerRunRoutes(app: FastifyInstance, deps: { pool: ReturnType
     const store = storeFor(req)
     // A run whose agent was deleted has no connections to look up; the patterns still apply.
     const agent = await resolveAgent(configFor(req), agentId)
-    const { text, redactions } = await screenInput(req, agent?.definition ?? { connections: [] }, rawText)
+    const { text, redactions, offload } = await screenInput(req, agent?.definition ?? { connections: [] }, rawText)
     let status = firstStatus
     // One retry: the run may move between states (for example queued to running) while the message is sent.
     for (let attempt = 0; ; attempt++) {
       if (ENDED.includes(status)) throw runEnded()
       try {
-        await store.append(runId, [{ type: 'input.received', payload: { action: 'message', text, ...(redactions === undefined ? {} : { redactions }) }, labels: ['untrusted'] }], {
+        await store.append(runId, [{ type: 'input.received', payload: { action: 'message', text, ...(redactions === undefined ? {} : { redactions }), ...(offload === undefined ? {} : { offload }) }, labels: ['untrusted'] }], {
           expect: { status },
         })
         if (redactions !== undefined) metrics.redacted(redactions)
@@ -369,7 +399,10 @@ export function registerRunRoutes(app: FastifyInstance, deps: { pool: ReturnType
       if (toolCallId === undefined) throw notWaiting
       const agent = await resolveAgent(configFor(req), run.agentId)
       const secrets = await secretsFor(req, agent?.definition ?? { connections: [] })
-      const response = await screenedToolResponse({ toolCallId }, { content: body.text, isError: false }, ['untrusted'], { secrets })
+      const response = await screenedToolResponse({ toolCallId }, { content: body.text, isError: false }, ['untrusted'], {
+        secrets,
+        offload: offloadFor(req, agent?.definition ?? {}),
+      })
       answerRedactions = response.payload.redactions
       events = [response, stateTo('running')]
     } else {

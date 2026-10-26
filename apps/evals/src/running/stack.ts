@@ -1,4 +1,4 @@
-import { readFile } from 'node:fs/promises'
+import { readFile, readdir } from 'node:fs/promises'
 import type { AddressInfo } from 'node:net'
 import { fileURLToPath } from 'node:url'
 import { createSecretBox } from '@agent-core/core'
@@ -9,7 +9,7 @@ import { startShop } from '@agent-core/shop'
 import { withoutLlmRetry } from './no-llm-retry'
 
 const ADMIN_KEY = 'eval-admin-key'
-const AGENT_PATH = fileURLToPath(new URL('../../agents/shop.json', import.meta.url))
+const AGENT_DIR = fileURLToPath(new URL('../../agents', import.meta.url))
 
 export type EvalStack = {
   shop: Awaited<ReturnType<typeof startShop>>
@@ -19,7 +19,7 @@ export type EvalStack = {
   close(): Promise<void>
 }
 
-/** Resets the test database, then starts the shop and the service with connection `shop` and agent `shop`. */
+/** Resets the test database, then starts the shop and the service with connections `shop` and `warehouse` and every agent in `agents/`. */
 export async function startEvalStack(opts: { llm: LLMPort }): Promise<EvalStack> {
   const databaseUrl =
     process.env.EVAL_DATABASE_URL ??
@@ -61,15 +61,22 @@ export async function startEvalStack(opts: { llm: LLMPort }): Promise<EvalStack>
       const text = await res.text()
       return { status: res.status, body: text === '' ? undefined : JSON.parse(text) }
     }
-    const conn = await api('POST', '/v1/connections', { id: 'shop', url: shop.url })
-    if (conn.status >= 300) throw new Error(`registering connection failed: ${conn.status}`)
     // Evals run the agent as a team would after confirming every proposed safety value.
-    for (const t of conn.body.tools as { name: string }[]) {
-      const res = await api('PATCH', `/v1/connections/shop/tools/${encodeURIComponent(t.name)}`, { confirm: 'proposed' })
-      if (res.status >= 300) throw new Error(`confirming tool ${t.name} failed: ${res.status}`)
+    for (const [id, url] of [
+      ['shop', shop.url],
+      ['warehouse', shop.warehouseUrl],
+    ] as const) {
+      const conn = await api('POST', '/v1/connections', { id, url })
+      if (conn.status >= 300) throw new Error(`registering connection ${id} failed: ${conn.status}`)
+      for (const t of conn.body.tools as { name: string }[]) {
+        const res = await api('PATCH', `/v1/connections/${id}/tools/${encodeURIComponent(t.name)}`, { confirm: 'proposed' })
+        if (res.status >= 300) throw new Error(`confirming tool ${t.name} failed: ${res.status}`)
+      }
     }
-    const agent = await api('POST', '/v1/agents', JSON.parse(await readFile(AGENT_PATH, 'utf8')))
-    if (agent.status >= 300) throw new Error(`registering agent failed: ${agent.status}`)
+    for (const file of (await readdir(AGENT_DIR)).filter((f) => f.endsWith('.json')).sort()) {
+      const agent = await api('POST', '/v1/agents', JSON.parse(await readFile(`${AGENT_DIR}/${file}`, 'utf8')))
+      if (agent.status >= 300) throw new Error(`registering agent ${file} failed: ${agent.status}`)
+    }
 
     const started = { shop, service }
     return {

@@ -182,3 +182,33 @@ describe('run input', () => {
     expect(projectRun(stored([created, running]), 'sys').cancelRequested).toBe(false)
   })
 })
+
+test('handles holds the offloads of the run input, a message and a tool result, with the labels of their events', () => {
+  const off = (n: string) => ({ handle: `out_${n}`, hash: `hash${n}`, chars: 9_000, lines: 3 })
+  const events: NewEvent[] = [
+    { type: 'run.created', payload: { agentId: 'support', input: { text: 'preview a', offload: off('a') } }, labels: ['untrusted'] },
+    running,
+    requested,
+    responded,
+    { type: 'input.received', payload: { action: 'message', text: 'preview b', offload: off('b') }, labels: ['untrusted'] },
+    { type: 'tool.responded', payload: { toolCallId: 'c1', content: 'preview c', isError: false, offload: off('c') }, labels: ['internal'] },
+  ]
+  const { handles, messages } = projectRun(stored(events), 'sys')
+  expect([...handles]).toEqual([
+    ['out_a', { hash: 'hasha', labels: ['untrusted'], chars: 9_000 }],
+    ['out_b', { hash: 'hashb', labels: ['untrusted'], chars: 9_000 }],
+    ['out_c', { hash: 'hashc', labels: ['internal'], chars: 9_000 }],
+  ])
+  expect(messages[1]!.content).toBe('preview a')
+})
+
+test('a handle seen in several events has the union of their labels', () => {
+  const off = { handle: 'out_a', hash: 'hasha', chars: 9_000, lines: 1 }
+  const events: NewEvent[] = [
+    created,
+    running,
+    { type: 'tool.responded', payload: { toolCallId: 'c1', content: 'p', isError: false, offload: off }, labels: ['internal'] },
+    { type: 'tool.responded', payload: { toolCallId: 'c2', content: 'p', isError: false, offload: off }, labels: ['untrusted', 'internal'] },
+  ]
+  expect(projectRun(stored(events), 'sys').handles.get('out_a')).toEqual({ hash: 'hasha', labels: ['internal', 'untrusted'], chars: 9_000 })
+})

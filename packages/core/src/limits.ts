@@ -39,8 +39,8 @@ export const DEFAULT_LIMITS: Limits = {
   tenant_cost_usd_per_day: 20,
   run_time_s: 1800,
   wait_human_s: 86_400,
-  // About 12k tokens: a large tool output would fill the LLM context and every later request.
-  tool_output_chars: 48_000,
+  // Content longer than this is offloaded: the context holds a preview and a handle (about 2,000 tokens at most).
+  tool_output_chars: 8_000,
   // The same call allowed 3 times; also 3 tool turns in a row that bring nothing new.
   loop: 3,
 }

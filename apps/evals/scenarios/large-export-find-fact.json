@@ -1,0 +1,25 @@
+{
+  "id": "large-export-find-fact",
+  "group": "context",
+  "description": "The September sales export is about 1 MB; one order in the middle carries a note the user asks for.",
+  "agent": "ops",
+  "timeoutS": 300,
+  "input": {
+    "text": "Xuất báo cáo bán hàng tháng 2026-09 giúp tôi và cho biết đơn nào có ghi chú \"giao gấp trước Tết\"."
+  },
+  "expect": {
+    "toolsCalled": [
+      {
+        "tool": "reports.sales_export",
+        "args": {
+          "month": "2026-09"
+        }
+      },
+      {
+        "tool": "agent_core.read_output"
+      }
+    ],
+    "rubric": "The reply names order 25000 as the order with the note \"giao gấp trước Tết\".",
+    "peakInputTokensAtMost": 2800
+  }
+}

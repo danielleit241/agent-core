@@ -266,7 +266,10 @@ export function registerConfigRoutes(
         422,
       )
     }
-    const above = req.auth.admin ? undefined : limitsAboveDefault(parsed.data.limits)[0]
+    // A limit above its default that the stored agent already has stays: saving the agent again is not a raise
+    // (for example after a default was lowered).
+    const stored = req.auth.admin ? undefined : (await config.getAgent(parsed.data.id))?.definition.limits
+    const above = req.auth.admin ? undefined : limitsAboveDefault(parsed.data.limits).find((name) => stored?.[name] !== parsed.data.limits?.[name])
     if (above !== undefined) {
       throw apiError(
         'limit_above_default',

@@ -1382,3 +1382,18 @@ test('a child run started by a subrun step carries the principal of its parent',
   const events = (await authed('GET', `/v1/runs/${childId}/events`)).json().events
   expect(events[0].payload).toMatchObject({ parent: { runId: 'run_p', stepId: 'write' }, principal })
 })
+
+test('a tenant key may save an agent whose limit above the default is unchanged, but not raise or add one', async () => {
+  const tenant = await createTenant(pool, 'acme')
+  await new ConfigRepo(pool, 'acme', box).putAgent({ ...agentBody, autonomy: 'supervised', model: 'default', limits: { tool_output_chars: 48_000 } })
+  const asTenant = (body: unknown) =>
+    app.inject({ method: 'POST', url: '/v1/agents', payload: body as object, headers: { authorization: `Bearer ${tenant!.apiKey}` } })
+  // Unchanged: a new instruction text with the same stored limit.
+  expect((await asTenant({ ...agentBody, instructions: 'new text', limits: { tool_output_chars: 48_000 } })).statusCode).toBe(201)
+  // Raised, or a second limit above the default, or another agent: still admin only.
+  expect((await asTenant({ ...agentBody, limits: { tool_output_chars: 60_000 } })).statusCode).toBe(403)
+  expect((await asTenant({ ...agentBody, limits: { tool_output_chars: 48_000, llm_calls: 31 } })).statusCode).toBe(403)
+  expect((await asTenant({ ...agentBody, id: 'other', limits: { tool_output_chars: 48_000 } })).statusCode).toBe(403)
+  // Lowering below the stored value is allowed.
+  expect((await asTenant({ ...agentBody, limits: { tool_output_chars: 7_000 } })).statusCode).toBe(201)
+})
