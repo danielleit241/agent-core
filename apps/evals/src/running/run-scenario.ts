@@ -4,7 +4,7 @@ import type { EvalStack } from './stack'
 import type { Outcome, Scenario } from '../scenario'
 
 const WAIT_SECONDS = 30
-const TOTAL_LIMIT_MS = 120_000
+const DEFAULT_TIMEOUT_S = 120
 const STOP_LIMIT_MS = 60_000
 const POLL_MS = 100
 
@@ -53,12 +53,12 @@ export async function runScenario(
   s: Scenario,
   limits: { totalMs?: number; stopMs?: number } = {},
 ): Promise<Outcome> {
-  const totalMs = limits.totalMs ?? TOTAL_LIMIT_MS
+  const totalMs = limits.totalMs ?? (s.timeoutS ?? DEFAULT_TIMEOUT_S) * 1000
   const deadline = Date.now() + totalMs
   stack.shop.reset(s.fixture)
   const wait = Math.min(WAIT_SECONDS, Math.max(1, Math.floor(totalMs / 1000)))
   const created = await stack.api('POST', `/v1/runs?wait=${wait}`, {
-    agent: 'shop',
+    agent: s.agent ?? 'shop',
     input: s.input,
     ...(s.principal ? { principal: s.principal } : {}),
   })

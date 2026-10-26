@@ -1,4 +1,4 @@
-import { readdir, readFile, writeFile } from 'node:fs/promises'
+import { appendFile, readdir, readFile, writeFile } from 'node:fs/promises'
 import { realpathSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { parseArgs } from 'node:util'
@@ -14,7 +14,10 @@ import {
   taggedCassette,
 } from '@agent-core/llm/cassette'
 import { gradeDeterministic } from '../grading/graders'
-import { formatReport } from './report'
+import { metricsOf } from '../grading/metrics'
+import type { Metrics } from '../grading/metrics'
+import { formatReport, formatSummaryMarkdown } from './report'
+import type { Baseline } from './report'
 import { gradeRubric } from '../grading/rubric'
 import { StackUnsafeError, runScenario } from '../running/run-scenario'
 import { ScenarioSchema } from '../scenario'
@@ -31,7 +34,6 @@ type CliArgs = {
   repeat: number
 }
 const MAX_REPEAT = 20
-type Baseline = Record<string, 'pass' | 'fail'>
 
 const SCENARIO_DIR = fileURLToPath(new URL('../../scenarios', import.meta.url))
 const CASSETTE_PATH = fileURLToPath(new URL('../../cassettes/shop.json', import.meta.url))
@@ -44,7 +46,7 @@ export const USAGE = `Usage: pnpm eval [--mode replay|record|live] [--group <g>]
   --mode live       calls the model in LLM_* and records nothing
   --repeat <n>      with --mode live: runs each scenario n times (1 to 20) and prints its pass rate;
                     a scenario passes only when every run passes
-  --write-baseline  stores each verdict in baseline.json
+  --write-baseline  stores each verdict and its metrics in baseline.json
 
 Exit 0: no error and no regression. Exit 1: a scenario errored, regressed, or fails without a baseline entry. Exit 2: bad usage.`
 
@@ -80,16 +82,25 @@ export function combineRuns(runs: Result[]): Result {
   if (runs.length === 1) return runs[0]!
   const passed = runs.filter((r) => r.verdict === 'pass').length
   const worst = runs.find((r) => r.verdict === 'error') ?? runs.find((r) => r.verdict === 'fail')
-  const used = runs.flatMap((r) => (r.usage ? [r.usage] : []))
-  const sum = (f: (u: (typeof used)[number]) => number) => used.reduce((n, u) => n + f(u), 0)
-  const costUsd = used.length === runs.length && used.every((u) => u.costUsd !== undefined) ? sum((u) => u.costUsd!) : undefined
+  const ms = runs.flatMap((r) => (r.metrics ? [r.metrics] : []))
+  const mean = (f: (m: Metrics) => number) => Math.round(ms.reduce((n, m) => n + f(m), 0) / ms.length)
+  const costUsd = ms.every((m) => m.costUsd !== undefined) ? ms.reduce((n, m) => n + m.costUsd!, 0) / ms.length : undefined
   return {
     id: runs[0]!.id,
     group: runs[0]!.group,
     verdict: worst?.verdict ?? 'pass',
     failures: worst?.failures ?? [],
-    ...(used.length > 0
-      ? { usage: { inputTokens: sum((u) => u.inputTokens), outputTokens: sum((u) => u.outputTokens), ...(costUsd === undefined ? {} : { costUsd }) } }
+    ...(ms.length > 0
+      ? {
+          metrics: {
+            inputTokens: mean((m) => m.inputTokens),
+            outputTokens: mean((m) => m.outputTokens),
+            peakInputTokens: mean((m) => m.peakInputTokens),
+            llmTurns: mean((m) => m.llmTurns),
+            toolCalls: mean((m) => m.toolCalls),
+            ...(costUsd === undefined ? {} : { costUsd }),
+          },
+        }
       : {}),
     ms: runs.reduce((n, r) => n + (r.ms ?? 0), 0),
     runs: { passed, total: runs.length },
@@ -98,7 +109,7 @@ export function combineRuns(runs: Result[]): Result {
 
 /** Returns the ids that were `pass` in the baseline and are not `pass` now. */
 export function compareBaseline(baseline: Baseline, results: Result[]): string[] {
-  return results.filter((r) => baseline[r.id] === 'pass' && r.verdict !== 'pass').map((r) => r.id)
+  return results.filter((r) => baseline[r.id]?.verdict === 'pass' && r.verdict !== 'pass').map((r) => r.id)
 }
 
 /** Scenarios that ran to a verdict. An error says nothing about the agent, so its old recording and baseline stay. */
@@ -106,10 +117,13 @@ export function finishedIds(results: Result[]): string[] {
   return results.filter((r) => r.verdict !== 'error').map((r) => r.id)
 }
 
+// An error has no verdict to store, so only graded results reach this and they always carry metrics.
+const ZERO_METRICS: Metrics = { inputTokens: 0, outputTokens: 0, peakInputTokens: 0, llmTurns: 0, toolCalls: 0 }
+
 /** Merged, so a filtered run does not drop the scenarios it skipped. */
 export function mergeBaseline(baseline: Baseline, results: Result[]): Baseline {
   const next: Baseline = { ...baseline }
-  for (const r of results) if (r.verdict !== 'error') next[r.id] = r.verdict
+  for (const r of results) if (r.verdict !== 'error') next[r.id] = { verdict: r.verdict, ...(r.metrics ?? ZERO_METRICS) }
   return next
 }
 
@@ -126,7 +140,14 @@ async function loadScenarios(args: CliArgs): Promise<Scenario[]> {
 
 async function loadBaseline(): Promise<Baseline> {
   try {
-    return JSON.parse(await readFile(BASELINE_PATH, 'utf8')) as Baseline
+    const raw = JSON.parse(await readFile(BASELINE_PATH, 'utf8')) as Record<string, unknown>
+    const baseline: Baseline = {}
+    for (const [id, entry] of Object.entries(raw)) {
+      // The old format was a bare verdict string. It carries no metrics, so it is not read.
+      if (typeof entry === 'object' && entry !== null) baseline[id] = entry as Baseline[string]
+      else console.error(`baseline.json: "${id}" is in the old format and is ignored; run with --write-baseline`)
+    }
+    return baseline
   } catch (e) {
     if ((e as NodeJS.ErrnoException).code === 'ENOENT') return {}
     throw e
@@ -157,15 +178,7 @@ async function gradeOne(
   const started = Date.now()
   try {
     const outcome = await runScenario(stack, s)
-    let inputTokens = 0
-    let outputTokens = 0
-    let costUsd: number | undefined = 0
-    for (const e of outcome.events) {
-      if (e.type !== 'llm.responded') continue
-      inputTokens += e.payload.usage.inputTokens
-      outputTokens += e.payload.usage.outputTokens
-      costUsd = costUsd === undefined || e.payload.usage.costUsd === undefined ? undefined : costUsd + e.payload.usage.costUsd
-    }
+    const metrics = metricsOf(outcome.events)
     if (misses() > before) throw new Error('cassette miss: the run sent a request that was never recorded; re-record')
     const failures = gradeDeterministic(s, outcome)
     if (s.expect.rubric !== undefined) {
@@ -178,7 +191,7 @@ async function gradeOne(
       group: s.group,
       verdict: failures.length === 0 ? 'pass' : 'fail',
       failures,
-      usage: costUsd === undefined ? { inputTokens, outputTokens } : { inputTokens, outputTokens, costUsd },
+      metrics,
       ms: Date.now() - started,
     }
   } catch (e) {
@@ -258,12 +271,16 @@ async function main(): Promise<number> {
     await stack.close()
   }
 
-  console.log(formatReport(results))
+  const baseline = await loadBaseline()
+  console.log(formatReport(results, baseline))
+  if (process.env.GITHUB_STEP_SUMMARY) {
+    await appendFile(process.env.GITHUB_STEP_SUMMARY, `${formatSummaryMarkdown(results, baseline)}
+`)
+  }
   if (args.mode === 'record' && llmErrors > 0) {
     console.error(`${llmErrors} LLM call(s) failed while recording; the cassette and the baseline were not saved`)
     return 1
   }
-  const baseline = await loadBaseline()
   const regressions = compareBaseline(baseline, results)
   for (const id of regressions) console.error(`REGRESSION: ${id} passed in the baseline and does not pass now`)
   const untracked = args.writeBaseline ? [] : results.filter((r) => !(r.id in baseline) && r.verdict !== 'pass')

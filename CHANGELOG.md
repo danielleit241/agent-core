@@ -10,6 +10,7 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions exist
 
 ### Added
 
+- The eval report shows input and output tokens, peak context, LLM turns and tool calls per scenario with the change against `baseline.json`, a `sum` line, and `pass@1` and `pass^k` for `--repeat`. `baseline.json` stores these figures (the old string form is not read). Scenarios gain `agent`, `timeoutS`, `expect.peakInputTokensAtMost` and `expect.toolCallCount`. CI appends the table to the step summary.
 - `agent-core log verify` also compares the events with the head stored on the run, so deleted tail events are caught. `GET /v1/runs/{id}/events` returns `head`.
 - The service stores a check value of the master key and refuses to start with a different key. `agent-core doctor` fails the `master_key` check on a mismatch.
 - Without LLM settings the run worker does not start: queued runs stay queued until the service restarts with the settings.

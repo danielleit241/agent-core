@@ -2,6 +2,7 @@ import { describe, expect, test } from 'vitest'
 import { combineRuns, compareBaseline, finishedIds, mergeBaseline, parseCliArgs } from '../../src/cli/cli'
 import type { Result } from '../../src/scenario'
 
+const entry = (verdict: 'pass' | 'fail') => ({ verdict, inputTokens: 1, outputTokens: 1, peakInputTokens: 1, llmTurns: 1, toolCalls: 1 })
 const result = (id: string, verdict: Result['verdict']): Result => ({ id, group: 'g', verdict, failures: [] })
 
 describe('parseCliArgs', () => {
@@ -49,7 +50,7 @@ describe('parseCliArgs', () => {
 
 describe('compareBaseline', () => {
   test('lists a scenario that passed before and does not pass now', () => {
-    expect(compareBaseline({ a: 'pass', b: 'pass' }, [result('a', 'fail'), result('b', 'error')])).toEqual(['a', 'b'])
+    expect(compareBaseline({ a: entry('pass'), b: entry('pass') }, [result('a', 'fail'), result('b', 'error')])).toEqual(['a', 'b'])
   })
 
   test('a scenario missing from the baseline is not a regression', () => {
@@ -57,11 +58,11 @@ describe('compareBaseline', () => {
   })
 
   test('fail to pass is not a regression', () => {
-    expect(compareBaseline({ a: 'fail' }, [result('a', 'pass')])).toEqual([])
+    expect(compareBaseline({ a: entry('fail') }, [result('a', 'pass')])).toEqual([])
   })
 
   test('a scenario that is not run is not a regression', () => {
-    expect(compareBaseline({ a: 'pass' }, [])).toEqual([])
+    expect(compareBaseline({ a: entry('pass') }, [])).toEqual([])
   })
 })
 
@@ -71,7 +72,7 @@ describe('combineRuns', () => {
     group: 'g',
     verdict,
     failures,
-    usage: { inputTokens: tokens, outputTokens: tokens },
+    metrics: { inputTokens: tokens, outputTokens: tokens, peakInputTokens: tokens, llmTurns: 1, toolCalls: 1 },
     ms: 10,
   })
 
@@ -91,8 +92,17 @@ describe('combineRuns', () => {
     expect(combineRuns([run('fail', ['f']), run('error', ['timeout'])]).verdict).toBe('error')
   })
 
-  test('sums usage and time', () => {
-    expect(combineRuns([run('pass', [], 2), run('pass', [], 3)])).toMatchObject({ usage: { inputTokens: 5, outputTokens: 5 }, ms: 20 })
+  test('metrics are the rounded mean over the runs; time is summed', () => {
+    expect(combineRuns([run('pass', [], 2), run('pass', [], 3)])).toMatchObject({
+      metrics: { inputTokens: 3, outputTokens: 3, peakInputTokens: 3, llmTurns: 1, toolCalls: 1 },
+      ms: 20,
+    })
+  })
+
+  test('the mean cost is kept only when every run has one', () => {
+    const withCost = (c: number): Result => ({ ...run('pass'), metrics: { ...run('pass').metrics!, costUsd: c } })
+    expect(combineRuns([withCost(0.1), withCost(0.3)]).metrics?.costUsd).toBeCloseTo(0.2)
+    expect(combineRuns([withCost(0.1), run('pass')]).metrics).not.toHaveProperty('costUsd')
   })
 
   test('a single run is returned as is', () => {
@@ -109,10 +119,14 @@ describe('finishedIds', () => {
 
 describe('mergeBaseline', () => {
   test('an error does not overwrite the baseline, and skipped scenarios keep theirs', () => {
-    expect(mergeBaseline({ a: 'pass', b: 'pass', c: 'pass' }, [result('a', 'error'), result('b', 'fail')])).toEqual({
-      a: 'pass',
-      b: 'fail',
-      c: 'pass',
-    })
+    const merged = mergeBaseline({ a: entry('pass'), b: entry('pass'), c: entry('pass') }, [result('a', 'error'), result('b', 'fail')])
+    expect(merged.a).toEqual(entry('pass'))
+    expect(merged.b?.verdict).toBe('fail')
+    expect(merged.c).toEqual(entry('pass'))
+  })
+
+  test('writes the verdict with the full metrics', () => {
+    const metrics = { inputTokens: 9, outputTokens: 8, peakInputTokens: 7, llmTurns: 2, toolCalls: 1, costUsd: 0.5 }
+    expect(mergeBaseline({}, [{ ...result('a', 'pass'), metrics }])).toEqual({ a: { verdict: 'pass', ...metrics } })
   })
 })

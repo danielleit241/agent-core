@@ -14,11 +14,27 @@ pnpm eval --scenario order-status  # one scenario
 pnpm eval --mode live              # call the model in .env (LLM_BASE_URL, LLM_API_KEY, LLM_MODEL_DEFAULT, optional LLM_MODEL_SMART)
 ```
 
+`pnpm eval --mode live --repeat 5` runs each scenario 5 times (live only) and adds `pass@1` (mean pass rate) and `pass^k` (share of scenarios whose k runs all passed) to the report. A scenario passes only when every run passes, and its metrics are the mean over its runs, rounded.
+
 `pnpm eval` resets the test database (`agentcore_test`, or `EVAL_DATABASE_URL`). Do not run it at the same time as `pnpm test:db` or `pnpm e2e`.
 
 Exit code 1 means a scenario errored (for example a cassette miss) or a scenario that passed in `baseline.json` does not pass now.
 
-A scenario has 120 s to settle. Past that, its run is cancelled and the scenario errors. A run that keeps running for 60 s more could still change the shop, so the remaining scenarios are reported as `not run` instead of graded.
+A scenario has 120 s to settle (`timeoutS` sets another limit, at most 1800). Past that, its run is cancelled and the scenario errors. A run that keeps running for 60 s more could still change the shop, so the remaining scenarios are reported as `not run` instead of graded.
+
+## Metrics
+
+The report prints one line per scenario with these figures and their change against `baseline.json`: `(−4.0%)`, `(+2.5%)` or `(=)`. A `sum` line adds them up. Changes in metrics never fail the run; only a verdict that was `pass` in the baseline and is not now does. When `GITHUB_STEP_SUMMARY` is set, the same table is appended there as Markdown.
+
+| Metric | Meaning |
+|---|---|
+| `in`, `out` | sums over `llm.responded.usage` |
+| `peak` | the largest `inputTokens` of one call: the size of the biggest context (the `sum` line shows the largest peak) |
+| `turns` | count of `llm.responded` |
+| `tools` | count of `tool.requested` (built-ins included) |
+| `costUsd` | in the baseline and the `usage` line, only when every response has a cost |
+
+The figures come from the run's events. The rubric judge is not counted.
 
 ## Re-record
 
@@ -32,10 +48,10 @@ Read every failure before you commit the new cassette and baseline. Change a sce
 
 ## Files
 
-- `scenarios/*.json`: one scenario per file (schema in `src/scenario.ts`).
+- `scenarios/*.json`: one scenario per file (schema in `src/scenario.ts`). Optional fields: `agent` (default `shop`), `timeoutS` (default 120, max 1800), `expect.peakInputTokensAtMost` (fails when the peak is higher), `expect.toolCallCount` (exact `tool.requested` count per tool).
 - `agents/shop.json`: the agent definition under test.
 - `cassettes/shop.json`: recorded LLM responses, keyed by the normalised request hash. Holds no secrets.
-- `baseline.json`: the verdict of each scenario at the last recording.
+- `baseline.json`: the verdict and the metrics of each scenario at the last recording: `{ "<id>": { "verdict": "pass", "inputTokens": …, "outputTokens": …, "peakInputTokens": …, "llmTurns": …, "toolCalls": …, "costUsd"?: … } }`. `pnpm eval --write-baseline` in replay mode rewrites it from the cassette, so the numbers are stable. The old string form is not read.
 
 ## Baseline
 
