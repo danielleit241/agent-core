@@ -41,6 +41,8 @@ export type RunWorkerDeps = {
   llmApiKey?: string
   /** Called with the kind → count of secrets removed from a tool output. */
   onRedacted?: (redactions: Record<string, number>) => void
+  /** Called for each read served from the run's own log. */
+  onCacheHit?: () => void
   /** Gives the invoker for one tenant's tools. */
   tools: (tenantId: string) => ToolInvoker
   workerId: string
@@ -180,6 +182,7 @@ async function processJob(deps: RunWorkerDeps, job: { runId: string; tenantId: s
       tools: deps.tools(tenantId),
       ...ctx,
       ...(deps.onRedacted === undefined ? {} : { onRedacted: deps.onRedacted }),
+      ...(deps.onCacheHit === undefined ? {} : { onCacheHit: deps.onCacheHit }),
       signal: ctl.abort.signal,
       subruns: createSubruns(deps.pool, deps.secrets, tenantId),
       ...(deps.now === undefined ? {} : { now: deps.now }),

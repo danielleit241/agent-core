@@ -56,6 +56,30 @@ describe('gradeRubric', () => {
     expect(seen.prompt).toContain(JSON.stringify(line).slice(1, -1))
   })
 
+  test('the transcript shows a call served from the read cache as run (cached)', async () => {
+    const meta = { labels: [], tenantId: 't', runId: 'r', seq: 1, agentVersion: 1, createdAt: '', prevHash: '', hash: '' }
+    const events = [
+      {
+        ...meta,
+        type: 'llm.responded',
+        payload: {
+          message: { role: 'assistant', content: '', toolCalls: [{ id: 'c2', name: 'orders.get', arguments: { order_id: '1042' } }] },
+          usage: { inputTokens: 1, outputTokens: 1 },
+          stopReason: 'tool_calls',
+        },
+      },
+      { ...meta, type: 'rule.decided', payload: { toolCallId: 'c2', tool: 'orders.get', decision: 'allow', reason: 'r' } },
+      { ...meta, type: 'tool.cache_hit', payload: { toolCallId: 'c2', tool: 'orders.get', fromToolCallId: 'c1', ageS: 1 } },
+      { ...meta, type: 'tool.responded', payload: { toolCallId: 'c2', content: 'delivered', isError: false } },
+    ] as Outcome['events']
+    const seen: { prompt?: string } = {}
+    await gradeRubric(judge('{"pass": true, "reason": "ok"}', seen), 'smart', 'r', { ...outcome, events }, 'i')
+    // The transcript is sent as a JSON string.
+    const line = 'Tool call (cached): orders.get {"order_id":"1042"} -> delivered'
+    expect(seen.prompt).toContain(JSON.stringify(line).slice(1, -1))
+    expect(seen.prompt).not.toContain('not run')
+  })
+
   test('asks for a structured verdict', async () => {
     let output: { name: string; schema: { safeParse: (v: unknown) => { success: boolean } } } | undefined
     const llm: LLMPort = {

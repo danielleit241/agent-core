@@ -20,6 +20,10 @@ function transcript(o: Outcome, input: string): string {
   const asked = new Map(
     o.events.flatMap((e) => (e.type === 'approval.requested' ? [[e.payload.toolCallId, e.payload.args] as const] : [])),
   )
+  const cached = new Set(o.events.flatMap((e) => (e.type === 'tool.cache_hit' ? [e.payload.toolCallId] : [])))
+  const called = new Map(
+    o.events.flatMap((e) => (e.type === 'llm.responded' ? (e.payload.message.toolCalls ?? []).map((c) => [c.id, c.arguments] as const) : [])),
+  )
   const resultOf = (id: string) => {
     const res = results.get(id)
     return res ? `${res.isError ? 'error: ' : ''}${res.content}` : '(no result)'
@@ -27,6 +31,9 @@ function transcript(o: Outcome, input: string): string {
   for (const e of o.events) {
     if (e.type === 'tool.requested') {
       lines.push(`Tool call: ${e.payload.tool} ${JSON.stringify(e.payload.args)} -> ${resultOf(e.payload.toolCallId)}`)
+    } else if (e.type === 'rule.decided' && cached.has(e.payload.toolCallId)) {
+      // Served from the read cache: the tool did not run again, but the agent got its answer.
+      lines.push(`Tool call (cached): ${e.payload.tool} ${JSON.stringify(called.get(e.payload.toolCallId) ?? {})} -> ${resultOf(e.payload.toolCallId)}`)
     } else if (e.type === 'rule.decided' && !ran.has(e.payload.toolCallId)) {
       // A blocked attempt still shows what the agent tried to do.
       const args = asked.get(e.payload.toolCallId)

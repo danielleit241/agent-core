@@ -6,6 +6,7 @@ class Metrics {
   private llm = { ok: 0, error: 0 }
   private tokens = { input: 0, output: 0 }
   private redactions = new Map<string, number>()
+  private cacheHits = 0
 
   httpRequest(method: string, statusCode: number): void {
     const key = `${METHODS.has(method) ? method : 'OTHER'}|${Math.floor(statusCode / 100)}xx`
@@ -25,6 +26,11 @@ class Metrics {
     for (const [kind, n] of Object.entries(counts)) this.redactions.set(kind, (this.redactions.get(kind) ?? 0) + n)
   }
 
+  /** A read served from the run's own log instead of the tool. */
+  toolCacheHit(): void {
+    this.cacheHits++
+  }
+
   /** The counters in Prometheus text format. */
   render(): string {
     const lines = ['# TYPE agent_core_http_requests_total counter']
@@ -40,6 +46,8 @@ class Metrics {
     lines.push(`agent_core_llm_tokens_total{kind="output"} ${this.tokens.output}`)
     lines.push('# TYPE agent_core_redactions_total counter')
     for (const [kind, n] of [...this.redactions].sort()) lines.push(`agent_core_redactions_total{kind="${kind}"} ${n}`)
+    lines.push('# TYPE agent_core_tool_cache_hits_total counter')
+    lines.push(`agent_core_tool_cache_hits_total ${this.cacheHits}`)
     return lines.join('\n') + '\n'
   }
 }
