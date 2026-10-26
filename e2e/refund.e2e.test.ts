@@ -78,7 +78,7 @@ test('refund over the limit: wait, approve, complete, notify, verify', async () 
   const approvalHook = lastOf(s, 'approval.requested')
   expect(verifyWebhook(approvalHook.body, approvalHook.headers['x-agentcore-signature'] as string, secret, nowSec())).toBe(true)
 
-  expect((await s.api('POST', `/v1/runs/${run.body.id}/resolve`, { action: 'approve' })).status).toBe(202)
+  expect((await s.api('POST', `/v1/runs/${run.body.id}/input`, { action: 'approve' })).status).toBe(202)
   await waitFor(async () => (await s.api('GET', `/v1/runs/${run.body.id}`)).body.status === 'completed')
 
   expect(s.shop.state.refunds).toEqual([{ orderId: '1042', amount: 1200000 }])
@@ -107,7 +107,7 @@ test('rejected refund never reaches the shop', async () => {
   const run = await startRun(s, 'Áo lỗi, hoàn tiền đơn 1042')
   expect(run.body.status).toBe('waiting_human')
 
-  expect((await s.api('POST', `/v1/runs/${run.body.id}/resolve`, { action: 'reject' })).status).toBe(202)
+  expect((await s.api('POST', `/v1/runs/${run.body.id}/input`, { action: 'reject' })).status).toBe(202)
   await waitFor(async () => (await s.api('GET', `/v1/runs/${run.body.id}`)).body.status === 'completed')
   expect(s.shop.state.refunds).toEqual([])
 })

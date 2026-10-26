@@ -3,7 +3,7 @@ import type { AddressInfo } from 'node:net'
 import { afterEach, expect, test } from 'vitest'
 import type { ToolDescriptor } from '@agent-core/core'
 import type { ConfigRepo, Connection } from '@agent-core/store-postgres'
-import { createToolRouter } from '../../src/tools/router'
+import { createToolRouter, createToolRouters } from '../../src/tools/router'
 
 const servers: ReturnType<typeof createServer>[] = []
 afterEach(async () => {
@@ -40,7 +40,7 @@ function fakeConfig(conn: Connection | null) {
 
 test('the kind of a connection is looked up once; later calls read the connection only for the call itself', async () => {
   const url = await hook()
-  const { config, state } = fakeConfig({ id: 'loyalty', kind: 'webhook', url, secret: 's', tools: [] })
+  const { config, state } = fakeConfig({ id: 'loyalty', kind: 'webhook', url, secret: 's', tools: [], limits: null })
   const router = createToolRouter(config)
   expect(await router.call(tool, {}, ctx)).toEqual({ content: 'ok', isError: false })
   expect(state.reads).toBe(2)
@@ -53,7 +53,15 @@ test('a missing connection is not remembered: it works once it exists', async ()
   const { config, state } = fakeConfig(null)
   const router = createToolRouter(config)
   await expect(router.call(tool, {}, ctx)).rejects.toMatchObject({ code: 'connection_unavailable', notSent: true })
-  state.conn = { id: 'loyalty', kind: 'webhook', url: await hook(), secret: 's', tools: [] }
+  state.conn = { id: 'loyalty', kind: 'webhook', url: await hook(), secret: 's', tools: [], limits: null }
   expect((await router.call(tool, {}, ctx)).content).toBe('ok')
   await router.close()
+})
+
+test('createToolRouters keeps one router per tenant and closes them all', async () => {
+  const routers = createToolRouters({} as never, {} as never)
+  const a = routers.forTenant('a')
+  expect(routers.forTenant('a')).toBe(a)
+  expect(routers.forTenant('b')).not.toBe(a)
+  await routers.close()
 })

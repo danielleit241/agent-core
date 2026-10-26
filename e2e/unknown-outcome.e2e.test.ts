@@ -38,7 +38,7 @@ async function reachUnknownOutcome(s: Stack): Promise<string> {
   const run = await s.api('POST', '/v1/runs?wait=10', { agent: 'retail-support', input: { text: 'Hoàn tiền đơn 1042' } })
   expect(run.body).toMatchObject({ status: 'waiting_human', waiting_reason: 'approval' })
   s.shop.failNextResponseAfterExecute()
-  expect((await s.api('POST', `/v1/runs/${run.body.id}/resolve`, { action: 'approve' })).status).toBe(202)
+  expect((await s.api('POST', `/v1/runs/${run.body.id}/input`, { action: 'approve' })).status).toBe(202)
   await waitFor(async () => (await s.api('GET', `/v1/runs/${run.body.id}`)).body.waiting_reason === 'unknown_outcome')
   return run.body.id as string
 }
@@ -59,7 +59,7 @@ test('outcome_happened completes the run without a second refund', async () => {
   await waitFor(() => s.receiver.received.some((r) => typeOf(r) === 'run.waiting_human'))
   expect(s.shop.state.refunds).toHaveLength(1)
 
-  expect((await s.api('POST', `/v1/runs/${id}/resolve`, { action: 'outcome_happened' })).status).toBe(202)
+  expect((await s.api('POST', `/v1/runs/${id}/input`, { action: 'outcome_happened' })).status).toBe(202)
   await waitFor(async () => (await s.api('GET', `/v1/runs/${id}`)).body.status === 'completed')
   expect(s.shop.state.refunds).toHaveLength(1)
   expect((await eventsOf(s, id)).filter((e) => e.type === 'tool.requested')).toHaveLength(1)
@@ -69,7 +69,7 @@ test('outcome_not_happened runs the tool again with the same idempotency key', a
   const s = (stack = await startStack(script))
   const id = await reachUnknownOutcome(s)
 
-  expect((await s.api('POST', `/v1/runs/${id}/resolve`, { action: 'outcome_not_happened' })).status).toBe(202)
+  expect((await s.api('POST', `/v1/runs/${id}/input`, { action: 'outcome_not_happened' })).status).toBe(202)
   await waitFor(async () => (await s.api('GET', `/v1/runs/${id}`)).body.status === 'completed')
   expect(s.shop.state.refunds).toHaveLength(2)
   const requested = (await eventsOf(s, id)).filter((e) => e.type === 'tool.requested')
@@ -83,7 +83,7 @@ test('cancel ends the run and calls the model no more', async () => {
   const llmCalls = async () => (await eventsOf(s, id)).filter((e) => e.type === 'llm.responded').length
   const before = await llmCalls()
 
-  const res = await s.api('POST', `/v1/runs/${id}/resolve`, { action: 'cancel' })
+  const res = await s.api('POST', `/v1/runs/${id}/input`, { action: 'cancel' })
   expect(res.status).toBe(202)
   expect(res.body).toEqual({ run_id: id, status: 'cancelled' })
   await new Promise((r) => setTimeout(r, 300))

@@ -1,23 +1,26 @@
 import pg from 'pg'
 import { afterAll, beforeAll, beforeEach, expect, test } from 'vitest'
-import { claim, assertTestDatabase, createPool, enqueue, heartbeat, release, requeueIfHolder, runMigrations } from '../../src'
+import { claim, assertTestDatabase, runtimeTestUrl, createPool, enqueue, heartbeat, makeDue, release, requeueIfHolder, runMigrations } from '../../src'
 
 const url = process.env.TEST_DATABASE_URL ?? 'postgres://agentcore:agentcore@localhost:5433/agentcore_test'
+let migrator: pg.Pool
 let pool: pg.Pool
 
 beforeAll(() => {
   assertTestDatabase(url)
-  pool = createPool(url)
+  migrator = createPool(url)
+  pool = createPool(runtimeTestUrl(url))
 })
 beforeEach(async () => {
-  await pool.query('DROP SCHEMA public CASCADE; CREATE SCHEMA public')
-  await runMigrations(pool)
+  await migrator.query('DROP SCHEMA public CASCADE; CREATE SCHEMA public')
+  await runMigrations(migrator, { runtimeUser: 'agentcore_runtime' })
 })
 afterAll(async () => {
   await pool.end()
+  await migrator.end()
 })
 
-const rowCount = async (): Promise<number> => (await pool.query('SELECT 1 FROM queue')).rowCount ?? 0
+const rowCount = async (): Promise<number> => (await migrator.query('SELECT 1 FROM queue')).rowCount ?? 0
 
 test('never lets two workers claim the same run', async () => {
   await enqueue(pool, { runId: 'r1', tenantId: 'default' })
@@ -28,7 +31,7 @@ test('never lets two workers claim the same run', async () => {
 test('a stale lock can be reclaimed', async () => {
   await enqueue(pool, { runId: 'r1', tenantId: 'default' })
   await claim(pool, 'w1')
-  expect(await claim(pool, 'w2', 0)).toEqual({ runId: 'r1', tenantId: 'default' })
+  expect(await claim(pool, 'w2', { lockTimeoutMs: 0 })).toEqual({ runId: 'r1', tenantId: 'default' })
 })
 
 test('future availableAt is not claimed yet', async () => {
@@ -63,12 +66,12 @@ test('re-enqueue while claimed clears the lock, so the old holder cannot delete 
 test('heartbeat refreshes the lock so a slower timeout no longer reclaims it', async () => {
   await enqueue(pool, { runId: 'r1', tenantId: 'default' })
   await claim(pool, 'w1')
-  await pool.query("UPDATE queue SET locked_at = now() - interval '10 seconds'")
-  const stale = await pool.query("SELECT 1 FROM queue WHERE locked_at < now() - interval '5 seconds'")
+  await migrator.query("UPDATE queue SET locked_at = now() - interval '10 seconds'")
+  const stale = await migrator.query("SELECT 1 FROM queue WHERE locked_at < now() - interval '5 seconds'")
   expect(stale.rowCount).toBe(1)
   expect(await heartbeat(pool, 'r1', 'w2')).toBe(false)
   expect(await heartbeat(pool, 'r1', 'w1')).toBe(true)
-  expect(await claim(pool, 'w2', 5000)).toBeNull()
+  expect(await claim(pool, 'w2', { lockTimeoutMs: 5000 })).toBeNull()
 })
 
 test('heartbeat returns false when the row is gone', async () => {
@@ -80,9 +83,74 @@ test('requeueIfHolder with availableAt sets the time only for the lock holder', 
   await claim(pool, 'w1')
   const at = new Date(Date.now() + 60_000)
   await requeueIfHolder(pool, 'r1', 'w2', at)
-  expect((await pool.query('SELECT locked_by FROM queue')).rows).toEqual([{ locked_by: 'w1' }])
+  expect((await migrator.query('SELECT locked_by FROM queue')).rows).toEqual([{ locked_by: 'w1' }])
   await requeueIfHolder(pool, 'r1', 'w1', at)
-  const row = (await pool.query('SELECT locked_by, available_at FROM queue')).rows[0]
+  const row = (await migrator.query('SELECT locked_by, available_at FROM queue')).rows[0]
   expect(row.locked_by).toBeNull()
   expect(new Date(row.available_at).getTime()).toBe(at.getTime())
+})
+
+test('makeDue makes a waiting job due now and keeps the lock of a running one', async () => {
+  await enqueue(pool, { runId: 'r1', tenantId: 'default', availableAt: new Date(Date.now() + 60_000) })
+  await makeDue(pool, 'default', 'r1')
+  expect(await claim(pool, 'w1')).toEqual({ runId: 'r1', tenantId: 'default' })
+  await makeDue(pool, 'default', 'r1')
+  expect((await migrator.query('SELECT locked_by FROM queue')).rows).toEqual([{ locked_by: 'w1' }])
+})
+
+test('requeueIfHolder makes the job due now when it was nudged while held', async () => {
+  await enqueue(pool, { runId: 'r1', tenantId: 'default' })
+  await claim(pool, 'w1')
+  await makeDue(pool, 'default', 'r1')
+  await requeueIfHolder(pool, 'r1', 'w1', new Date(Date.now() + 300_000))
+  expect(await claim(pool, 'w2')).toEqual({ runId: 'r1', tenantId: 'default' })
+  // The nudge was used: the next requeue keeps its own time.
+  const at = new Date(Date.now() + 60_000)
+  await requeueIfHolder(pool, 'r1', 'w2', at)
+  expect(new Date((await migrator.query('SELECT available_at FROM queue')).rows[0].available_at).getTime()).toBe(at.getTime())
+})
+
+test('makeDue does nothing for a job of another tenant', async () => {
+  await enqueue(pool, { runId: 'r1', tenantId: 'default', availableAt: new Date(Date.now() + 60_000) })
+  await makeDue(pool, 't2', 'r1')
+  expect(await claim(pool, 'w1')).toBeNull()
+})
+
+const lockedCount = async (tenant: string): Promise<number> =>
+  (await migrator.query('SELECT 1 FROM queue WHERE tenant_id = $1 AND locked_by IS NOT NULL', [tenant])).rowCount ?? 0
+
+test('a busy tenant does not block another tenant', async () => {
+  for (let i = 0; i < 10; i++) await enqueue(pool, { runId: `a${i}`, tenantId: 'a', availableAt: new Date(Date.now() - 10000 + i) })
+  await enqueue(pool, { runId: 'b1', tenantId: 'b' })
+  expect(await claim(pool, 'w1')).toEqual({ runId: 'a0', tenantId: 'a' })
+  expect(await claim(pool, 'w2')).toEqual({ runId: 'b1', tenantId: 'b' })
+})
+
+test('maxPerTenant caps running jobs and frees a slot on release', async () => {
+  for (let i = 0; i < 4; i++) await enqueue(pool, { runId: `a${i}`, tenantId: 'a' })
+  const first = await claim(pool, 'w1', { maxPerTenant: 2 })
+  expect(await claim(pool, 'w2', { maxPerTenant: 2 })).not.toBeNull()
+  expect(await claim(pool, 'w3', { maxPerTenant: 2 })).toBeNull()
+  await release(pool, first!.runId, 'w1')
+  expect(await claim(pool, 'w3', { maxPerTenant: 2 })).toMatchObject({ tenantId: 'a' })
+})
+
+test('concurrent claims never exceed maxPerTenant', async () => {
+  for (let i = 0; i < 5; i++) {
+    await enqueue(pool, { runId: `a${i}`, tenantId: 'a' })
+    await enqueue(pool, { runId: `b${i}`, tenantId: 'b' })
+  }
+  await Promise.all(Array.from({ length: 8 }, (_, i) => claim(pool, `w${i}`, { maxPerTenant: 2 })))
+  expect(await lockedCount('a')).toBeLessThanOrEqual(2)
+  expect(await lockedCount('b')).toBeLessThanOrEqual(2)
+  expect(await lockedCount('a')).toBe(2)
+  expect(await lockedCount('b')).toBe(2)
+})
+
+test('a job with an expired lock does not count as running', async () => {
+  for (let i = 0; i < 3; i++) await enqueue(pool, { runId: `a${i}`, tenantId: 'a' })
+  await claim(pool, 'w1', { maxPerTenant: 1 })
+  expect(await claim(pool, 'w2', { maxPerTenant: 1 })).toBeNull()
+  await migrator.query("UPDATE queue SET locked_at = now() - interval '10 minutes' WHERE locked_by = 'w1'")
+  expect(await claim(pool, 'w2', { maxPerTenant: 1 })).not.toBeNull()
 })

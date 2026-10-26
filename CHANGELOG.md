@@ -4,6 +4,10 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions exist
 
 ## [Unreleased]
 
+### Removed
+
+- `POST /v1/runs/{id}/resolve` and `POST /v1/runs/{id}/cancel`; use `POST /v1/runs/{id}/input`.
+
 ### Added
 
 - Roadmap, agent guide, contributing guide, security policy, code of conduct, MIT license.
@@ -13,15 +17,30 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions exist
 - Evals: `pnpm eval` runs shop scenarios against the real service stack, grades them pass or fail (tools called, arguments, final shop state, LLM rubric), and replays a recorded cassette without LLM calls. CI fails when a baseline scenario regresses.
 - Runs now carry the requester and the current time (a `volatile` item that replay ignores) in the LLM context.
 - The OpenAI-compatible adapter merges adjacent system messages, because some providers keep only the first.
+- Fair queue per tenant: a worker claims from the tenant with the fewest running runs, and at most 4 runs per tenant run at once by default.
 - Tool safety: discovered tools start strict; MCP hints and `_meta` declarations become a proposal that an admin confirms with `PATCH /v1/connections/{id}/tools/{tool}`. Hints only ever tighten.
 - Webhook tools (`"kind":"webhook"` connections): signed calls with an idempotency key, a dry-run header and an HS256 principal JWT.
 - `unknown_outcome` runs can be settled (`outcome_happened`, `outcome_not_happened`, `cancel`); `POST /v1/runs/{id}/cancel`; `pending_outcome` in the run view; `run.waiting_human` webhook.
 - Model profiles: `GET /v1/models`, `POST /v1/models/check`, `PATCH /v1/models/{alias}`, `pnpm models:check`. Structured output is validated and retried when a model has no strict JSON schema.
 - Tool fingerprints: each tool remembers the definition an admin last reviewed. When it changes, the tool shows `changedSinceReview`, its confirmations no longer count, and every call waits for approval, even when an `allow` rule matches, until it is confirmed again. `PATCH` accepts the reviewed `fingerprint` and answers `409 tool_changed` when the tool changed since.
 - A run that waits on an unknown outcome records why (`error.raised`, for example `HTTP 503`); `pending_outcome.reason` shows it.
+- Every write endpoint accepts `Idempotency-Key`; a key reused with a different request gets 422 `idempotency_key_reused`.
+- Tenants: `POST /v1/tenants` creates a tenant and its first API key; `POST /v1/tenants/{id}/keys` issues another key (older keys keep working). Every tenant has its own agents, connections, runs, webhooks and idempotency keys. The admin key works as the tenant `default`.
+- Row-level security: the service connects as a login role without table rights and switches to `agentcore_app` or `agentcore_claim` inside each transaction, so the database refuses a query that reaches another tenant's rows.
+- Connection and webhook secrets are encrypted at rest (AES-256-GCM, bound to tenant, table and row).
+- The admin key may send `X-Tenant-Id` on `/v1/connections` and `/v1/webhooks` routes to act for a tenant.
+- Limits: an agent may carry a `limits` block (`llm_calls` 30, `tokens` 500000, `cost_usd` 1, `tenant_cost_usd_per_day` 20, `run_time_s` 1800, `wait_human_s` 86400, `tool_output_chars` 48000 by default). A tenant key may only lower a limit; `403 limit_above_default` otherwise. Every breach appends `limit.reached` with the limit's name. A model without a price and without a provider-reported cost counts as cost 0, so only `tokens` bounds it; give the model profile prices to enforce the cost limits.
+- A run that breaches a run limit waits with `"waiting_reason":"limit"`. The resolve action `continue` gives it one more full allowance of that limit (`limit.continued`); `cancel` ends it. Only the admin key may continue past `tenant_cost_usd_per_day` (`403 limit_needs_admin`).
+- A run that waits for a human longer than `wait_human_s` (24 hours by default) fails with reason `wait_expired`. This applies to every wait, approvals and unknown outcomes included, which used to wait forever. Waits recorded before this change never expire.
+- Workflow runs: an agent may declare `workflows`, each `{ start, steps }` with four step kinds: `tool`, `approval`, `llm` and `subrun`. `POST /v1/runs` takes `workflow`; `run.created` keeps a copy of the definition, so editing the agent does not change a running workflow. Tool steps use the agent's rule gate, approval, retries and connection guard with the call id `step:<stepId>`; an approval step waits like an approval; a rejection is the output `{ "approved": false }`, which a `next` with `when` can branch on, and ends the run as failed when `next` is a plain step id. Arguments take fixed values or `$ref` to the run input or an earlier output; `next` branches on the output with the rule operators. A tool error, a missing `$ref` value or LLM output that misses `output_schema` fails the run. A `subrun` step starts a child agent run (`run.created.parent`), sleeps, and continues with `{ status, text }` when the child ends; a child that did not complete fails the parent unless `next` branches on it. The child inherits the parent's principal, and cancelling the parent cancels its children. Idempotency keys that start with `subrun:` are reserved for child runs (`400 invalid_idempotency_key`). New events `step.started` and `step.completed`. Saving an agent whose workflow has a cycle, a missing step, a `$ref` to no step, a built-in tool step, or an `output_schema` that is unsupported or uses `pattern`, `patternProperties` or `format` gives `422 invalid_workflow`.
+- Connection protection: a rate limit (`calls_per_minute`, default 60, fixed one-minute window) and a concurrency limit (`concurrency`, default 4) per connection, set in an optional `limits` block when the connection is registered, and a circuit breaker (opens after 5 failed calls in a row, 30 s open, then one trial call). State lives in Postgres (`connection_guards`, `connection_leases`, migration 009), so all workers share it; a lease of a dead worker expires after 300 s. A call that must wait gets `tool.deferred` with a `retryAt` before it is sent, and the worker puts the job back for that time. Deferral time is not run time. A call deferred for an hour gets the tool error `Connection unavailable.`, unless it is a write that was already sent: that one waits for a human with `unknown_outcome`. Concurrency waits back off 1, 2, 4 ... s, at most 10 s. An error in the guard's own store does not fail the run; the worker tries again. Registering a connection again without `limits` keeps its limits. Built-in tools are not limited.
+- Follow-ups: the first built-in tool, `agent_core.schedule_followup`. The model sees it only when an `allow` rule of the agent names it. A call puts the run in the new `sleeping` state until `wakeAt`; the queue job stays due at that time, so a restart does not lose it. On waking the run gets `Follow-up at <time>. Note: <note>` as an `untrusted` tool result and continues. Sleep does not count as run time; a message does not wake the run. At most 10 follow-ups per run. A connection tool named with the prefix `agent_core.` gives `422 reserved_tool_name`.
+- Run input: `POST /v1/runs/{id}/input` carries every human action (`approve`, `reject`, `outcome_happened`, `outcome_not_happened`, `continue`, `cancel`) and a `message` that steers the run: it reaches the next LLM request as user text, labelled `untrusted`, and is never lost when it arrives during the final LLM call. `cancel` now also stops a running run, or one that waits for an LLM retry, before its next step (`input.received`, then `cancelled`). A message to an ended run gives `409 run_ended`.
+- Loop detection: the `loop` limit (default 3) stops a run before a fourth call with the same tool and the same arguments, and before an LLM call that follows 3 tool turns in a row whose every call and result repeat an earlier one. The run waits with `"waiting_reason":"limit"` and `limit.reached` names `loop`.
 
 ### Fixed
 
+- A filtered or refused LLM answer now fails the run with reason `filtered` instead of completing it.
 - The event log refuses a state change written from a stale status, so a run cancelled while a worker was starting it stays cancelled.
 - A tool always runs with the safety computed from its source and confirmations, never a stored copy; tools stored before this change run strict until confirmed.
 - A stricter declaration now tightens every safety property, and the output of a tool that reaches outside is always untrusted.
@@ -50,10 +69,16 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions exist
 - The runner, not the tool adapters, retries tool calls: reads and writes with an idempotency key get up to 3 attempts with the same key, and each failed attempt is logged as `error.raised`. A keyed write that still fails after it was sent waits on an unknown outcome.
 - A transient LLM error (network, timeout, 429, 5xx) no longer fails the run. The run stays `running` and is retried after 30, 60, 120, 240 and 300 seconds (±20%), or longer when the provider's `Retry-After` asks for it (a hint can only lengthen a wait, and no wait is over 5 minutes, so the last wait is 240 to 300 seconds); the sixth failure in a row fails it. `error.raised` gains `retryAt`.
 - Source layout: adapters moved from `packages/adapters/*` to `packages/*`.
+- The 30-call breaker is now the `llm_calls` limit: the run waits with reason `limit` instead of `breaker`. The tool output cut follows `tool_output_chars` and records `limit.reached`; the run goes on.
 - `@agent-core/llm` replaces `llm-openai` and `llm-cassette`; each provider is a folder under `src/providers/`. The eval cassette is imported from `@agent-core/llm/cassette`, so the service does not load it.
 - `@agent-core/tools` replaces `tools-mcp` and `tools-webhook`; each tool protocol is a folder under `src/`.
 - Tests moved from `src/` to a `tests/` folder in each package that mirrors `src/`.
 
 ### Upgrade notes
+
+- **Breaking:** `MIGRATOR_DATABASE_URL` (the owner that runs migrations) and `AGENT_CORE_MASTER_KEY` (32 bytes in base64, for example `openssl rand -base64 32`) are now required. `DATABASE_URL` must name the runtime login role (`agentcore_runtime` in development).
+- **Breaking:** PostgreSQL 16 or newer is required.
+- **Breaking:** `POST /v1/connections` and `POST /v1/webhooks` need the admin key; a tenant key gets 403. This holds until the SSRF guard exists.
+- **Breaking:** recreate existing databases with `docker compose down -v && pnpm db:up`. Plaintext secrets are not migrated, and the `agentcore_runtime` role is created only on a fresh volume.
 
 - After this change, every tool stored earlier (including read tools such as `orders.get`) runs strict and waits for approval. List the tools with `GET /v1/connections/{id}/tools` and confirm each one with `PATCH /v1/connections/{id}/tools/{tool}`, sending the `fingerprint` you reviewed.

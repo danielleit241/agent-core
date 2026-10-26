@@ -1,9 +1,10 @@
 import pg from 'pg'
 import { afterAll, beforeAll, beforeEach, expect, test } from 'vitest'
 import type { ModelProfile } from '@agent-core/core'
-import { ModelProfileRepo, assertTestDatabase, createPool, runMigrations } from '../../src'
+import { ModelProfileRepo, assertTestDatabase, runtimeTestUrl, createPool, runMigrations } from '../../src'
 
 const url = process.env.TEST_DATABASE_URL ?? 'postgres://agentcore:agentcore@localhost:5433/agentcore_test'
+let migrator: pg.Pool
 let pool: pg.Pool
 let repo: ModelProfileRepo
 
@@ -13,15 +14,17 @@ const probes = [{ name: 'tools', ok: true, detail: '1 tool call(s)' }]
 
 beforeAll(() => {
   assertTestDatabase(url)
-  pool = createPool(url)
+  migrator = createPool(url)
+  pool = createPool(runtimeTestUrl(url))
 })
 beforeEach(async () => {
-  await pool.query('DROP SCHEMA public CASCADE; CREATE SCHEMA public')
-  await runMigrations(pool)
+  await migrator.query('DROP SCHEMA public CASCADE; CREATE SCHEMA public')
+  await runMigrations(migrator, { runtimeUser: 'agentcore_runtime' })
   repo = new ModelProfileRepo(pool)
 })
 afterAll(async () => {
   await pool.end()
+  await migrator.end()
 })
 
 test('get returns null for an unknown model', async () => {

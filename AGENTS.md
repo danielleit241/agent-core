@@ -6,22 +6,30 @@ Basic context for anyone, person or coding agent, changing agent-core.
 
 agent-core is an agent service. Teams connect systems through three gates (in: Control API; tool: MCP, OpenAPI, webhook tools; out: signed webhooks). The service runs the harness: agent loop, tool calls, rules, approval, event log.
 
-Status: in development. Current milestone: M1 (see `ROADMAP.md`).
+Status: in development. `ROADMAP.md` holds the milestones and the one in progress.
 
 ## Where to look
 
-- `ROADMAP.md`: milestones, tasks, release gate, security invariants.
+Each fact has one home. Other files link to it instead of repeating it.
+
+- `README.md`: what agent-core is, the pictures, the quickstart.
+- `ROADMAP.md`: milestones, tasks and their progress, release gate, security invariants.
+- `AGENTS.md` (this file): commands and rules.
+- `CONTRIBUTING.md`: the pull request flow.
+- `apps/evals/README.md`: eval scenarios, cassettes, baselines.
+- `packages/tools/README.md`: the webhook tool contract.
 
 ## Commands
 
 ```bash
-pnpm install && pnpm db:up   # setup (Node 24, pnpm 10, Docker)
+pnpm install && pnpm db:up   # setup (Node 24, pnpm 10, Docker; versions in package.json "engines")
 pnpm lint && pnpm typecheck  # before every commit
 pnpm test                    # unit tests
 pnpm test:db                 # tests that need Postgres (*.db.test.ts)
 pnpm e2e                     # end-to-end; must always stay green
 pnpm eval                    # eval scenarios replayed from the cassette; no LLM calls
 pnpm models:check            # probe the configured models (needs a running service and LLM_*)
+pnpm smoke:live              # one run against a real model; skips without LLM_* settings
 ```
 
 ## Rules

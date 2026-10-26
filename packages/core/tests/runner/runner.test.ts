@@ -1,36 +1,8 @@
-import { GENESIS_HASH, hashEvent } from '../../src/events/hash'
-import type { LLMPort, RunStore, ToolInvoker } from '../../src/ports'
+import { MemoryRunStore } from '../support/memory-store'
+import { type ConnectionGuard, type GuardDenial, type LLMPort, type RunStore, type ToolInvoker } from '../../src/ports'
 import { projectRun } from '../../src/events/projection'
-import { advanceRun } from '../../src/runner/runner'
-import type { AgentDefinition, Message, NewEvent, RunStatus, StoredEvent, ToolDescriptor } from '../../src/types'
-
-class MemoryRunStore implements RunStore {
-  private logs = new Map<string, StoredEvent[]>()
-  async readEvents(runId: string): Promise<StoredEvent[]> {
-    return [...(this.logs.get(runId) ?? [])]
-  }
-  async append(runId: string, events: NewEvent[]): Promise<StoredEvent[]> {
-    const log = this.logs.get(runId) ?? []
-    const stored: StoredEvent[] = []
-    for (const e of events) {
-      const prev = log.at(-1)
-      const partial = {
-        ...e,
-        tenantId: 'default',
-        runId,
-        seq: (prev?.seq ?? 0) + 1,
-        agentVersion: 1,
-        createdAt: new Date(0).toISOString(),
-        prevHash: prev?.hash ?? GENESIS_HASH,
-      } as Omit<StoredEvent, 'hash'>
-      const event = { ...partial, hash: hashEvent(partial) } as StoredEvent
-      log.push(event)
-      stored.push(event)
-    }
-    this.logs.set(runId, log)
-    return stored
-  }
-}
+import { advanceRun, expireWait } from '../../src/runner/runner'
+import type { AgentDefinition, Limits, Message, NewEvent, RunStatus, StoredEvent, ToolDescriptor } from '../../src/types'
 
 const TOOLS: Record<string, ToolDescriptor> = {
   'orders.get': {
@@ -70,8 +42,9 @@ const AGENT: AgentDefinition = {
 type Step = {
   content?: string
   calls?: { name: string; args: Record<string, unknown>; argumentsError?: string }[]
-  stopReason: 'end' | 'tool_calls' | 'length'
+  stopReason: 'end' | 'tool_calls' | 'length' | 'filtered'
   throws?: Error
+  usage?: { inputTokens: number; outputTokens: number; costUsd?: number }
 }
 const callTool = (name: string, args: Record<string, unknown>): Step => ({
   calls: [{ name, args }],
@@ -108,7 +81,7 @@ function scriptedLlm(steps: Step[]) {
         ...(c.argumentsError ? { argumentsError: c.argumentsError } : {}),
       }))
       const message: Message = { role: 'assistant', content: step.content ?? '', ...(toolCalls ? { toolCalls } : {}) }
-      return { message, usage: { inputTokens: 1, outputTokens: 1 }, stopReason: step.stopReason }
+      return { message, usage: step.usage ?? { inputTokens: 1, outputTokens: 1 }, stopReason: step.stopReason }
     },
   }
   return llm
@@ -163,7 +136,8 @@ function deps(o: {
   llm: LLMPort
   store: RunStore
   tools: ToolInvoker
-  maxLlmCalls?: number
+  limits?: Partial<Limits>
+  tenantCostToday?: () => Promise<number>
   now?: () => Date
   random?: () => number
   /** Receives every wait the runner asks for; the wait itself resolves at once. */
@@ -180,10 +154,10 @@ function deps(o: {
     store: o.store,
     llm: o.llm,
     tools: o.tools,
-    agent: AGENT,
+    agent: o.limits === undefined ? AGENT : { ...AGENT, limits: o.limits },
     toolsByName: TOOLS,
     agentVersion: 1,
-    ...(o.maxLlmCalls !== undefined ? { maxLlmCalls: o.maxLlmCalls } : {}),
+    tenantCostToday: o.tenantCostToday ?? (async () => 0),
     ...(o.now !== undefined ? { now: o.now } : {}),
   }
 }
@@ -268,12 +242,175 @@ test('returns a tool error for an unknown tool', async () => {
   expect(llm.lastRequest().messages.at(-1)).toMatchObject({ role: 'tool', content: 'Unknown tool: nope.tool' })
 })
 
-test('breaker stops the run after maxLlmCalls', async () => {
-  const llm = scriptedLlm(Array(5).fill(callTool('orders.get', { order_id: '1042' })))
+const lastLimit = async (store: RunStore) =>
+  (await store.readEvents('r1')).filter((e) => e.type === 'limit.reached').at(-1)?.payload
+// Each lookup asks for a different order, so the loop limit stays out of the way.
+const lookups = (n: number, usage?: Step['usage']): Step[] =>
+  Array.from({ length: n }, (_, i) => ({ ...callTool('orders.get', { order_id: String(1042 + i) }), ...(usage ? { usage } : {}) }))
+
+test('llm_calls stops the run at the limit and waits with reason limit', async () => {
+  const llm = scriptedLlm(lookups(5))
   const { store, tools } = await setup()
-  expect(await advanceRun('r1', deps({ llm, store, tools, maxLlmCalls: 3 }))).toBe('waiting_human')
-  expect(projectRun(await store.readEvents('r1'), '').waitingReason).toBe('breaker')
+  expect(await advanceRun('r1', deps({ llm, store, tools, limits: { llm_calls: 3 } }))).toBe('waiting_human')
+  expect(projectRun(await store.readEvents('r1'), '').waitingReason).toBe('limit')
+  expect(await lastLimit(store)).toEqual({ limit: 'llm_calls', max: 3, value: 3 })
   expect(llm.requests).toHaveLength(3)
+})
+
+test('tokens stops the run once the sum reaches the limit', async () => {
+  const llm = scriptedLlm(lookups(5, { inputTokens: 500, outputTokens: 100 }))
+  const { store, tools } = await setup()
+  expect(await advanceRun('r1', deps({ llm, store, tools, limits: { tokens: 1000 } }))).toBe('waiting_human')
+  expect(await lastLimit(store)).toEqual({ limit: 'tokens', max: 1000, value: 1200 })
+  expect(llm.requests).toHaveLength(2)
+})
+
+test('cost_usd stops the run once the run cost reaches the limit', async () => {
+  const llm = scriptedLlm(lookups(5, { inputTokens: 1, outputTokens: 1, costUsd: 0.6 }))
+  const { store, tools } = await setup()
+  expect(await advanceRun('r1', deps({ llm, store, tools, limits: { cost_usd: 1 } }))).toBe('waiting_human')
+  expect(await lastLimit(store)).toEqual({ limit: 'cost_usd', max: 1, value: 1.2 })
+})
+
+test('a model without a price never breaches the cost limits', async () => {
+  const llm = scriptedLlm([...lookups(2), say('done')])
+  const { store, tools } = await setup()
+  expect(await advanceRun('r1', deps({ llm, store, tools, limits: { cost_usd: 0.01 } }))).toBe('completed')
+  expect(await lastLimit(store)).toBeUndefined()
+})
+
+test('tenant_cost_usd_per_day stops the run before its first LLM call', async () => {
+  const llm = scriptedLlm([say('done')])
+  const { store, tools } = await setup()
+  expect(await advanceRun('r1', deps({ llm, store, tools, tenantCostToday: async () => 25 }))).toBe('waiting_human')
+  expect(await lastLimit(store)).toEqual({ limit: 'tenant_cost_usd_per_day', max: 20, value: 25 })
+  expect(types(await store.readEvents('r1'))).not.toContain('llm.requested')
+})
+
+test('run_time_s stops a run that has been running too long', async () => {
+  const T0 = new Date('2026-01-01T00:00:00.000Z')
+  let now = T0
+  const store = new MemoryRunStore(() => now)
+  await store.append('r1', [created(), stateChanged('queued', 'running')])
+  now = new Date(T0.getTime() + 1801_000)
+  const llm = scriptedLlm([say('done')])
+  expect(await advanceRun('r1', deps({ llm, store, tools: fakeTools(), now: () => now }))).toBe('waiting_human')
+  expect(await lastLimit(store)).toEqual({ limit: 'run_time_s', max: 1800, value: 1801 })
+  expect(llm.requests).toHaveLength(0)
+})
+
+test('an in-flight tool call finishes before run_time_s stops the run', async () => {
+  const T0 = new Date('2026-01-01T00:00:00.000Z')
+  let now = T0
+  const store = new MemoryRunStore(() => now)
+  await store.append('r1', logAfterToolRequested('orders.get'))
+  now = new Date(T0.getTime() + 1801_000)
+  const tools = fakeTools()
+  expect(await advanceRun('r1', deps({ llm: scriptedLlm([]), store, tools, now: () => now }))).toBe('waiting_human')
+  expect(tools.calls).toHaveLength(1)
+  expect(types(await store.readEvents('r1')).slice(-3)).toEqual(['tool.responded', 'limit.reached', 'run.state_changed'])
+})
+
+test('tool_output_chars cuts a long output, records the breach and lets the run go on', async () => {
+  const llm = scriptedLlm([callTool('orders.get', { order_id: '1042' }), say('done')])
+  const { store, tools } = await setup()
+  expect(await advanceRun('r1', deps({ llm, store, tools, limits: { tool_output_chars: 10 } }))).toBe('completed')
+  const log = await store.readEvents('r1')
+  const at = log.findIndex((e) => e.type === 'limit.reached')
+  expect(log[at]!.payload).toEqual({ limit: 'tool_output_chars', max: 10, value: 34 })
+  expect(log[at + 1]!.type).toBe('tool.responded')
+  expect((log[at + 1]!.payload as { content: string }).content).toContain('characters cut')
+})
+
+test('a grant lets the run take one more full allowance, then it stops again', async () => {
+  const llm = scriptedLlm(lookups(10))
+  const { store, tools } = await setup()
+  await advanceRun('r1', deps({ llm, store, tools, limits: { llm_calls: 3 } }))
+  await store.append('r1', [
+    { type: 'limit.continued', payload: { limit: 'llm_calls' }, labels: ['trusted'] },
+    stateChanged('waiting_human', 'running'),
+  ])
+  expect(await advanceRun('r1', deps({ llm, store, tools, limits: { llm_calls: 3 } }))).toBe('waiting_human')
+  expect(llm.requests).toHaveLength(6)
+  expect(await lastLimit(store)).toEqual({ limit: 'llm_calls', max: 6, value: 6 })
+})
+
+test('loop stops the fourth identical tool call and waits with reason limit', async () => {
+  const llm = scriptedLlm([...Array.from({ length: 4 }, () => callTool('orders.get', { order_id: '1042' })), say('done')])
+  const { store, tools } = await setup()
+  expect(await advanceRun('r1', deps({ llm, store, tools }))).toBe('waiting_human')
+  expect(projectRun(await store.readEvents('r1'), '').waitingReason).toBe('limit')
+  expect(await lastLimit(store)).toEqual({ limit: 'loop', max: 3, value: 3 })
+  expect(tools.calls).toHaveLength(3)
+})
+
+test('loop stops a run whose turns add no new tool result, before the next LLM call', async () => {
+  const a = { name: 'orders.get', args: { order_id: '1' } }
+  const b = { name: 'orders.get', args: { order_id: '2' } }
+  const llm = scriptedLlm([callTools([a, b]), callTools([a]), callTools([b]), callTools([a]), say('done')])
+  const { store, tools } = await setup()
+  expect(await advanceRun('r1', deps({ llm, store, tools }))).toBe('waiting_human')
+  expect(await lastLimit(store)).toEqual({ limit: 'loop', max: 3, value: 3 })
+  expect(llm.requests).toHaveLength(4)
+  expect(tools.calls).toHaveLength(5)
+})
+
+test('every wait for a human carries expiresAt = now + wait_human_s', async () => {
+  const T0 = new Date('2026-01-01T00:00:00.000Z')
+  const expiresAt = '2026-01-01T00:01:00.000Z'
+  const waitsOf = async (store: RunStore) =>
+    (await store.readEvents('r1')).filter((e) => e.type === 'run.state_changed' && e.payload.to === 'waiting_human')
+  const limits = { wait_human_s: 60 }
+
+  const approval = await setup()
+  const refund = scriptedLlm([callTool('payments.refund', { order_id: '1042', amount: 1200000 })])
+  await advanceRun('r1', deps({ llm: refund, ...approval, limits, now: () => T0 }))
+  const unknown = await setupWithEvents(logAfterToolRequested('payments.refund'))
+  await advanceRun('r1', deps({ llm: scriptedLlm([]), ...unknown, limits, now: () => T0 }))
+  const limited = await setup()
+  await advanceRun('r1', deps({ llm: scriptedLlm(lookups(2)), ...limited, limits: { ...limits, llm_calls: 1 }, now: () => T0 }))
+
+  for (const s of [approval.store, unknown.store, limited.store]) {
+    const waits = await waitsOf(s)
+    expect(waits).toHaveLength(1)
+    expect(waits[0]!.payload).toMatchObject({ expiresAt })
+  }
+})
+
+describe('expireWait', () => {
+  const T0 = new Date('2026-01-01T00:00:00.000Z')
+  const at = (s: number) => new Date(T0.getTime() + s * 1000)
+  async function waiting(expiresAt?: string) {
+    const store = new MemoryRunStore(() => T0)
+    await store.append('r1', [
+      created(),
+      stateChanged('queued', 'running'),
+      {
+        type: 'run.state_changed',
+        payload: { from: 'running', to: 'waiting_human', reason: 'approval', ...(expiresAt ? { expiresAt } : {}) },
+        labels: [],
+      },
+    ])
+    return store.readEvents('r1')
+  }
+
+  test('fails an expired wait with reason wait_expired', async () => {
+    expect(expireWait(await waiting(at(60).toISOString()), at(61))).toEqual([
+      { type: 'limit.reached', payload: { limit: 'wait_human_s', max: 60, value: 61 }, labels: [] },
+      { type: 'run.state_changed', payload: { from: 'waiting_human', to: 'failed', reason: 'wait_expired' }, labels: [] },
+    ])
+  })
+  test('leaves a wait that has not expired', async () => {
+    expect(expireWait(await waiting(at(60).toISOString()), at(59))).toBeNull()
+  })
+  test('never expires a wait without expiresAt', async () => {
+    expect(expireWait(await waiting(), at(999_999))).toBeNull()
+  })
+  test('ignores a run that is not waiting', async () => {
+    const store = new MemoryRunStore(() => T0)
+    await store.append('r1', [created(), stateChanged('queued', 'running')])
+    expect(expireWait(await store.readEvents('r1'), at(999_999))).toBeNull()
+  })
 })
 
 test('advancing again after a crash does not repeat a completed tool call', async () => {
@@ -346,6 +483,20 @@ test('stopReason length without tool calls fails the run', async () => {
     message: 'LLM output truncated (length)',
     retryable: false,
   })
+  expect(projectRun(events, '').status).toBe('failed')
+})
+
+test('stopReason filtered fails the run with reason filtered', async () => {
+  const llm = scriptedLlm([say('', 'filtered')])
+  const { store, tools } = await setup()
+  expect(await advanceRun('r1', deps({ llm, store, tools }))).toBe('failed')
+  const events = await store.readEvents('r1')
+  expect(events.map((e) => e.type).slice(-3)).toEqual(['llm.responded', 'error.raised', 'run.state_changed'])
+  expect(events.find((e) => e.type === 'error.raised')!.payload).toEqual({
+    message: 'LLM response filtered by the provider',
+    retryable: false,
+  })
+  expect(events.at(-1)!.payload).toMatchObject({ to: 'failed', reason: 'filtered' })
   expect(projectRun(events, '').status).toBe('failed')
 })
 
@@ -1019,4 +1170,391 @@ test('a crash after any append never repeats a completed tool call or an unkeyed
       expect(status, ctx).toBe('completed')
     }
   }
+})
+
+describe('run input', () => {
+  const cancelInput: NewEvent = { type: 'input.received', payload: { action: 'cancel' }, labels: [] }
+  const message = (text: string): NewEvent => ({ type: 'input.received', payload: { action: 'message', text }, labels: ['untrusted'] })
+  /** A tool fake that lets a human send input while the tool runs, as the API would. */
+  function toolsSending(store: RunStore, input: NewEvent) {
+    const tools = fakeTools()
+    const call = tools.call.bind(tools)
+    tools.call = async (tool, args, ctx) => {
+      await store.append('r1', [input])
+      return call(tool, args, ctx)
+    }
+    return tools
+  }
+
+  test('a cancel input stops a running run before its next step; the call in flight finishes', async () => {
+    const llm = scriptedLlm([callTool('orders.get', { order_id: '1042' }), say('done')])
+    const store = new MemoryRunStore()
+    await store.append('r1', [created()])
+    const tools = toolsSending(store, cancelInput)
+    expect(await advanceRun('r1', deps({ llm, store, tools }))).toBe('cancelled')
+    const log = await store.readEvents('r1')
+    expect(log.at(-2)!.type).toBe('tool.responded')
+    expect(log.at(-1)!.payload).toEqual({ from: 'running', to: 'cancelled', reason: 'cancelled' })
+    expect(llm.requests).toHaveLength(1)
+  })
+
+  test('a cancel input stops a run that waits for an LLM retry', async () => {
+    const T0 = new Date('2026-01-01T00:00:00.000Z')
+    const { store, tools } = await setupWithEvents([
+      created(),
+      stateChanged('queued', 'running'),
+      { type: 'llm.requested', payload: { model: 'test-model' }, labels: [] },
+      { type: 'error.raised', payload: { message: 'busy', retryable: true, retryAt: '2026-01-01T00:05:00.000Z' }, labels: [] },
+      cancelInput,
+    ])
+    expect(await advanceRun('r1', deps({ llm: scriptedLlm([]), store, tools, now: () => T0 }))).toBe('cancelled')
+  })
+
+  test('a steering message reaches the next LLM request after the tool results', async () => {
+    const llm = scriptedLlm([callTool('orders.get', { order_id: '1042' }), say('done')])
+    const store = new MemoryRunStore()
+    await store.append('r1', [created()])
+    const tools = toolsSending(store, message('Use express shipping'))
+    expect(await advanceRun('r1', deps({ llm, store, tools }))).toBe('completed')
+    expect(llm.lastRequest().messages.slice(-2).map((m) => [m.role, m.content])).toEqual([
+      ['tool', JSON.stringify({ id: '1042', status: 'delivered' })],
+      ['user', 'Use express shipping'],
+    ])
+  })
+
+  test('a message that arrives during the final LLM call is read before the run completes', async () => {
+    const store = new MemoryRunStore()
+    await store.append('r1', [created()])
+    const inner = scriptedLlm([say('Done.'), say('Express it is.')])
+    const llm: LLMPort = {
+      async complete(req) {
+        if (inner.requests.length === 0) await store.append('r1', [message('Use express shipping')])
+        return inner.complete(req)
+      },
+    }
+    expect(await advanceRun('r1', deps({ llm, store, tools: fakeTools() }))).toBe('completed')
+    expect(inner.requests).toHaveLength(2)
+    expect(inner.lastRequest().messages.at(-1)).toEqual({ role: 'user', content: 'Use express shipping' })
+    expect(projectRun(await store.readEvents('r1'), '').output).toBe('Express it is.')
+  })
+})
+
+describe('follow-ups', () => {
+  const FOLLOWUP = 'agent_core.schedule_followup'
+  const T0 = Date.parse('2026-10-26T10:00:00.000Z')
+  /** A clock the test moves; the store stamps events with it too. */
+  function clock() {
+    let ms = T0
+    return { now: () => new Date(ms), advance: (s: number) => void (ms += s * 1000) }
+  }
+  function sleepDeps(o: { llm: LLMPort; store: RunStore; now: () => Date; allow?: AgentDefinition['allow'] }) {
+    const tools = fakeTools()
+    const d = deps({ llm: o.llm, store: o.store, tools, now: o.now })
+    return { tools, deps: { ...d, agent: { ...AGENT, allow: o.allow ?? [...AGENT.allow, { tool: FOLLOWUP }] } } }
+  }
+  const followup = (after_seconds: number, note: string) => callTool(FOLLOWUP, { after_seconds, note })
+
+  test('the model sees the follow-up tool only when an allow rule names it', async () => {
+    for (const [allow, seen] of [
+      [AGENT.allow, false],
+      [[{ tool: FOLLOWUP }], true],
+      [[{ tool: 'agent_core.*' }], true],
+    ] as const) {
+      const c = clock()
+      const store = new MemoryRunStore(c.now)
+      await store.append('r1', [created()])
+      const llm = scriptedLlm([say('done')])
+      await advanceRun('r1', sleepDeps({ llm, store, now: c.now, allow: [...allow] }).deps)
+      expect(llm.lastRequest().tools.some((t) => t.name === FOLLOWUP)).toBe(seen)
+    }
+  })
+
+  test('without an allow rule a follow-up call is an unknown tool', async () => {
+    const c = clock()
+    const store = new MemoryRunStore(c.now)
+    await store.append('r1', [created()])
+    const llm = scriptedLlm([followup(3600, 'check'), say('done')])
+    expect(await advanceRun('r1', sleepDeps({ llm, store, now: c.now, allow: AGENT.allow }).deps)).toBe('completed')
+    expect((await store.readEvents('r1')).find((e) => e.type === 'tool.responded')!.payload).toMatchObject({
+      content: `Unknown tool: ${FOLLOWUP}`,
+      isError: true,
+    })
+  })
+
+  test('a follow-up puts the run to sleep until its wake time without calling a tool', async () => {
+    const c = clock()
+    const store = new MemoryRunStore(c.now)
+    await store.append('r1', [created()])
+    const llm = scriptedLlm([followup(3600, 'check the parcel')])
+    const { tools, deps: d } = sleepDeps({ llm, store, now: c.now })
+    expect(await advanceRun('r1', d)).toBe('sleeping')
+    const log = await store.readEvents('r1')
+    expect(types(log).slice(-3)).toEqual(['rule.decided', 'tool.requested', 'run.state_changed'])
+    expect(log.at(-1)!.payload).toEqual({ from: 'running', to: 'sleeping', wakeAt: '2026-10-26T11:00:00.000Z' })
+    expect(tools.calls).toEqual([])
+    expect(projectRun(log, '').wakeAt).toBe('2026-10-26T11:00:00.000Z')
+  })
+
+  test('a sleeping run woken early appends nothing and sleeps on; a message does not wake it', async () => {
+    const c = clock()
+    const store = new MemoryRunStore(c.now)
+    await store.append('r1', [created()])
+    const llm = scriptedLlm([followup(3600, 'check')])
+    const { deps: d } = sleepDeps({ llm, store, now: c.now })
+    await advanceRun('r1', d)
+    await store.append('r1', [{ type: 'input.received', payload: { action: 'message', text: 'any news?' }, labels: ['untrusted'] }])
+    const before = (await store.readEvents('r1')).length
+    c.advance(3599)
+    expect(await advanceRun('r1', d)).toBe('sleeping')
+    expect((await store.readEvents('r1')).length).toBe(before)
+  })
+
+  test('at its wake time the run gets the note back as an untrusted result and continues; the sleep is not run time', async () => {
+    const c = clock()
+    const store = new MemoryRunStore(c.now)
+    await store.append('r1', [created()])
+    const llm = scriptedLlm([followup(3600, 'check the parcel'), say('Parcel delivered.')])
+    const { deps: d } = sleepDeps({ llm, store, now: c.now })
+    await advanceRun('r1', d)
+    await store.append('r1', [{ type: 'input.received', payload: { action: 'message', text: 'any news?' }, labels: ['untrusted'] }])
+    c.advance(3600)
+    expect(await advanceRun('r1', d)).toBe('completed')
+    const log = await store.readEvents('r1')
+    const woke = log.find((e) => e.type === 'tool.responded')!
+    expect(woke.payload).toEqual({
+      toolCallId: 'call_1',
+      content: 'Follow-up at 2026-10-26T11:00:00.000Z. Note: check the parcel',
+      isError: false,
+    })
+    expect(woke.labels).toEqual(['untrusted'])
+    expect(log[woke.seq]!.payload).toEqual({ from: 'sleeping', to: 'running' })
+    expect(llm.lastRequest().messages.slice(-2)).toEqual([
+      { role: 'tool', toolCallId: 'call_1', content: 'Follow-up at 2026-10-26T11:00:00.000Z. Note: check the parcel' },
+      { role: 'user', content: 'any news?' },
+    ])
+    expect(projectRun(log, '').runningMs).toBe(0)
+  })
+
+  test('a follow-up with invalid arguments gets a tool error and the run continues', async () => {
+    for (const args of [{ after_seconds: 59, note: 'x' }, { after_seconds: 2_592_001, note: 'x' }, { after_seconds: 90.5, note: 'x' }, { after_seconds: 60 }, { after_seconds: 60, note: 'x'.repeat(1001) }]) {
+      const c = clock()
+      const store = new MemoryRunStore(c.now)
+      await store.append('r1', [created()])
+      const llm = scriptedLlm([callTool(FOLLOWUP, args), say('done')])
+      expect(await advanceRun('r1', sleepDeps({ llm, store, now: c.now }).deps)).toBe('completed')
+      const result = (await store.readEvents('r1')).find((e) => e.type === 'tool.responded')!
+      expect(result.payload).toMatchObject({ isError: true })
+      expect((result.payload as { content: string }).content).toMatch(/^Invalid arguments: /)
+    }
+  })
+
+  test('the eleventh follow-up of a run gets a tool error and the run continues', async () => {
+    const c = clock()
+    const store = new MemoryRunStore(c.now)
+    await store.append('r1', [created()])
+    const llm = scriptedLlm([...Array.from({ length: 11 }, (_, i) => followup(60, `round ${i + 1}`)), say('done')])
+    const { deps: d } = sleepDeps({ llm, store, now: c.now })
+    let status = await advanceRun('r1', d)
+    for (let i = 0; i < 10; i++) {
+      expect(status).toBe('sleeping')
+      c.advance(60)
+      status = await advanceRun('r1', d)
+    }
+    expect(status).toBe('completed')
+    const results = (await store.readEvents('r1')).filter((e) => e.type === 'tool.responded')
+    expect(results).toHaveLength(11)
+    expect(results.at(-1)!.payload).toEqual({
+      toolCallId: 'call_11',
+      content: 'Follow-up limit reached: a run may schedule at most 10 follow-ups.',
+      isError: true,
+    })
+  })
+})
+
+describe('connection guard', () => {
+  const T0 = Date.parse('2026-10-26T10:00:00.000Z')
+  function clock() {
+    let ms = T0
+    return { now: () => new Date(ms), advance: (s: number) => void (ms += s * 1000), at: (s: number) => new Date(T0 + s * 1000).toISOString() }
+  }
+  /** Answers each acquire with the next denial in the list; grants once the list is used up. */
+  function fakeGuard(denials: GuardDenial[] = []) {
+    const acquired: string[] = []
+    const released: [string, 'ok' | 'failed' | 'unused'][] = []
+    const guard: ConnectionGuard & { acquired: string[]; released: typeof released } = {
+      acquired,
+      released,
+      async acquire(connectionId) {
+        acquired.push(connectionId)
+        const denied = denials.shift()
+        return denied === undefined ? { lease: `lease_${acquired.length}` } : { denied }
+      },
+      async release(lease, outcome) {
+        released.push([lease, outcome])
+      },
+    }
+    return guard
+  }
+  async function start(c: ReturnType<typeof clock>, steps: Step[], guard: ConnectionGuard, failWith?: Failures) {
+    const store = new MemoryRunStore(c.now)
+    await store.append('r1', [created()])
+    const llm = scriptedLlm(steps)
+    const tools = fakeTools(failWith)
+    return { store, llm, tools, d: { ...deps({ llm, store, tools, now: c.now }), guard } }
+  }
+  const lookup = callTool('orders.get', { order_id: '1042' })
+
+  test('a denied call is deferred to retryAt before it is requested; the run waits and does not fail', async () => {
+    const c = clock()
+    const guard = fakeGuard([{ reason: 'rate', retryAt: c.at(30) }])
+    const { store, tools, d } = await start(c, [lookup, say('done')], guard)
+    expect(await advanceRun('r1', d)).toBe('running')
+    const log = await store.readEvents('r1')
+    expect(log.at(-1)).toMatchObject({ type: 'tool.deferred', payload: { toolCallId: 'call_1', reason: 'rate', retryAt: c.at(30) } })
+    expect(types(log)).not.toContain('tool.requested')
+    expect(tools.calls).toEqual([])
+    expect(guard.acquired).toEqual(['shop'])
+
+    c.advance(29)
+    const before = log.length
+    expect(await advanceRun('r1', d)).toBe('running')
+    expect((await store.readEvents('r1')).length).toBe(before)
+    expect(guard.acquired).toHaveLength(1)
+
+    c.advance(1)
+    expect(await advanceRun('r1', d)).toBe('completed')
+    expect(tools.calls).toHaveLength(1)
+    expect(guard.released).toEqual([['lease_2', 'ok']])
+  })
+
+  test('a tool result with isError releases ok', async () => {
+    const c = clock()
+    const guard = fakeGuard()
+    const { d } = await start(c, [lookup, say('done')], guard)
+    expect(await advanceRun('r1', { ...d, tools: { call: async () => ({ content: 'not found', isError: true }) } })).toBe('completed')
+    expect(guard.released).toEqual([['lease_1', 'ok']])
+  })
+
+  test('a thrown error releases failed on every attempt', async () => {
+    const c = clock()
+    const guard = fakeGuard()
+    const { d } = await start(c, [lookup, say('done')], guard, new Error('boom'))
+    expect(await advanceRun('r1', d)).toBe('completed')
+    expect(guard.released).toEqual([
+      ['lease_1', 'failed'],
+      ['lease_2', 'failed'],
+      ['lease_3', 'failed'],
+    ])
+  })
+
+  test('a call denied for concurrency backs off 1, 2, 4 ... seconds, at most 10', async () => {
+    const c = clock()
+    const guard = fakeGuard(Array.from({ length: 7 }, () => ({ reason: 'concurrency' as const, retryAt: null })))
+    const { store, d } = await start(c, [lookup, say('done')], guard)
+    const waits: number[] = []
+    for (let i = 0; i < 7; i++) {
+      expect(await advanceRun('r1', d)).toBe('running')
+      const retryAt = ((await store.readEvents('r1')).at(-1)!.payload as { retryAt: string }).retryAt
+      waits.push((Date.parse(retryAt) - c.now().getTime()) / 1000)
+      c.advance(waits.at(-1)!)
+    }
+    expect(waits).toEqual([1, 2, 4, 8, 10, 10, 10])
+    expect(await advanceRun('r1', d)).toBe('completed')
+  })
+
+  test('a call deferred for more than an hour gets a tool error and the run continues', async () => {
+    const c = clock()
+    const guard = fakeGuard(Array.from({ length: 200 }, () => ({ reason: 'breaker' as const, retryAt: null })))
+    guard.acquire = async (connectionId) => {
+      guard.acquired.push(connectionId)
+      return { denied: { reason: 'breaker', retryAt: new Date(c.now().getTime() + 600_000).toISOString() } }
+    }
+    const { store, llm, d } = await start(c, [lookup, say('done')], guard)
+    for (let i = 0; i < 6; i++) {
+      expect(await advanceRun('r1', d)).toBe('running')
+      c.advance(600)
+    }
+    expect(await advanceRun('r1', d)).toBe('completed')
+    const result = (await store.readEvents('r1')).find((e) => e.type === 'tool.responded')!
+    expect(result.payload).toEqual({ toolCallId: 'call_1', content: 'Connection unavailable.', isError: true })
+    expect(llm.requests).toHaveLength(2)
+  })
+
+  test('the time a call waits on the guard is not run time', async () => {
+    const c = clock()
+    const guard = fakeGuard([{ reason: 'rate', retryAt: c.at(3000) }])
+    const { store, d } = await start(c, [lookup, say('done')], guard)
+    await advanceRun('r1', { ...d, agent: { ...AGENT, limits: { run_time_s: 60 } } })
+    c.advance(3000)
+    expect(await advanceRun('r1', { ...d, agent: { ...AGENT, limits: { run_time_s: 60 } } })).toBe('completed')
+    expect(projectRun(await store.readEvents('r1'), '').runningMs).toBe(0)
+  })
+
+  test('a sent write that waits on its connection for an hour waits for a human, as an unknown outcome', async () => {
+    const c = clock()
+    const store = new MemoryRunStore(c.now)
+    await store.append('r1', logAfterToolRequested('payments.capture'))
+    const guard = fakeGuard()
+    guard.acquire = async (connectionId) => {
+      guard.acquired.push(connectionId)
+      return { denied: { reason: 'breaker', retryAt: new Date(c.now().getTime() + 600_000).toISOString() } }
+    }
+    const tools = fakeTools()
+    const d = { ...capDeps({ llm: scriptedLlm([]), store, tools, now: c.now }), guard }
+    for (let i = 0; i < 6; i++) {
+      expect(await advanceRun('r1', d)).toBe('running')
+      c.advance(600)
+    }
+    expect(await advanceRun('r1', d)).toBe('waiting_human')
+    const log = await store.readEvents('r1')
+    expect(types(log)).not.toContain('tool.responded')
+    expect(log.at(-1)!.payload).toMatchObject({ to: 'waiting_human', reason: 'unknown_outcome' })
+    expect(tools.calls).toEqual([])
+  })
+
+  test('a guard that throws does not fail the run: the call is neither deferred nor sent, and is retried later', async () => {
+    const c = clock()
+    const guard = fakeGuard()
+    guard.acquire = async () => {
+      throw new Error('statement timeout')
+    }
+    const { store, d } = await start(c, [lookup, say('done')], guard)
+    expect(await advanceRun('r1', d)).toBe('running')
+    const logged = types(await store.readEvents('r1'))
+    expect(logged.filter((t) => t === 'tool.deferred' || t === 'tool.requested' || t === 'error.raised')).toEqual([])
+    expect(logged.at(-1)).toBe('rule.decided')
+  })
+
+  test('a lease is given back unused when the call cannot be recorded', async () => {
+    const c = clock()
+    const guard = fakeGuard()
+    const { store, d } = await start(c, [callTool('payments.refund', { order_id: '1042', amount: 100 })], guard)
+    const append = store.append.bind(store)
+    store.append = async (runId, events, opts) => {
+      if (events.some((e) => e.type === 'tool.requested')) throw new Error('lock lost')
+      return append(runId, events, opts)
+    }
+    await expect(advanceRun('r1', d)).rejects.toThrow('lock lost')
+    expect(guard.released).toEqual([['lease_1', 'unused']])
+  })
+
+  test('a message to a run whose call is deferred does not count as run time', async () => {
+    const c = clock()
+    const guard = fakeGuard([{ reason: 'rate', retryAt: c.at(3000) }])
+    const { store, d } = await start(c, [lookup, say('done')], guard)
+    await advanceRun('r1', d)
+    c.advance(10)
+    await store.append('r1', [{ type: 'input.received', payload: { action: 'message', text: 'hurry' }, labels: ['untrusted'] }])
+    c.advance(2990)
+    expect(await advanceRun('r1', d)).toBe('completed')
+    expect(projectRun(await store.readEvents('r1'), '').runningMs).toBe(0)
+  })
+
+  test('a built-in tool does not go through the guard', async () => {
+    const c = clock()
+    const guard = fakeGuard([{ reason: 'rate', retryAt: c.at(30) }])
+    const { d } = await start(c, [callTool('agent_core.schedule_followup', { after_seconds: 60, note: 'x' })], guard)
+    expect(await advanceRun('r1', { ...d, agent: { ...AGENT, allow: [{ tool: 'agent_core.schedule_followup' }] } })).toBe('sleeping')
+    expect(guard.acquired).toEqual([])
+  })
 })

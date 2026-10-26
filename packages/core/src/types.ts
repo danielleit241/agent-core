@@ -1,4 +1,7 @@
 import { z } from 'zod'
+import { LimitNameSchema, LimitsSchema } from './limits'
+
+export * from './limits'
 
 export const LabelSchema = z.enum(['trusted', 'internal', 'untrusted', 'confidential'])
 export type Label = z.infer<typeof LabelSchema>
@@ -82,6 +85,31 @@ export const RuleSchema = z.object({
 })
 export type Rule = z.infer<typeof RuleSchema>
 
+const StepIdSchema = z.string().regex(/^[a-z0-9_-]{1,64}$/)
+/** A value taken from the run input or from the output of an earlier step. No templates, no expressions. */
+export const RefSchema = z.object({ $ref: z.string().regex(/^(\$input\.text|[a-z0-9_-]{1,64}(\.[A-Za-z0-9_-]+)*)$/) }).strict()
+export type Ref = z.infer<typeof RefSchema>
+/** The next step: one step id, or the first rule whose condition holds on the output of the step just done. */
+const NextSchema = z.union([
+  StepIdSchema,
+  z
+    .object({
+      when: z.array(z.object({ field: z.string().min(1), is: ConditionSchema, goto: StepIdSchema }).strict()).min(1),
+      else: StepIdSchema.optional(),
+    })
+    .strict(),
+])
+const next = { next: NextSchema.optional() }
+export const StepSchema = z.discriminatedUnion('kind', [
+  z.object({ kind: z.literal('llm'), prompt: z.string().min(1), output_schema: z.record(z.string(), z.unknown()).optional(), ...next }).strict(),
+  z.object({ kind: z.literal('tool'), tool: z.string().min(1), args: z.record(z.string(), z.unknown()), ...next }).strict(),
+  z.object({ kind: z.literal('approval'), reason: z.string().min(1).max(1000), ...next }).strict(),
+  z.object({ kind: z.literal('subrun'), agent: z.string().regex(/^[a-z0-9][a-z0-9-]{0,62}$/), input: z.union([z.string().min(1), RefSchema]), ...next }).strict(),
+])
+export type Step = z.infer<typeof StepSchema>
+export const WorkflowSchema = z.object({ start: StepIdSchema, steps: z.record(StepIdSchema, StepSchema) }).strict()
+export type Workflow = z.infer<typeof WorkflowSchema>
+
 export const AgentDefinitionSchema = z
   .object({
     id: z.string().regex(/^[a-z0-9][a-z0-9-]{0,62}$/),
@@ -90,6 +118,8 @@ export const AgentDefinitionSchema = z
     autonomy: z.literal('supervised'),
     allow: z.array(RuleSchema),
     model: z.string().default('default'),
+    limits: LimitsSchema.optional(),
+    workflows: z.record(z.string().regex(/^[a-z0-9][a-z0-9_-]{0,62}$/), WorkflowSchema).optional(),
   })
   .strict()
 export type AgentDefinition = z.infer<typeof AgentDefinitionSchema>
@@ -105,7 +135,8 @@ export const RunStatusSchema = z.enum([
 ])
 export type RunStatus = z.infer<typeof RunStatusSchema>
 
-export const WaitingReasonSchema = z.enum(['approval', 'unknown_outcome', 'breaker', 'handoff', 'needs_input'])
+// `breaker` is the old name of an `llm_calls` breach; only old logs carry it.
+export const WaitingReasonSchema = z.enum(['approval', 'unknown_outcome', 'limit', 'breaker', 'handoff', 'needs_input'])
 export type WaitingReason = z.infer<typeof WaitingReasonSchema>
 
 export const UsageSchema = z.object({
@@ -120,12 +151,16 @@ const payloadSchemas = {
     agentId: z.string(),
     input: z.object({ text: z.string() }),
     principal: z.object({ id: z.string(), roles: z.array(z.string()) }).optional(),
+    // A copy of the workflow when the run started: editing the agent does not change a running workflow.
+    workflow: z.object({ name: z.string(), definition: WorkflowSchema }).optional(),
+    // Set on a run that a workflow `subrun` step started.
+    parent: z.object({ runId: z.string(), stepId: z.string() }).optional(),
   }),
   'llm.requested': z.object({ model: z.string() }),
   'llm.responded': z.object({
     message: MessageSchema,
     usage: UsageSchema,
-    stopReason: z.enum(['end', 'tool_calls', 'length']),
+    stopReason: z.enum(['end', 'tool_calls', 'length', 'filtered']),
   }),
   'rule.decided': z.object({
     toolCallId: z.string(),
@@ -162,7 +197,26 @@ const payloadSchemas = {
     from: RunStatusSchema,
     to: RunStatusSchema,
     reason: z.string().optional(), // a WaitingReason or free text
+    // ISO 8601; set when a run starts to wait for a human. A wait without it never expires.
+    expiresAt: z.string().optional(),
+    // ISO 8601; set when a run starts to sleep until a follow-up.
+    wakeAt: z.string().optional(),
   }),
+  // A connection guard made the call wait; the call has not been sent. `retryAt` is ISO 8601.
+  'tool.deferred': z.object({
+    toolCallId: z.string(),
+    reason: z.enum(['rate', 'concurrency', 'breaker']),
+    retryAt: z.string(),
+  }),
+  'step.started': z.object({ stepId: z.string(), kind: z.enum(['llm', 'tool', 'approval', 'subrun']) }),
+  'step.completed': z.object({ stepId: z.string(), output: z.json() }),
+  'limit.reached': z.object({ limit: LimitNameSchema, max: z.number(), value: z.number() }),
+  'limit.continued': z.object({ limit: LimitNameSchema }),
+  // What a human sends to a run that is not waiting for them: `message` steers it, `cancel` stops it before its next step.
+  'input.received': z.union([
+    z.object({ action: z.literal('cancel') }).strict(),
+    z.object({ action: z.literal('message'), text: z.string().min(1).max(32_000) }).strict(),
+  ]),
   // `retryAt` (ISO 8601) is set only by an LLM retry wait.
   'error.raised': z.object({ message: z.string(), retryable: z.boolean(), retryAt: z.string().optional() }),
 } as const
@@ -186,6 +240,12 @@ export const NewEventSchema = z.discriminatedUnion('type', [
   eventSchema('outcome.settled', payloadSchemas['outcome.settled']),
   eventSchema('run.state_changed', payloadSchemas['run.state_changed']),
   eventSchema('error.raised', payloadSchemas['error.raised']),
+  eventSchema('limit.reached', payloadSchemas['limit.reached']),
+  eventSchema('limit.continued', payloadSchemas['limit.continued']),
+  eventSchema('input.received', payloadSchemas['input.received']),
+  eventSchema('tool.deferred', payloadSchemas['tool.deferred']),
+  eventSchema('step.started', payloadSchemas['step.started']),
+  eventSchema('step.completed', payloadSchemas['step.completed']),
 ])
 export type NewEvent = z.infer<typeof NewEventSchema>
 

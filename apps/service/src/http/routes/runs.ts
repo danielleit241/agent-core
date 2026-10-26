@@ -1,36 +1,46 @@
 import { randomUUID } from 'node:crypto'
-import type { FastifyInstance } from 'fastify'
+import type { FastifyInstance, FastifyRequest } from 'fastify'
 import { z } from 'zod'
 import { projectRun, verifyChain } from '@agent-core/core'
-import type { NewEvent, StoredEvent, WaitingReason } from '@agent-core/core'
-import { ConfigRepo, PgRunStore, StateConflictError, createRunWithEvent, getRun, getRunHead } from '@agent-core/store-postgres'
+import type { NewEvent, RunStatus, SecretBox, StoredEvent, WaitingReason } from '@agent-core/core'
+import { ConfigRepo, PgRunStore, StateConflictError, childRunIds, createRunWithEvent, getRun, getRunHead, makeDue } from '@agent-core/store-postgres'
 import type { createPool } from '@agent-core/store-postgres'
-import { apiError, validationError } from '../errors'
+import { ApiError, apiError, validationError } from '../errors'
 import { getRunView } from '../../runs/views'
+import { keyReused, readIdempotencyKey, requestHash } from '../idempotency'
 
-const TENANT = 'default'
 const POLL_MS = 100
 
 const RunBody = z.object({
   agent: z.string().min(1),
+  /** A workflow of the agent; without it the run is an agent run. */
+  workflow: z.string().min(1).optional(),
   input: z.object({ text: z.string().min(1) }),
   // Bounded: the principal goes into the LLM context.
   principal: z.object({ id: z.string().max(200), roles: z.array(z.string().max(64)).max(20) }).optional(),
 })
-const ACTIONS = ['approve', 'reject', 'outcome_happened', 'outcome_not_happened', 'cancel'] as const
+const ACTIONS = ['approve', 'reject', 'outcome_happened', 'outcome_not_happened', 'continue', 'cancel'] as const
 type Action = (typeof ACTIONS)[number]
-const ResolveBody = z.object({ action: z.enum(ACTIONS) })
+/** Everything a human sends to a run. `message` steers it; the other actions answer a wait or cancel it. */
+const InputBody = z.union([
+  z.object({ action: z.enum(ACTIONS) }).strict(),
+  z.object({ action: z.literal('message'), text: z.string().min(1).max(32_000) }).strict(),
+])
+const ENDED: readonly RunStatus[] = ['completed', 'failed', 'cancelled']
 
 /** The actions a human may take for each waiting reason. A reason without an entry only allows `cancel`. */
 const ALLOWED: Partial<Record<WaitingReason, readonly Action[]>> = {
   approval: ['approve', 'reject', 'cancel'],
   unknown_outcome: ['outcome_happened', 'outcome_not_happened', 'cancel'],
+  limit: ['continue', 'cancel'],
+  breaker: ['continue', 'cancel'],
 }
 const allowedFor = (reason: WaitingReason | null): readonly Action[] => (reason && ALLOWED[reason]) || ['cancel']
 
 const HAPPENED_TEXT = 'A human confirmed that this action happened. Its result is not available.'
 
 const notCancellable = (fix: string) => apiError('run_not_cancellable', 'The run cannot be cancelled in its current state.', fix, 409)
+const runEnded = () => apiError('run_ended', 'The run has ended and takes no more input.', 'Start a new run with POST /v1/runs.', 409)
 
 const runNotFound = (id: string) =>
   apiError('run_not_found', `Run "${id}" does not exist.`, 'Check the run id returned by POST /v1/runs.', 404)
@@ -65,16 +75,16 @@ export function checkChain(
   return { valid: true }
 }
 
-export function registerRunRoutes(app: FastifyInstance, deps: { pool: ReturnType<typeof createPool>; closing: AbortSignal }): void {
+export function registerRunRoutes(app: FastifyInstance, deps: { pool: ReturnType<typeof createPool>; secrets: SecretBox; closing: AbortSignal }): void {
   const { pool } = deps
-  const config = new ConfigRepo(pool, TENANT)
-  const store = new PgRunStore(pool, TENANT)
+  const configFor = (req: FastifyRequest) => new ConfigRepo(pool, req.auth.tenantId, deps.secrets)
+  const storeFor = (req: FastifyRequest) => new PgRunStore(pool, req.auth.tenantId)
 
   /** Polls until the run settles, the time runs out, the client disconnects or the app closes. */
-  async function waitForSettle(runId: string, seconds: number, clientGone: () => boolean): Promise<void> {
+  async function waitForSettle(tenantId: string, runId: string, seconds: number, clientGone: () => boolean): Promise<void> {
     const deadline = Date.now() + seconds * 1000
     for (;;) {
-      const run = await getRun(pool, TENANT, runId)
+      const run = await getRun(pool, tenantId, runId)
       if (!run || (run.status !== 'queued' && run.status !== 'running') || Date.now() >= deadline) return
       if (clientGone() || deps.closing.aborted) return
       await new Promise((r) => setTimeout(r, POLL_MS))
@@ -82,7 +92,18 @@ export function registerRunRoutes(app: FastifyInstance, deps: { pool: ReturnType
   }
 
   app.post<{ Querystring: { wait?: string } }>('/v1/runs', async (req, reply) => {
+    const { tenantId } = req.auth
+    const config = configFor(req)
     const wait = parseWait(req.query.wait)
+    const key = readIdempotencyKey(req)
+    if (key?.startsWith('subrun:')) {
+      throw apiError(
+        'invalid_idempotency_key',
+        'An Idempotency-Key may not start with "subrun:".',
+        'That prefix names the child runs of workflow steps. Use another key.',
+        400,
+      )
+    }
     const parsed = RunBody.safeParse(req.body)
     if (!parsed.success) throw validationError(parsed.error)
     const body = parsed.data
@@ -95,59 +116,146 @@ export function registerRunRoutes(app: FastifyInstance, deps: { pool: ReturnType
         422,
       )
     }
-    const key = req.headers['idempotency-key']
+    const workflows = agent.definition.workflows ?? {}
+    // Own keys only: a name like "constructor" must not find an inherited member.
+    const definition = body.workflow !== undefined && Object.hasOwn(workflows, body.workflow) ? workflows[body.workflow] : undefined
+    if (body.workflow !== undefined && definition === undefined) {
+      throw apiError(
+        'unknown_workflow',
+        `Agent "${body.agent}" has no workflow "${body.workflow}".`,
+        "Name a workflow from the agent's \"workflows\", or leave \"workflow\" out for an agent run.",
+        422,
+      )
+    }
     // One transaction: the run row, run.created and the queue row appear together or not at all.
     const created = await createRunWithEvent(pool, {
-      tenantId: TENANT,
+      tenantId,
       runId: `run_${randomUUID()}`,
       agentId: body.agent,
       agentVersion: agent.version,
-      idempotencyKey: typeof key === 'string' && key !== '' ? key : undefined,
+      idempotencyKey: key,
+      requestHash: key === undefined ? undefined : requestHash(req),
       created: {
         type: 'run.created',
         payload: {
           agentId: body.agent,
           input: body.input,
           ...(body.principal ? { principal: body.principal } : {}),
+          ...(definition === undefined ? {} : { workflow: { name: body.workflow!, definition } }),
         },
         labels: ['untrusted'], // the caller's text is untrusted input
       },
     })
-    if (!created.created) void reply.header('Idempotent-Replayed', 'true')
+    if (!created.created) {
+      // A row from before the hash existed has none and matches any request.
+      if (created.requestHash !== null && created.requestHash !== requestHash(req)) throw keyReused()
+      void reply.header('Idempotent-Replayed', 'true')
+    }
     if (wait !== undefined) {
       let gone = false
       reply.raw.on('close', () => {
         gone = true
       })
-      await waitForSettle(created.id, wait, () => gone)
-      return reply.code(200).send(await getRunView(pool, TENANT, created.id))
+      await waitForSettle(tenantId, created.id, wait, () => gone)
+      return reply.code(200).send(await getRunView(pool, tenantId, created.id))
     }
-    const run = await getRun(pool, TENANT, created.id)
+    const run = await getRun(pool, tenantId, created.id)
     return reply.code(202).send({ run_id: created.id, status: run?.status ?? 'queued' })
   })
 
   app.get<{ Params: { id: string } }>('/v1/runs/:id', async (req) => {
-    const view = await getRunView(pool, TENANT, req.params.id)
+    const view = await getRunView(pool, req.auth.tenantId, req.params.id)
     if (!view) throw runNotFound(req.params.id)
     return view
   })
 
   app.get<{ Params: { id: string } }>('/v1/runs/:id/events', async (req) => {
-    if (!(await getRun(pool, TENANT, req.params.id))) throw runNotFound(req.params.id)
+    const { tenantId } = req.auth
+    if (!(await getRun(pool, tenantId, req.params.id))) throw runNotFound(req.params.id)
     // Head first: a run that is active appends between the two reads, and checkChain ignores those events.
-    const head = await getRunHead(pool, TENANT, req.params.id)
-    const events = await store.readEvents(req.params.id)
+    const head = await getRunHead(pool, tenantId, req.params.id)
+    const events = await storeFor(req).readEvents(req.params.id)
     const chain = checkChain(events, head)
     return { events, chain: chain.valid ? { valid: true } : { valid: false, broken_at_seq: chain.brokenAtSeq } }
   })
 
-  app.post<{ Params: { id: string } }>('/v1/runs/:id/resolve', async (req, reply) => {
-    const parsed = ResolveBody.safeParse(req.body)
+  /**
+   * A run that is not running is cancelled at once. A running run gets a cancel input and its job is made due:
+   * the runner stops it before its next step, so a tool call in flight still finishes.
+   */
+  async function cancelRun(req: FastifyRequest, runId: string, firstStatus: RunStatus): Promise<{ run_id: string; status: RunStatus }> {
+    const store = storeFor(req)
+    let status = firstStatus
+    // One retry: the run may move on meanwhile (a worker starts it, or a human resumes it); a cancel still applies.
+    for (let attempt = 0; ; attempt++) {
+      if (ENDED.includes(status)) throw notCancellable('The run has already ended.')
+      try {
+        if (status === 'running') {
+          await store.append(runId, [{ type: 'input.received', payload: { action: 'cancel' }, labels: [] }], { expect: { status: 'running' } })
+          await makeDue(pool, req.auth.tenantId, runId)
+          return { run_id: runId, status: 'running' }
+        }
+        await store.append(runId, [{ type: 'run.state_changed', payload: { from: status, to: 'cancelled' }, labels: [] }], { expect: { status } })
+        return { run_id: runId, status: 'cancelled' }
+      } catch (err) {
+        if (!(err instanceof StateConflictError)) throw err
+        if (attempt > 0) {
+          throw notCancellable('The run changed state while cancelling. Check GET /v1/runs/{id} and retry.')
+        }
+        status = (await getRun(pool, req.auth.tenantId, runId))?.status ?? status
+      }
+    }
+  }
+
+  /** Cancels the child runs of a workflow's subrun steps, and theirs: work the caller cancelled must not go on. */
+  async function cancelChildren(req: FastifyRequest, runId: string): Promise<void> {
+    for (const childId of await childRunIds(pool, req.auth.tenantId, runId)) {
+      const child = await getRun(pool, req.auth.tenantId, childId)
+      if (!child || ENDED.includes(child.status)) continue
+      try {
+        await cancelRun(req, childId, child.status)
+      } catch (err) {
+        // The child ended meanwhile; nothing left to stop.
+        if (!(err instanceof ApiError) || err.status !== 409) throw err
+      }
+      await cancelChildren(req, childId)
+    }
+  }
+
+  /** Records a message for the run. The runner adds it to the context before its next LLM call; the run's state does not change. */
+  async function sendMessage(req: FastifyRequest, runId: string, firstStatus: RunStatus, text: string): Promise<{ run_id: string; status: RunStatus }> {
+    const store = storeFor(req)
+    let status = firstStatus
+    // One retry: the run may move between states (for example queued to running) while the message is sent.
+    for (let attempt = 0; ; attempt++) {
+      if (ENDED.includes(status)) throw runEnded()
+      try {
+        await store.append(runId, [{ type: 'input.received', payload: { action: 'message', text }, labels: ['untrusted'] }], {
+          expect: { status },
+        })
+        return { run_id: runId, status }
+      } catch (err) {
+        if (!(err instanceof StateConflictError) || attempt > 0) throw err
+        status = (await getRun(pool, req.auth.tenantId, runId))?.status ?? status
+      }
+    }
+  }
+
+  app.post<{ Params: { id: string } }>('/v1/runs/:id/input', { config: { idempotent: true } }, async (req, reply) => {
+    const parsed = InputBody.safeParse(req.body)
     if (!parsed.success) throw validationError(parsed.error)
-    const { action } = parsed.data
+    const body = parsed.data
     const runId = req.params.id
-    const run = await getRun(pool, TENANT, runId)
+    const store = storeFor(req)
+    const run = await getRun(pool, req.auth.tenantId, runId)
     if (!run) throw runNotFound(runId)
+    if (body.action === 'cancel') {
+      const cancelled = await cancelRun(req, runId, run.status)
+      await cancelChildren(req, runId)
+      return reply.code(202).send(cancelled)
+    }
+    if (body.action === 'message') return reply.code(202).send(await sendMessage(req, runId, run.status, body.text))
+    const { action } = body
     // approve and reject keep their original error code for a run that is not waiting.
     const notWaiting =
       action === 'approve' || action === 'reject'
@@ -176,16 +284,26 @@ export function registerRunRoutes(app: FastifyInstance, deps: { pool: ReturnType
         409,
       )
     }
-    const stateTo = (to: 'running' | 'cancelled'): NewEvent => ({
+    const stateTo = (to: 'running'): NewEvent => ({
       type: 'run.state_changed',
       payload: { from: 'waiting_human', to },
       labels: [],
     })
     let events: NewEvent[]
-    let enqueue = true
-    if (action === 'cancel') {
-      events = [stateTo('cancelled')]
-      enqueue = false
+    if (action === 'continue') {
+      // A legacy `breaker` wait has no limit.reached event; it was an llm_calls breach.
+      const breached = logged.findLast((e) => e.type === 'limit.reached')
+      const limit = proj.waitingReason === 'breaker' || breached?.type !== 'limit.reached' ? 'llm_calls' : breached.payload.limit
+      // The tenant's daily cost is an admin budget: a tenant key may not spend past it.
+      if (limit === 'tenant_cost_usd_per_day' && !req.auth.admin) {
+        throw apiError(
+          'limit_needs_admin',
+          'Only the admin key may let a run go past the tenant daily cost.',
+          'Ask an admin to continue the run, or cancel it.',
+          403,
+        )
+      }
+      events = [{ type: 'limit.continued', payload: { limit }, labels: ['trusted'] }, stateTo('running')]
     } else if (action === 'approve' || action === 'reject') {
       events = [
         ...proj.awaitingApproval.map(
@@ -207,33 +325,12 @@ export function registerRunRoutes(app: FastifyInstance, deps: { pool: ReturnType
     }
     try {
       // The expectation is checked under the row lock, so two concurrent resolves cannot both write.
-      await store.append(runId, events, { expect: { status: 'waiting_human', waitingReason: proj.waitingReason ?? undefined, lastSeq: logged.at(-1)!.seq }, enqueue })
+      await store.append(runId, events, { expect: { status: 'waiting_human', waitingReason: proj.waitingReason ?? undefined, lastSeq: logged.at(-1)!.seq }, enqueue: true })
     } catch (err) {
       if (err instanceof StateConflictError) throw notWaiting
       throw err
     }
-    return reply.code(202).send({ run_id: runId, status: action === 'cancel' ? 'cancelled' : 'queued' })
+    return reply.code(202).send({ run_id: runId, status: 'queued' })
   })
 
-  app.post<{ Params: { id: string } }>('/v1/runs/:id/cancel', async (req, reply) => {
-    const runId = req.params.id
-    const run = await getRun(pool, TENANT, runId)
-    if (!run) throw runNotFound(runId)
-    if (run.status !== 'queued' && run.status !== 'waiting_human') {
-      throw notCancellable(
-        run.status === 'running' ? 'A running run can be cancelled from M2; wait for it to pause or end.' : 'The run has already ended.',
-      )
-    }
-    try {
-      await store.append(
-        runId,
-        [{ type: 'run.state_changed', payload: { from: run.status, to: 'cancelled' }, labels: [] }],
-        { expect: { status: run.status } },
-      )
-    } catch (err) {
-      if (err instanceof StateConflictError) throw notCancellable('The run changed state while cancelling. Check GET /v1/runs/{id} and retry.')
-      throw err
-    }
-    return reply.code(202).send({ run_id: runId, status: 'cancelled' })
-  })
 }

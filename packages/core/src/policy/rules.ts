@@ -28,7 +28,7 @@ function bothFinite(a: unknown, b: unknown): a is number {
   return typeof a === 'number' && Number.isFinite(a) && typeof b === 'number' && Number.isFinite(b)
 }
 
-function conditionHolds(args: Record<string, unknown>, key: string, cond: Condition): boolean {
+export function conditionHolds(args: Record<string, unknown>, key: string, cond: Condition): boolean {
   // Fail closed on malformed conditions (the schema should already have rejected them).
   if (!isPlainObject(cond)) return false
   const ops = Object.keys(cond)
@@ -52,7 +52,7 @@ function conditionHolds(args: Record<string, unknown>, key: string, cond: Condit
   return true
 }
 
-function toolMatches(pattern: string, name: string): boolean {
+export function toolMatches(pattern: string, name: string): boolean {
   if (pattern.endsWith('.*')) return name.startsWith(pattern.slice(0, -1))
   return pattern === name
 }

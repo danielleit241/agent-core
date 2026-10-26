@@ -1,8 +1,9 @@
 import { createServer } from 'node:http'
 import type { AddressInfo } from 'node:net'
+import { createSecretBox } from '@agent-core/core'
 import { createServiceStack } from '@agent-core/service'
 import { createOpenAICompatible } from '@agent-core/llm'
-import { assertTestDatabase, assertTestPool, createPool, runMigrations } from '@agent-core/store-postgres'
+import { assertTestDatabase, assertTestPool, createPool, runMigrations, runtimeTestUrl } from '@agent-core/store-postgres'
 import { startFakeLlm } from '@agent-core/fake-llm'
 import type { FakeTurn } from '@agent-core/fake-llm'
 import { startShop } from '@agent-core/shop'
@@ -16,6 +17,12 @@ export type Stack = {
   // JSON bodies are asserted ad hoc by tests, so `body` stays loosely typed.
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   api(method: string, path: string, body?: unknown, timeoutMs?: number): Promise<{ status: number; body: any }>
+  /** Like `api`, but with the given API key instead of the admin key. */
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  apiAs(key: string, method: string, path: string, body?: unknown): Promise<{ status: number; body: any }>
+  /** Admin key with `X-Tenant-Id`: registers connections and webhooks for a tenant. */
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  apiForTenant(tenant: string, method: string, path: string, body?: unknown): Promise<{ status: number; body: any }>
   shop: Awaited<ReturnType<typeof startShop>>
   receiver: { url: string; received: Received[] }
   close(): Promise<void>
@@ -30,10 +37,12 @@ export type StackOpts = {
 
 export async function startStack(script: FakeTurn[], opts: StackOpts = {}): Promise<Stack> {
   assertTestDatabase(DATABASE_URL) // the reset below drops every table
-  const pool = createPool(DATABASE_URL)
-  await assertTestPool(pool)
-  await pool.query('DROP SCHEMA public CASCADE; CREATE SCHEMA public')
-  await runMigrations(pool)
+  const migrator = createPool(DATABASE_URL)
+  await assertTestPool(migrator)
+  await migrator.query('DROP SCHEMA public CASCADE; CREATE SCHEMA public')
+  await runMigrations(migrator, { runtimeUser: 'agentcore_runtime' })
+  await migrator.end()
+  const pool = createPool(runtimeTestUrl(DATABASE_URL))
 
   const shop = await startShop()
   const fakeLlm = opts.realLlm ? undefined : await startFakeLlm(script)
@@ -57,6 +66,7 @@ export async function startStack(script: FakeTurn[], opts: StackOpts = {}): Prom
   const stack = createServiceStack({
     pool,
     adminKey: ADMIN_KEY,
+    secrets: createSecretBox(Buffer.alloc(32, 7)),
     llm,
     workerId: 'e2e-worker',
     runPollMs: 20,
@@ -66,20 +76,25 @@ export async function startStack(script: FakeTurn[], opts: StackOpts = {}): Prom
   await stack.app.listen({ port: 0, host: '127.0.0.1' })
   const baseUrl = `http://127.0.0.1:${(stack.app.server.address() as AddressInfo).port}`
 
+  async function request(key: string, method: string, path: string, body?: unknown, timeoutMs?: number, tenant?: string) {
+    const res = await fetch(baseUrl + path, {
+      method,
+      headers: {
+        Authorization: `Bearer ${key}`,
+        ...(tenant === undefined ? {} : { 'X-Tenant-Id': tenant }),
+        ...(body === undefined ? {} : { 'Content-Type': 'application/json' }),
+      },
+      body: body === undefined ? undefined : JSON.stringify(body),
+      ...(timeoutMs === undefined ? {} : { signal: AbortSignal.timeout(timeoutMs) }),
+    })
+    const text = await res.text()
+    return { status: res.status, body: text === '' ? undefined : JSON.parse(text) }
+  }
+
   return {
-    async api(method, path, body, timeoutMs) {
-      const res = await fetch(baseUrl + path, {
-        method,
-        headers: {
-          Authorization: `Bearer ${ADMIN_KEY}`,
-          ...(body === undefined ? {} : { 'Content-Type': 'application/json' }),
-        },
-        body: body === undefined ? undefined : JSON.stringify(body),
-        ...(timeoutMs === undefined ? {} : { signal: AbortSignal.timeout(timeoutMs) }),
-      })
-      const text = await res.text()
-      return { status: res.status, body: text === '' ? undefined : JSON.parse(text) }
-    },
+    api: (method, path, body, timeoutMs) => request(ADMIN_KEY, method, path, body, timeoutMs),
+    apiAs: (key, method, path, body) => request(key, method, path, body),
+    apiForTenant: (tenant, method, path, body) => request(ADMIN_KEY, method, path, body, undefined, tenant),
     shop,
     receiver: { url: receiverUrl, received },
     async close() {

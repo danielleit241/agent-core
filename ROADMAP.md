@@ -7,7 +7,7 @@ agent-core is an open-source, domain-agnostic **agent service**. A team register
 This file is the project's plan of record. It says what each milestone delivers, how we know it is done, and what makes a build stable enough to become a version. It changes through pull requests, like code.
 
 - Released versions: none. The project is in development; see [How releases work](#how-releases-work).
-- In progress: **M0 — Walking skeleton**
+- In progress: **M2a — Durable runs and limits**
 - License: MIT
 
 ## Contents
@@ -82,10 +82,10 @@ The harness is one system, from the moment work comes in to the moment a result 
 | 1. Intake | A face, a channel or a trigger hands work in | M0 (Control API), M3.6 (events), M4.2 (schedule), M4.3 and M5.2 (channels), M4–M6 (chat faces) |
 | 2. Normalise | The work becomes a run: principal, input checked against the agent's input schema and labelled `untrusted`, idempotency key | M0, M2.2, M3.2, M3.9 |
 | 3. Queue | The run waits for a worker; tenants share workers fairly | M0, M2.3 |
-| 4. Load | The worker loads the agent version: instructions, skills, rules, connections | M0, M3.5, M6.5 |
-| 5. Loop | Context → LLM → rule gate → human approval → tool gate, until the run ends or waits | M0, M3.3, M6.1, M9.4 |
-| 6. Deliver | Results, with a typed `result` when the agent declares an output schema, and approval requests with one-time approval links go out: signed webhooks, SSE, and a reply on the channel the work came from | M0, M2.7, M3.9, M3.10, M4.3, M5.2 |
-| 7. Evidence | The trace, eval scores, shadow match rates and the trust ladder show whether the agent did the work correctly | M0, M1, M5.3, M9 |
+| 4. Load | The worker loads the agent version: instructions, skills, rules, connections, limits | M0, M2.10, M3.5, M6.5, M6.7 |
+| 5. Loop | Context → LLM → rule gate → human approval → tool gate, within the run's limits, until the run ends or waits. Every piece of content passes the content pipeline before it enters context | M0, M2.10–M2.13, M2.19–M2.22, M3.3, M6.1, M6.8 |
+| 6. Deliver | Results, with a typed `result` when the agent declares an output schema, and approval requests with one-time approval links go out: signed webhooks, SSE, and a reply on the channel the work came from. A policy webhook may check a final answer before it goes out | M0, M2.7, M3.9, M3.10, M4.3, M4.5, M5.2 |
+| 7. Evidence | The trace, eval scores with token and cost figures, shadow match rates and the trust ladder show whether the agent did the work correctly | M0, M1, M2.18, M3.11, M5.3, M9 |
 
 ### Agent, workflow, extension points
 
@@ -95,7 +95,7 @@ Three parts share one run model. Each has a different job.
 |---|---|---|
 | **Agent** | The next step, inside its rules | Changes its own rules or autonomy level |
 | **Workflow** (M2.4) | A fixed order of steps; a step can be an agent run or a wait for approval | Reasons, or skips the rule gate |
-| **Extension points** (policy webhook M4.5, tools built with the SDK M4.1) | Team logic, in the team's own systems | Runs inside the service, or loosens a rule; a timeout or an error counts as `deny` |
+| **Extension points** (policy webhook M4.5, before a tool call and before a final answer; tools built with the SDK M4.1) | Team logic, in the team's own systems | Runs inside the service, or loosens a rule; a timeout or an error counts as `deny` |
 
 ### Architecture
 
@@ -132,7 +132,8 @@ Stack: TypeScript on Node.js 24 LTS, pnpm workspaces, Zod, Fastify, Vitest, Post
 - A drag-and-drop workflow builder in the style of n8n.
 - Automatic loosening of rules. Ever.
 - Running a public SaaS: no public sign-up, no billing. One installation serves many tenants inside one organisation or one private deployment.
-- Uploaded plugins or sandboxes that run other people's code.
+- Uploaded plugins, or sandboxes that run code from teams or users. The one exception is a model-written script in code mode (M6.8): it runs in a sandbox, is off by default, and every tool call in it passes the rule gate.
+- Hooks that change content. An extension point returns `allow` or `deny`; it never rewrites tool arguments, tool outputs or answers, because rewritten content would bypass taint tracking.
 
 ---
 
@@ -151,7 +152,7 @@ A version is a promise: this build is a stable product that people can run and d
 
 A commit on `main` may be tagged as a version only when **every** item below is true. The gate is a checklist of evidence, not a vote. Nobody, including the maintainer, can skip an item or release on judgement alone. If an item fails, the answer is "not yet", and the work goes back to `main`.
 
-1. **Feature floor.** For the first release (`v0.1.0`): milestones M0–M3 are done. Without them, runs are not crash-safe, tenants are not isolated, and there is no identity or full rule gate, so the product is not safe to run. For `v1.0.0`: M10 is done.
+1. **Feature floor.** For the first release (`v0.1.0`): milestones M0–M3 are done (M2 means M2a, M2b and M2c). Without them, runs are not crash-safe, tenants are not isolated, and there is no identity or full rule gate, so the product is not safe to run. For `v1.0.0`: M10 is done.
 2. **Green checks.** `pnpm lint`, `pnpm typecheck`, `pnpm test`, `pnpm test:db` and `pnpm e2e` pass in CI on the release commit.
 3. **Security.** Every security invariant scheduled up to the latest finished milestone has a passing test at 100%.
 4. **Contract stability.** No breaking change to the `/v1` API, webhook payloads, event types or agent definition format has landed on `main` in the last 4 weeks.
@@ -194,12 +195,14 @@ A milestone is done when:
 |---|---|---|
 | **M0** | Walking skeleton | One real run crosses all three gates, with approval, a signed webhook and a verifiable log |
 | M1 | Evals and tools | Scenario evals with replay that needs no LLM; webhook tools; full safety inference |
-| M2 | Durable and multi-tenant | Crash-safe resume, fair queue, workflows, follow-ups, row-level tenant isolation, SSE, metrics |
+| M2a | Durable runs and limits | Crash-safe resume, fair queue, workflows, follow-ups, row-level tenant isolation, one limits model, run input, connection protection |
+| M2b | Runs out of the box | One-command start with no setup, built-in tools to ask and escalate, SSE, metrics, self-diagnosis |
+| M2c | Context that fits | Token and cost figures in evals, content pipeline, offloaded outputs, compaction level 1, read cache |
 | M3 | Identity, rules, triggers | Members and roles, principals, full rule gate, run-level taint, agent versions, event triggers |
 | | | *Feature floor for `v0.1.0` reached. The version still needs the whole release gate.* |
 | M4 | SDK and a second agent | `@agent-core/sdk`, schedules, Telegram, a second agent built with zero commits, OpenAI-compatible chat |
 | M5 | Self-serve integration | OpenAPI import, email channel, shadow mode, setup console, WebSocket, widget, Responses API |
-| M6 | Context and MCP server | Context budgets, long-term memory, prompt caching, agents exposed as MCP tools, skill selection |
+| M6 | Context and MCP server | Context budgets, long-term memory, prompt caching, agents exposed as MCP tools, skill selection, soft budgets, tool search, code mode |
 | M7 | Data protection | Per-item taint, PII masking, confidential-data routing, attack eval suite |
 | M8 | Agent teams | Orchestrator and workers, quarantined sub-agents |
 | M9 | Console and trust | Owner and Ops consoles, waterfall trace, fork, trust ladder, OTLP, face-parity tests |
@@ -248,19 +251,42 @@ Each task has an ID, a short description and a "done when" line. Only the next m
 - [x] **M1.7** Model capability profiles and `models check`. *Done when:* for a model without strict JSON schema, the service validates and retries.
 - [x] **M1.8** API to settle an `unknown_outcome` run. *Done when:* a human can mark the interrupted write as done, as not done (call it again), or cancel the run; the run continues or ends.
 
-### M2 — Durable and multi-tenant
+### M2a — Durable runs and limits
 
-**Goal:** runs survive restarts, and tenants cannot see each other.
+**Goal:** runs survive restarts, tenants cannot see each other, and every run stays within its limits without overloading a team's systems.
 
 - [x] **M2.1** Resume from the event log; full resume and retry table. *Done when:* killing a run mid-way never repeats a completed tool call, and repeats an interrupted one only with the same idempotency key; a write without an idempotency key goes to `unknown_outcome`.
-- [ ] **M2.2** Full idempotency for inbound work and tool calls. *Done when:* a repeated `Idempotency-Key` returns the original run.
-- [ ] **M2.3** Fair queue per tenant; concurrency limits. *Done when:* one busy tenant does not block another.
-- [ ] **M2.4** Workflow runs (four step types, branching with fixed operators). *Done when:* a sample workflow runs, waits for approval and continues.
-- [ ] **M2.5** Follow-ups and the `sleeping` state. *Done when:* a follow-up wakes on time, including after a restart.
-- [ ] **M2.6** Tenants, row-level security with `FORCE`, three database roles, two-tenant tests; encrypted secrets. *Done when:* invariant B6 passes.
+- [x] **M2.2** Full idempotency for inbound work and tool calls. *Done when:* a repeated `Idempotency-Key` returns the original run.
+- [x] **M2.3** Fair queue per tenant; concurrency limits. *Done when:* one busy tenant does not block another.
+- [x] **M2.4** Workflow runs (four step types, branching with fixed operators). *Done when:* a sample workflow runs, waits for approval and continues.
+- [x] **M2.5** Follow-ups and the `sleeping` state. *Done when:* a follow-up wakes on time, including after a restart.
+- [x] **M2.6** Tenants, row-level security with `FORCE`, three database roles, two-tenant tests; encrypted secrets. *Done when:* invariant B6 passes.
+- [x] **M2.10** One limits model. Every limit lives in one `limits` block of the agent, and each has a safe default: LLM calls, tokens and cost per run, cost per tenant per day, wall-clock time per run, time a run may wait for a human, tool output size. A breach appends `limit.reached` with the name of the limit. A running run moves to `waiting_human` with reason `limit`, where a human may let it continue once or cancel it; a run that waits too long for a human fails with reason `wait_expired`. Only an `owner` may set a limit above its default. *Done when:* a test breaches each limit and gets the same event; the 30-call breaker from M0 becomes the `llm_calls` limit.
+- [x] **M2.11** Run input. One path carries everything a human sends to a run: `cancel`, also while the run is `running` or waits for an LLM retry; a message that steers a running run; the answer to `agent_core.ask_human`; and the existing approval and outcome actions. The runner reads new input before each step. *Done when:* a running run is cancelled before its next step, and a steering message reaches the next LLM request. The `answer` action for `agent_core.ask_human` lands with M2.16.
+- [x] **M2.12** Connection protection: a rate limit and a concurrency limit per connection, shared by all runs and workers, and a circuit breaker that opens after repeated failures. A run that hits a limit or an open breaker waits with a `retryAt`; it does not fail. *Done when:* 50 parallel runs never exceed a connection's limits, and an open breaker sends no call until it half-opens.
+- [x] **M2.13** Loop detection (was M9.4). The same tool with the same arguments called N times, or K LLM turns that add no new tool result, is a breach of the `loop` limit. *Done when:* a looping scenario moves to `waiting_human` with reason `limit`, and the event names `loop`.
+- [x] **M2.14** Stop reasons. An answer that the provider filters or refuses never counts as `completed`. *Done when:* a `content_filter` response fails the run with reason `filtered`.
+
+### M2b — Runs out of the box
+
+**Goal:** the service starts and does useful work with one command and no setup, and it says what is missing.
+
 - [ ] **M2.7** SSE, `/readyz`, `/metrics`, `log verify` in the CLI. *Done when:* a client receives live events and Prometheus reads metrics.
-- [ ] **M2.8** Content-addressed context snapshots. *Done when:* each LLM call has a snapshot and repeated parts are stored once.
 - [ ] **M2.9** One-command deployment: the whole service starts with `docker compose up`. *Done when:* metric S4 passes on a clean machine.
+- [ ] **M2.15** Start without setup. Without `AGENT_CORE_ADMIN_KEY`, the service generates an admin key on first start, shows it once and stores only its hash. Without LLM settings, the service starts and `/readyz` reports `llm_not_configured`. A built-in default agent (no connections, `supervised`) serves `POST /v1/runs` when no agent is named. *Done when:* `docker compose up` with an empty `.env` gives a working API, and LLM settings are the only step before the first run.
+- [ ] **M2.16** Built-in tools to end a run well. `agent_core.ask_human` waits with reason `input` until an answer arrives (M2.11). `agent_core.escalate` waits with reason `escalated` and records the agent's reason. Built-in tools have the four safety properties and pass the rule gate; no connection may use the `agent_core.` prefix. *Done when:* a scenario with a missing order number ends in `input`, and an out-of-scope scenario ends in `escalated`.
+- [ ] **M2.17** Self-diagnosis and housekeeping. `agent-core doctor` and `/readyz` name each missing or broken setting and its fix. Old webhook deliveries are cleaned up; a delivery that runs out of retries goes to a dead-letter list that the API can read and resend. A worker releases its jobs on SIGTERM. *Done when:* each check in `doctor` has a test, and a stopped worker leaves no job locked.
+
+### M2c — Context that fits
+
+**Goal:** every LLM request carries only what the step needs, and the evals prove it.
+
+- [ ] **M2.8** Content-addressed context snapshots. *Done when:* each LLM call has a snapshot and repeated parts are stored once.
+- [ ] **M2.18** Measure first. The eval report shows tokens, LLM turns, tool calls and cost per scenario, and pass^k for `--repeat k`. *Done when:* the baseline holds these figures and CI prints the change against it.
+- [ ] **M2.19** Content pipeline. All content that enters LLM context (tool outputs, script outputs, cached reads, run input) passes one ordered stage: label, remove secrets, mask PII when the agent asks for it (M7.2), offload when large. *Done when:* a tool output with a known secret pattern reaches neither an LLM request nor the event log.
+- [ ] **M2.20** Offloaded outputs. An output above the threshold is stored once by content hash (M2.8); context holds a preview and a handle. The built-in `agent_core.read_output` reads a range of it or searches it; it is a read, passes the rule gate and keeps the output's labels. This replaces the 48,000-character cut. *Done when:* a 1 MB output adds at most 2,000 tokens to context, and the agent still finds a fact in its middle.
+- [ ] **M2.21** Compaction, level 1. When the `usage.inputTokens` of the last LLM call passes the threshold, old tool outputs are replaced by a stub, and a `context.compacted` event records which ones. System instructions, the run input, pending tool calls and open approvals are never compacted. *Done when:* a 100-step scenario stays under the threshold and its score does not drop.
+- [ ] **M2.22** Read cache within a run. A `read` with the same tool and arguments returns the earlier result while it is younger than its TTL (default 60 s); a write to the same connection clears the cache; a tool can opt out. A cache hit is an event. *Done when:* repeated reads in a scenario call the tool once, and a read after a write calls it again.
 
 ### M3 — Identity, rules, triggers
 
@@ -276,6 +302,7 @@ Each task has an ID, a short description and a "done when" line. Only the next m
 - [ ] **M3.8** API-only end-to-end journey, extended from M0. *Done when:* metric S7 passes.
 - [ ] **M3.9** Typed run contract: an agent version may declare an input schema and an output schema, in a strict subset of JSON Schema. `POST /v1/runs` checks `input.data` against the input schema and labels it `untrusted`, like the text. The model returns the result through the built-in tool `agent_core.submit_result`, which passes the rule gate like any other tool; by default a result counts as a decision the team will act on, so under `supervised` it waits for approval unless an `allow` rule matches. The API and webhooks return it as `result` beside the text `output`. *Done when:* a result that is invalid, missing or rejected goes back to the model at most twice and then the run fails; an `allow` rule on result fields lets a result through; and the refund scenario returns a `result` that matches its schema.
 - [ ] **M3.10** One-time approval links and `amend`. The `approval.requested` webhook carries a link that works once, expires with the wait, and is bound to the tool call and its arguments. Opening the link never acts; only a confirmation does. The token is never stored or logged, no read endpoint returns the link, and only an `owner` can change a webhook that receives links. A tenant can require sign-in as one of the agent's approvers. `resolve` accepts `amend` with new arguments, which the rule gate checks again. *Done when:* a link fails after use, after expiry and after the request changes; fetching the link does not approve; the token appears in no event, table or log; the event log records that the approval came through a link; and an amended call that the rules deny is refused while the run keeps waiting.
+- [ ] **M3.11** Evals from evidence (P7). One command turns the trace of a run into a draft scenario. Publishing an agent version shows its eval scores, tokens and cost against the current version on the same scenarios. *Done when:* a failed run becomes a passing regression scenario after its fix, and a publish shows the score change.
 
 ### M4 — SDK and a second agent
 
@@ -285,7 +312,7 @@ Each task has an ID, a short description and a "done when" line. Only the next m
 - [ ] **M4.2** Schedule triggers. *Done when:* runs start on a cron schedule in the right time zone.
 - [ ] **M4.3** Telegram channel (in and out, `chat_id` allow-list). *Done when:* it receives and sends messages.
 - [ ] **M4.4** Second agent, `daily-brief`, built only through the Config API in a second tenant. *Done when:* it runs with zero commits for it.
-- [ ] **M4.5** Policy webhook. *Done when:* a timeout or an error counts as `deny`.
+- [ ] **M4.5** Policy webhook with two checkpoints: before a tool call, and before a final answer or `result` goes out. It returns `allow` or `deny` with a reason, never new content. *Done when:* a timeout or an error counts as `deny`; a denied final answer goes back to the model at most twice, and then the run waits with reason `escalated`.
 - [ ] **M4.6** `POST /v1/openai/chat/completions` with streaming; client-sent tools are ignored. *Done when:* Open WebUI can chat with the shop agent.
 
 ### M5 — Self-serve integration
@@ -304,18 +331,21 @@ Each task has an ID, a short description and a "done when" line. Only the next m
 
 **Goal:** long conversations stay within budget, and any MCP client can use an agent.
 
-- [ ] **M6.1** Token budget for context; conversation compaction. *Done when:* a 200-turn conversation stays within budget.
+- [ ] **M6.1** Token budget for context; compaction, level 2: a summary in a fixed schema (confirmed facts, decisions, open work, key IDs) that keeps the labels of the content it replaces and is recorded in the cassette like any LLM call. *Done when:* a 200-turn conversation stays within budget, and a scenario that needs an early fact still passes after compaction.
 - [ ] **M6.2** Long-term memory per principal; retrieval. *Done when:* the agent remembers a customer across threads.
 - [ ] **M6.3** Prompt caching where the provider supports it. *Done when:* cost drops measurably.
 - [ ] **M6.4** MCP server at `/v1/mcp`: each agent is a tool; `get_run` and `resolve`; OAuth or API-key auth. *Done when:* Claude Desktop can call the shop agent.
 - [ ] **M6.5** Skill selection: a run loads only the skills that match its work; the trace shows which skills were loaded and why. *Done when:* an agent with 20 skills loads only the relevant ones, and its eval score does not drop.
+- [ ] **M6.6** Soft budget and a model per step. At 80% of a run's cost limit (M2.10), the model is told and the run moves to a cheaper model alias. An agent may name one alias for tool steps and another for the final answer and summaries. The cassette records each alias. *Done when:* cost per scenario drops against the M2.18 baseline and the score does not drop.
+- [ ] **M6.7** Tool search. When an agent has more tools than a threshold, the model sees only their names and short descriptions, and the built-in `agent_core.find_tools` loads full schemas. Loaded tools go at the end of the tool list, so the cached prompt prefix stays valid. *Done when:* an agent with 200 tools picks the right tools in its scenarios, with fewer input tokens than with every schema loaded.
+- [ ] **M6.8** Code mode. The built-in `agent_core.run_script` runs a model-written JavaScript script in a sandbox with no network, no file system, and limits on CPU, memory and time. Every tool call in the script returns to the runner and passes the rule gate, the content pipeline and the event log like any other call. Each agent has a mode: `off` (default), `on` or `yolo`. In `on`, a write that needs approval ends the script and becomes an ordinary tool call that waits for approval. `yolo` skips approval only: deny rules and every invariant still apply, only an `owner` can turn it on, and only at the `autonomous` level. *Done when:* a scenario with many reads uses fewer LLM turns and tokens than without code mode at the same score, and invariant B12 passes.
 
 ### M7 — Data protection
 
 **Goal:** untrusted input cannot make the agent leak data.
 
 - [ ] **M7.1** Per-item taint tracking. *Done when:* invariant B2 (full) passes.
-- [ ] **M7.2** PII masking in traces by role; sample PII set. *Done when:* invariant B4 passes.
+- [ ] **M7.2** PII masking in traces by role, and, when the agent asks for it, before content reaches the LLM (content pipeline, M2.19); sample PII set. *Done when:* invariant B4 passes.
 - [ ] **M7.3** Model routing by the `confidential` label. *Done when:* invariant B5 passes.
 - [ ] **M7.4** Attack eval suite (prompt injection, data exfiltration, tool misuse). *Done when:* the suite passes.
 
@@ -334,7 +364,7 @@ Each task has an ID, a short description and a "done when" line. Only the next m
 - [ ] **M9.1** Owner console (decisions to make, activity log, comparisons, proposals). *Done when:* it matches the approved mockups.
 - [ ] **M9.2** Ops console (health, runs, grouped errors, waterfall trace, step inspector). *Done when:* it matches the approved mockups.
 - [ ] **M9.3** Fork a run from the `seq` of an `llm.requested` event. *Done when:* the fork runs as a dry-run after the fork point.
-- [ ] **M9.4** Loop and step breakers. *Done when:* a looping run moves to `waiting_human` with reason `breaker`.
+- **M9.4** Moved to M2.13 (loop detection) and M2.10 (limits).
 - [ ] **M9.5** Trust ladder: task groups, proposals to loosen and to tighten. *Done when:* proposals appear under the right conditions and only an `owner` can accept them.
 - [ ] **M9.6** OTLP export; external anchor for the hash chain. *Done when:* traces show in Langfuse or Jaeger.
 - [ ] **M9.7** Agent health; `connection.unhealthy` and `agent.degraded` webhooks. *Done when:* a broken connection raises an alert.
@@ -351,7 +381,7 @@ Each task has an ID, a short description and a "done when" line. Only the next m
 
 ### Later (after `v1.0.0`, not scheduled)
 
-Batch triggers, crypto-shredding for the right to erasure, Zalo channel, Git sync for agent definitions, multi-node deployment.
+Batch triggers, crypto-shredding for the right to erasure, Zalo channel, Git sync for agent definitions, multi-node deployment, fallback to another model when a provider is down.
 
 ---
 
@@ -384,6 +414,7 @@ Each invariant is an automated test. From the milestone that introduces it, it m
 | B9 | No rule or autonomy level changes without an `owner` doing it | M3 |
 | B10 | A webhook without a valid signature, or with a timestamp more than 5 minutes off, is rejected | M0 |
 | B11 | The service calls no host outside the tenant's allow-list | M3 |
+| B12 | A tool call made from a code-mode script never bypasses a deny rule, and in `yolo` mode a call that reaches outside still needs approval whenever B2 applies | M6 |
 
 Report suspected security issues privately, as `SECURITY.md` describes. Do not open a public issue.
 
