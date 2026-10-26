@@ -1,11 +1,13 @@
 import { GENESIS_HASH, hashEvent } from '../../src/events/hash'
 import type { LLMPort, RunStore, ToolInvoker } from '../../src/ports'
 import { projectRun } from '../../src/events/projection'
-import { advanceRun } from '../../src/runner/runner'
-import type { AgentDefinition, Message, NewEvent, RunStatus, StoredEvent, ToolDescriptor } from '../../src/types'
+import { advanceRun, expireWait } from '../../src/runner/runner'
+import type { AgentDefinition, Limits, Message, NewEvent, RunStatus, StoredEvent, ToolDescriptor } from '../../src/types'
 
 class MemoryRunStore implements RunStore {
   private logs = new Map<string, StoredEvent[]>()
+  /** Stamps `createdAt`. Tests that measure run time share it with the runner's `now`. */
+  constructor(private readonly clock: () => Date = () => new Date()) {}
   async readEvents(runId: string): Promise<StoredEvent[]> {
     return [...(this.logs.get(runId) ?? [])]
   }
@@ -20,7 +22,7 @@ class MemoryRunStore implements RunStore {
         runId,
         seq: (prev?.seq ?? 0) + 1,
         agentVersion: 1,
-        createdAt: new Date(0).toISOString(),
+        createdAt: this.clock().toISOString(),
         prevHash: prev?.hash ?? GENESIS_HASH,
       } as Omit<StoredEvent, 'hash'>
       const event = { ...partial, hash: hashEvent(partial) } as StoredEvent
@@ -72,6 +74,7 @@ type Step = {
   calls?: { name: string; args: Record<string, unknown>; argumentsError?: string }[]
   stopReason: 'end' | 'tool_calls' | 'length' | 'filtered'
   throws?: Error
+  usage?: { inputTokens: number; outputTokens: number; costUsd?: number }
 }
 const callTool = (name: string, args: Record<string, unknown>): Step => ({
   calls: [{ name, args }],
@@ -108,7 +111,7 @@ function scriptedLlm(steps: Step[]) {
         ...(c.argumentsError ? { argumentsError: c.argumentsError } : {}),
       }))
       const message: Message = { role: 'assistant', content: step.content ?? '', ...(toolCalls ? { toolCalls } : {}) }
-      return { message, usage: { inputTokens: 1, outputTokens: 1 }, stopReason: step.stopReason }
+      return { message, usage: step.usage ?? { inputTokens: 1, outputTokens: 1 }, stopReason: step.stopReason }
     },
   }
   return llm
@@ -163,7 +166,8 @@ function deps(o: {
   llm: LLMPort
   store: RunStore
   tools: ToolInvoker
-  maxLlmCalls?: number
+  limits?: Partial<Limits>
+  tenantCostToday?: () => Promise<number>
   now?: () => Date
   random?: () => number
   /** Receives every wait the runner asks for; the wait itself resolves at once. */
@@ -180,10 +184,10 @@ function deps(o: {
     store: o.store,
     llm: o.llm,
     tools: o.tools,
-    agent: AGENT,
+    agent: o.limits === undefined ? AGENT : { ...AGENT, limits: o.limits },
     toolsByName: TOOLS,
     agentVersion: 1,
-    ...(o.maxLlmCalls !== undefined ? { maxLlmCalls: o.maxLlmCalls } : {}),
+    tenantCostToday: o.tenantCostToday ?? (async () => 0),
     ...(o.now !== undefined ? { now: o.now } : {}),
   }
 }
@@ -268,12 +272,154 @@ test('returns a tool error for an unknown tool', async () => {
   expect(llm.lastRequest().messages.at(-1)).toMatchObject({ role: 'tool', content: 'Unknown tool: nope.tool' })
 })
 
-test('breaker stops the run after maxLlmCalls', async () => {
-  const llm = scriptedLlm(Array(5).fill(callTool('orders.get', { order_id: '1042' })))
+const lastLimit = async (store: RunStore) =>
+  (await store.readEvents('r1')).filter((e) => e.type === 'limit.reached').at(-1)?.payload
+const lookups = (n: number, usage?: Step['usage']): Step[] =>
+  Array.from({ length: n }, () => ({ ...callTool('orders.get', { order_id: '1042' }), ...(usage ? { usage } : {}) }))
+
+test('llm_calls stops the run at the limit and waits with reason limit', async () => {
+  const llm = scriptedLlm(lookups(5))
   const { store, tools } = await setup()
-  expect(await advanceRun('r1', deps({ llm, store, tools, maxLlmCalls: 3 }))).toBe('waiting_human')
-  expect(projectRun(await store.readEvents('r1'), '').waitingReason).toBe('breaker')
+  expect(await advanceRun('r1', deps({ llm, store, tools, limits: { llm_calls: 3 } }))).toBe('waiting_human')
+  expect(projectRun(await store.readEvents('r1'), '').waitingReason).toBe('limit')
+  expect(await lastLimit(store)).toEqual({ limit: 'llm_calls', max: 3, value: 3 })
   expect(llm.requests).toHaveLength(3)
+})
+
+test('tokens stops the run once the sum reaches the limit', async () => {
+  const llm = scriptedLlm(lookups(5, { inputTokens: 500, outputTokens: 100 }))
+  const { store, tools } = await setup()
+  expect(await advanceRun('r1', deps({ llm, store, tools, limits: { tokens: 1000 } }))).toBe('waiting_human')
+  expect(await lastLimit(store)).toEqual({ limit: 'tokens', max: 1000, value: 1200 })
+  expect(llm.requests).toHaveLength(2)
+})
+
+test('cost_usd stops the run once the run cost reaches the limit', async () => {
+  const llm = scriptedLlm(lookups(5, { inputTokens: 1, outputTokens: 1, costUsd: 0.6 }))
+  const { store, tools } = await setup()
+  expect(await advanceRun('r1', deps({ llm, store, tools, limits: { cost_usd: 1 } }))).toBe('waiting_human')
+  expect(await lastLimit(store)).toEqual({ limit: 'cost_usd', max: 1, value: 1.2 })
+})
+
+test('a model without a price never breaches the cost limits', async () => {
+  const llm = scriptedLlm([...lookups(2), say('done')])
+  const { store, tools } = await setup()
+  expect(await advanceRun('r1', deps({ llm, store, tools, limits: { cost_usd: 0.01 } }))).toBe('completed')
+  expect(await lastLimit(store)).toBeUndefined()
+})
+
+test('tenant_cost_usd_per_day stops the run before its first LLM call', async () => {
+  const llm = scriptedLlm([say('done')])
+  const { store, tools } = await setup()
+  expect(await advanceRun('r1', deps({ llm, store, tools, tenantCostToday: async () => 25 }))).toBe('waiting_human')
+  expect(await lastLimit(store)).toEqual({ limit: 'tenant_cost_usd_per_day', max: 20, value: 25 })
+  expect(types(await store.readEvents('r1'))).not.toContain('llm.requested')
+})
+
+test('run_time_s stops a run that has been running too long', async () => {
+  const T0 = new Date('2026-01-01T00:00:00.000Z')
+  let now = T0
+  const store = new MemoryRunStore(() => now)
+  await store.append('r1', [created(), stateChanged('queued', 'running')])
+  now = new Date(T0.getTime() + 1801_000)
+  const llm = scriptedLlm([say('done')])
+  expect(await advanceRun('r1', deps({ llm, store, tools: fakeTools(), now: () => now }))).toBe('waiting_human')
+  expect(await lastLimit(store)).toEqual({ limit: 'run_time_s', max: 1800, value: 1801 })
+  expect(llm.requests).toHaveLength(0)
+})
+
+test('an in-flight tool call finishes before run_time_s stops the run', async () => {
+  const T0 = new Date('2026-01-01T00:00:00.000Z')
+  let now = T0
+  const store = new MemoryRunStore(() => now)
+  await store.append('r1', logAfterToolRequested('orders.get'))
+  now = new Date(T0.getTime() + 1801_000)
+  const tools = fakeTools()
+  expect(await advanceRun('r1', deps({ llm: scriptedLlm([]), store, tools, now: () => now }))).toBe('waiting_human')
+  expect(tools.calls).toHaveLength(1)
+  expect(types(await store.readEvents('r1')).slice(-3)).toEqual(['tool.responded', 'limit.reached', 'run.state_changed'])
+})
+
+test('tool_output_chars cuts a long output, records the breach and lets the run go on', async () => {
+  const llm = scriptedLlm([callTool('orders.get', { order_id: '1042' }), say('done')])
+  const { store, tools } = await setup()
+  expect(await advanceRun('r1', deps({ llm, store, tools, limits: { tool_output_chars: 10 } }))).toBe('completed')
+  const log = await store.readEvents('r1')
+  const at = log.findIndex((e) => e.type === 'limit.reached')
+  expect(log[at]!.payload).toEqual({ limit: 'tool_output_chars', max: 10, value: 34 })
+  expect(log[at + 1]!.type).toBe('tool.responded')
+  expect((log[at + 1]!.payload as { content: string }).content).toContain('characters cut')
+})
+
+test('a grant lets the run take one more full allowance, then it stops again', async () => {
+  const llm = scriptedLlm(lookups(10))
+  const { store, tools } = await setup()
+  await advanceRun('r1', deps({ llm, store, tools, limits: { llm_calls: 3 } }))
+  await store.append('r1', [
+    { type: 'limit.continued', payload: { limit: 'llm_calls' }, labels: ['trusted'] },
+    stateChanged('waiting_human', 'running'),
+  ])
+  expect(await advanceRun('r1', deps({ llm, store, tools, limits: { llm_calls: 3 } }))).toBe('waiting_human')
+  expect(llm.requests).toHaveLength(6)
+  expect(await lastLimit(store)).toEqual({ limit: 'llm_calls', max: 6, value: 6 })
+})
+
+test('every wait for a human carries expiresAt = now + wait_human_s', async () => {
+  const T0 = new Date('2026-01-01T00:00:00.000Z')
+  const expiresAt = '2026-01-01T00:01:00.000Z'
+  const waitsOf = async (store: RunStore) =>
+    (await store.readEvents('r1')).filter((e) => e.type === 'run.state_changed' && e.payload.to === 'waiting_human')
+  const limits = { wait_human_s: 60 }
+
+  const approval = await setup()
+  const refund = scriptedLlm([callTool('payments.refund', { order_id: '1042', amount: 1200000 })])
+  await advanceRun('r1', deps({ llm: refund, ...approval, limits, now: () => T0 }))
+  const unknown = await setupWithEvents(logAfterToolRequested('payments.refund'))
+  await advanceRun('r1', deps({ llm: scriptedLlm([]), ...unknown, limits, now: () => T0 }))
+  const limited = await setup()
+  await advanceRun('r1', deps({ llm: scriptedLlm(lookups(2)), ...limited, limits: { ...limits, llm_calls: 1 }, now: () => T0 }))
+
+  for (const s of [approval.store, unknown.store, limited.store]) {
+    const waits = await waitsOf(s)
+    expect(waits).toHaveLength(1)
+    expect(waits[0]!.payload).toMatchObject({ expiresAt })
+  }
+})
+
+describe('expireWait', () => {
+  const T0 = new Date('2026-01-01T00:00:00.000Z')
+  const at = (s: number) => new Date(T0.getTime() + s * 1000)
+  async function waiting(expiresAt?: string) {
+    const store = new MemoryRunStore(() => T0)
+    await store.append('r1', [
+      created(),
+      stateChanged('queued', 'running'),
+      {
+        type: 'run.state_changed',
+        payload: { from: 'running', to: 'waiting_human', reason: 'approval', ...(expiresAt ? { expiresAt } : {}) },
+        labels: [],
+      },
+    ])
+    return store.readEvents('r1')
+  }
+
+  test('fails an expired wait with reason wait_expired', async () => {
+    expect(expireWait(await waiting(at(60).toISOString()), at(61))).toEqual([
+      { type: 'limit.reached', payload: { limit: 'wait_human_s', max: 60, value: 61 }, labels: [] },
+      { type: 'run.state_changed', payload: { from: 'waiting_human', to: 'failed', reason: 'wait_expired' }, labels: [] },
+    ])
+  })
+  test('leaves a wait that has not expired', async () => {
+    expect(expireWait(await waiting(at(60).toISOString()), at(59))).toBeNull()
+  })
+  test('never expires a wait without expiresAt', async () => {
+    expect(expireWait(await waiting(), at(999_999))).toBeNull()
+  })
+  test('ignores a run that is not waiting', async () => {
+    const store = new MemoryRunStore(() => T0)
+    await store.append('r1', [created(), stateChanged('queued', 'running')])
+    expect(expireWait(await store.readEvents('r1'), at(999_999))).toBeNull()
+  })
 })
 
 test('advancing again after a crash does not repeat a completed tool call', async () => {

@@ -1,7 +1,7 @@
 import { randomBytes, randomUUID } from 'node:crypto'
 import type { FastifyInstance, FastifyRequest } from 'fastify'
 import { z } from 'zod'
-import { AgentDefinitionSchema, SupportSchema, ToolSafetySchema, resolveSafety, toolFingerprint } from '@agent-core/core'
+import { AgentDefinitionSchema, DEFAULT_LIMITS, SupportSchema, limitsAboveDefault, ToolSafetySchema, resolveSafety, toolFingerprint } from '@agent-core/core'
 import type { SecretBox, ToolSafety } from '@agent-core/core'
 import { ConfigRepo, NO_REVIEW } from '@agent-core/store-postgres'
 import type { LoadedTool, StoredTool, createPool } from '@agent-core/store-postgres'
@@ -205,6 +205,15 @@ export function registerConfigRoutes(
     }
     const parsed = AgentDefinitionSchema.safeParse(req.body)
     if (!parsed.success) throw validationError(parsed.error)
+    const above = req.auth.admin ? undefined : limitsAboveDefault(parsed.data.limits)[0]
+    if (above !== undefined) {
+      throw apiError(
+        'limit_above_default',
+        `Limit "${above}" is above its default.`,
+        `Set "${above}" to ${DEFAULT_LIMITS[above]} or less, or ask an admin: only the admin key may raise a limit above its default.`,
+        403,
+      )
+    }
     for (const connectionId of parsed.data.connections) {
       if (!(await config.getConnection(connectionId))) {
         throw apiError(

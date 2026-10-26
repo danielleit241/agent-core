@@ -85,6 +85,7 @@ curl -s localhost:7300/v1/runs/$RUN/events -H "$AUTH"
 - **Tool safety.** `GET /v1/connections/{id}/tools` shows what the model sees and each tool's safety. Hints only make a tool stricter; loosening needs `PATCH /v1/connections/{id}/tools/{tool}`. A tool whose definition changed since review is hidden from the model until you confirm it again.
 - **Webhook tools.** Register a connection with `"kind":"webhook"`. Each call is a signed `POST` with an idempotency key. Contract: [packages/tools/README.md](packages/tools/README.md).
 - **Unknown outcomes.** When a write's result is lost, the run waits with `"waiting_reason":"unknown_outcome"`. Resolve it with `outcome_happened`, `outcome_not_happened` or `cancel`.
+- **Limits.** An agent's `limits` block bounds LLM calls, tokens, cost per run and per tenant per day, run time, time waiting for a human and tool output size. A breach pauses the run with `"waiting_reason":"limit"`; resolve it with `continue` (one more allowance) or `cancel`. A wait past `wait_human_s` fails the run.
 - **Models.** `pnpm models:check` probes each model alias and proposes a profile; `GET /v1/models` shows the profiles.
 
 ## Contributing

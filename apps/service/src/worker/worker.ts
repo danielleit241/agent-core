@@ -1,9 +1,10 @@
-import { SecretDecryptError, advanceRun, projectRun } from '@agent-core/core'
+import { SecretDecryptError, advanceRun, expireWait, projectRun } from '@agent-core/core'
 import type { AgentDefinition, LLMPort, RunStatus, SecretBox, ToolDescriptor, ToolInvoker } from '@agent-core/core'
 import {
   ConfigRepo,
   LockLostError,
   PgRunStore,
+  StateConflictError,
   claim,
   createPool,
   enqueue,
@@ -14,6 +15,8 @@ import {
 } from '@agent-core/store-postgres'
 
 type Pool = ReturnType<typeof createPool>
+
+const startOfUtcDay = (d: Date): Date => new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()))
 
 export type RunContext = { agent: AgentDefinition; agentVersion: number; toolsByName: Record<string, ToolDescriptor> }
 
@@ -88,6 +91,19 @@ async function failRun(deps: RunWorkerDeps, runId: string, tenantId: string, err
   }
 }
 
+/** Fails a run whose wait for a human has expired. A human who answered first wins: the append expects the same log head. */
+async function expireDueWait(deps: RunWorkerDeps, runId: string, tenantId: string): Promise<void> {
+  const store = new PgRunStore(deps.pool, tenantId, { lockedBy: deps.workerId })
+  const events = await store.readEvents(runId)
+  const expired = expireWait(events, new Date())
+  if (expired === null) return
+  try {
+    await store.append(runId, expired, { expect: { status: 'waiting_human', lastSeq: events.at(-1)!.seq } })
+  } catch (err) {
+    if (!(err instanceof StateConflictError)) throw err
+  }
+}
+
 /** Why the job's signal was aborted: this worker lost the lock, or the service is shutting down. */
 type JobControl = { abort: AbortController; reason?: 'lock_lost' | 'shutdown' }
 
@@ -105,6 +121,14 @@ async function processJob(deps: RunWorkerDeps, job: { runId: string; tenantId: s
   }, deps.heartbeatMs ?? 60000)
   let status: RunStatus | null
   try {
+    // A waiting run keeps its job, due when the wait expires (see below).
+    try {
+      await expireDueWait(deps, runId, tenantId)
+    } catch (err) {
+      // Transient: the lock expires and the job runs again. Never fail the run for it.
+      console.error(`worker: could not check the wait expiry of run ${runId}; the lock will expire`, err)
+      return
+    }
     let ctx: RunContext
     try {
       ctx = await (deps.loadContext ?? ((r, t) => loadContext(deps.pool, deps.secrets, r, t)))(runId, tenantId)
@@ -121,8 +145,10 @@ async function processJob(deps: RunWorkerDeps, job: { runId: string; tenantId: s
       }
       throw err
     }
+    const store = new PgRunStore(deps.pool, tenantId, { lockedBy: deps.workerId })
     status = await advanceRun(runId, {
-      store: new PgRunStore(deps.pool, tenantId, { lockedBy: deps.workerId }),
+      store,
+      tenantCostToday: () => store.tenantCostSince(startOfUtcDay(new Date())),
       llm: deps.llm,
       tools: deps.tools(tenantId),
       ...ctx,
@@ -175,6 +201,21 @@ async function processJob(deps: RunWorkerDeps, job: { runId: string; tenantId: s
   } catch (err) {
     console.error(`worker: onRunSettled failed for run ${runId}; the job will be retried`, err)
     return
+  }
+  if (status === 'waiting_human') {
+    // Keep the job, due when the wait expires; a human's answer makes it due at once (resolve enqueues).
+    try {
+      const proj = projectRun(await new PgRunStore(deps.pool, tenantId).readEvents(runId), '')
+      if (proj.status === 'waiting_human' && proj.waitExpiresAt !== null) {
+        // Same guard as the retry path: when the worker clock lags the database, the job must not spin.
+        const dueAt = Math.max(new Date(proj.waitExpiresAt).getTime(), Date.now() + MIN_REQUEUE_DELAY_MS)
+        await requeueIfHolder(deps.pool, runId, deps.workerId, new Date(dueAt))
+        return
+      }
+    } catch (err) {
+      console.error(`worker: could not keep the wait expiry of run ${runId}; the lock will expire`, err)
+      return
+    }
   }
   try {
     await release(deps.pool, runId, deps.workerId)

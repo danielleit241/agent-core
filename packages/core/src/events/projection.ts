@@ -1,3 +1,4 @@
+import { LIMIT_NAMES, type LimitName } from '../limits'
 import type { Message, RunStatus, StoredEvent, ToolCall, WaitingReason } from '../types'
 
 export type RunProjection = {
@@ -15,6 +16,18 @@ export type RunProjection = {
   principal: { id: string; roles: string[] } | null
   /** LLM retry waits (`error.raised` with `retryAt`) since the last `llm.responded`. */
   llmRetry: { attempts: number; retryAt: string | null }
+  /** Input plus output tokens over all LLM responses. */
+  tokens: number
+  /** Sum of `usage.costUsd`; a response without a cost adds 0. */
+  costUsd: number
+  /** How many times a human let the run go past each limit. */
+  limitGrants: Record<LimitName, number>
+  /** Time spent in `running`, closed intervals only. */
+  runningMs: number
+  /** Start of the open `running` interval, or null. */
+  runningSince: string | null
+  waitStartedAt: string | null
+  waitExpiresAt: string | null
 }
 
 /** Recomputes the whole run state from its event log. The log is the only source of truth. */
@@ -43,15 +56,31 @@ export function projectRun(events: StoredEvent[], instructions: string): RunProj
   const approvals: RunProjection['approvals'] = new Map()
   const ruleDecisions: RunProjection['ruleDecisions'] = new Map()
   const ruleReasons: RunProjection['ruleReasons'] = new Map()
+  let tokens = 0
+  let costUsd = 0
+  const limitGrants = Object.fromEntries(LIMIT_NAMES.map((n) => [n, 0])) as Record<LimitName, number>
+  let runningMs = 0
+  let runningSince: string | null = null
+  let waitStartedAt: string | null = null
+  let waitExpiresAt: string | null = null
 
   for (const e of events) {
     switch (e.type) {
       case 'run.state_changed':
+        if (runningSince !== null) runningMs += Date.parse(e.createdAt) - Date.parse(runningSince)
         status = e.payload.to
-        waitingReason = e.payload.to === 'waiting_human' ? ((e.payload.reason as WaitingReason | undefined) ?? null) : null
+        runningSince = status === 'running' ? e.createdAt : null
+        waitingReason = status === 'waiting_human' ? ((e.payload.reason as WaitingReason | undefined) ?? null) : null
+        waitStartedAt = status === 'waiting_human' ? e.createdAt : null
+        waitExpiresAt = status === 'waiting_human' ? (e.payload.expiresAt ?? null) : null
+        break
+      case 'limit.continued':
+        limitGrants[e.payload.limit]++
         break
       case 'llm.responded':
         llmCalls++
+        tokens += e.payload.usage.inputTokens + e.payload.usage.outputTokens
+        costUsd += e.payload.usage.costUsd ?? 0
         llmRetry = { attempts: 0, retryAt: null }
         messages.push(e.payload.message)
         lastToolCalls = e.payload.message.toolCalls ?? []
@@ -102,6 +131,13 @@ export function projectRun(events: StoredEvent[], instructions: string): RunProj
     ruleReasons,
     llmCalls,
     llmRetry,
+    tokens,
+    costUsd,
+    limitGrants,
+    runningMs,
+    runningSince,
+    waitStartedAt,
+    waitExpiresAt,
     output,
     principal: principal === undefined ? null : { id: principal.id, roles: principal.roles },
   }

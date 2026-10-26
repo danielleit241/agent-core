@@ -302,6 +302,18 @@ export class PgRunStore implements RunStore {
     return res.rows.map(toStored)
   }
 
+  /** Sum of `usage.costUsd` over the tenant's LLM responses since `since`. A response without a cost adds 0. */
+  async tenantCostSince(since: Date): Promise<number> {
+    const res = await withTenant(this.pool, this.tenantId, (client) =>
+      client.query<{ cost: string }>(
+        `SELECT COALESCE(SUM((payload->'usage'->>'costUsd')::numeric), 0) AS cost FROM events
+         WHERE tenant_id = $1 AND type = 'llm.responded' AND created_at >= $2`,
+        [this.tenantId, since],
+      ),
+    )
+    return Number(res.rows[0]!.cost)
+  }
+
   async append(runId: string, events: NewEvent[], opts?: AppendOpts): Promise<StoredEvent[]> {
     return withTenant(this.pool, this.tenantId, (client) => appendInTransaction(client, this.tenantId, runId, events, opts, this.fence?.lockedBy))
   }
