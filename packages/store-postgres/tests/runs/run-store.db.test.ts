@@ -314,3 +314,29 @@ test('requeueIfHolder unlocks the job only for the lock holder', async () => {
   await requeueIfHolder(pool, 'q1', 'w1')
   expect((await migrator.query('SELECT locked_by FROM queue')).rows).toEqual([{ locked_by: null }])
 })
+
+const responded = (costUsd?: number): NewEvent => ({
+  type: 'llm.responded',
+  payload: {
+    message: { role: 'assistant', content: 'ok' },
+    usage: { inputTokens: 1, outputTokens: 1, ...(costUsd === undefined ? {} : { costUsd }) },
+    stopReason: 'end',
+  },
+  labels: [],
+})
+
+test('tenantCostSince sums the tenant cost since a time; other tenants and costless usage add nothing', async () => {
+  for (const [tenantId, runId] of [['default', 'r1'], ['default', 'r2'], ['other', 'r3']] as const) {
+    await createRun(pool, { tenantId, runId, agentId: 'a', agentVersion: 1, input: { text: 'hi' } })
+    await new PgRunStore(pool, tenantId).append(runId, [ev.runCreated()])
+  }
+  const a = new PgRunStore(pool, 'default')
+  await a.append('r1', [responded(0.5)])
+  await new Promise((r) => setTimeout(r, 20))
+  const since = new Date()
+  await new Promise((r) => setTimeout(r, 20))
+  await a.append('r2', [responded(0.25), responded()])
+  await new PgRunStore(pool, 'other').append('r3', [responded(7)])
+  expect(await a.tenantCostSince(since)).toBe(0.25)
+  expect(await a.tenantCostSince(new Date(Date.now() + 60_000))).toBe(0)
+})
