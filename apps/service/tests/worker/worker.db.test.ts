@@ -3,7 +3,7 @@ import type { AgentDefinition, LLMPort, RunStatus, ToolInvoker } from '@agent-co
 import { ConfigRepo, PgRunStore, assertTestDatabase, createPool, createRun, createTenant, enqueue, getRun, makeDue, runMigrations } from '@agent-core/store-postgres'
 import { startRunWorker } from '../../src/worker/worker'
 import type { RunWorkerDeps } from '../../src/worker/worker'
-import { createSecretBox } from '@agent-core/core'
+import { createSecretBox, toolFingerprint } from '@agent-core/core'
 
 const box = createSecretBox(Buffer.alloc(32, 7))
 const url = process.env.TEST_DATABASE_URL ?? 'postgres://agentcore:agentcore@localhost:5433/agentcore_test'
@@ -831,4 +831,43 @@ test('a follow-up survives a worker restart and wakes the run when due', async (
   expect(second.settled).toEqual([['r-wake', 'completed']])
   expect(llm.requests.at(-1)!.messages.at(-1)).toMatchObject({ role: 'tool', toolCallId: 'c1', content: expect.stringMatching(/^Follow-up at .+\. Note: check again$/) })
   expect(await queueRows()).toBe(0)
+})
+
+test('a call over its connection rate is deferred and the job comes back at retryAt, unsettled', async () => {
+  const config = new ConfigRepo(pool, 'default', box)
+  // ConfigRepo recomputes safety from the declared source, so the read effect is declared, confirmed and reviewed.
+  const safety = { ...writeTool(true).safety, effect: 'read' as const }
+  const declared = { ...writeTool(true), name: 'lookup', safety, source: { declared: safety }, confirmed: safety }
+  const lookup = { ...declared, reviewedFor: toolFingerprint(declared) }
+  await config.putConnection({ id: 'c1', kind: 'webhook', url: 'http://c1.test', secret: 's', tools: [lookup], limits: { calls_per_minute: 1 } })
+  const { version } = await config.putAgent({ ...agent, connections: ['c1'] })
+  await seedRun('r-rate', 'helper', version)
+  let turn = 0
+  const twoLookups: LLMPort = {
+    complete: async () => ({
+      message: { role: 'assistant', content: '', toolCalls: [{ id: `c${++turn}`, name: 'lookup', arguments: { n: turn } }] },
+      usage: { inputTokens: 1, outputTokens: 1 },
+      stopReason: 'tool_calls',
+    }),
+  }
+  const recorder = recordingTools()
+  const log = settledLog()
+  const worker = startRunWorker({ secrets: box, pool, llm: twoLookups, tools: () => recorder, workerId: 'w1', pollMs: 20, ...log })
+  const store = new PgRunStore(pool, 'default')
+  let deferred: { reason: string; retryAt: string } | undefined
+  await waitFor(() => {
+    void store.readEvents('r-rate').then((events) => {
+      deferred = events.find((e) => e.type === 'tool.deferred')?.payload as typeof deferred
+    })
+    return deferred !== undefined
+  })
+  await new Promise((r) => setTimeout(r, 200))
+  await worker.stop()
+  expect(deferred?.reason).toBe('rate')
+  expect(recorder.keys).toEqual(['r-rate:c1'])
+  expect(log.settled).toEqual([])
+  expect(await runStatus('r-rate')).toBe('running')
+  const row = (await pool.query<{ locked_by: string | null; available_at: Date }>('SELECT locked_by, available_at FROM queue WHERE run_id = $1', ['r-rate'])).rows[0]
+  expect(row?.locked_by).toBeNull()
+  expect(row?.available_at.toISOString()).toBe(deferred?.retryAt)
 })

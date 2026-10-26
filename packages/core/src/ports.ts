@@ -37,3 +37,16 @@ export interface RunStore {
   readEvents(runId: string): Promise<StoredEvent[]>
   append(runId: string, events: NewEvent[], opts?: { expect?: { lastSeq: number } }): Promise<StoredEvent[]>
 }
+
+/** Why a call to a connection must wait. `retryAt` (ISO 8601) is null for `concurrency`: the caller backs off. */
+export type GuardDenial = { reason: 'rate' | 'concurrency' | 'breaker'; retryAt: string | null }
+
+/**
+ * Rate limit, concurrency limit and circuit breaker of each connection, shared by all runs and workers.
+ * Every granted lease is released exactly once; `failed` means the invoker threw (a tool result with
+ * `isError` is `ok`). A lease that is never released expires, so a dead worker does not hold a slot.
+ */
+export interface ConnectionGuard {
+  acquire(connectionId: string): Promise<{ lease: string } | { denied: GuardDenial }>
+  release(lease: string, outcome: 'ok' | 'failed'): Promise<void>
+}

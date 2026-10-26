@@ -1,4 +1,4 @@
-import { AppendConflictError, type LLMPort, type RunStore, type ToolInvoker } from '../ports'
+import { AppendConflictError, type ConnectionGuard, type LLMPort, type RunStore, type ToolInvoker } from '../ports'
 import { projectRun, type RunProjection } from '../events/projection'
 import { decide } from '../policy/rules'
 import { resolveLimits, type LimitName, type Limits } from '../limits'
@@ -10,6 +10,8 @@ export type RunnerDeps = {
   store: RunStore
   llm: LLMPort
   tools: ToolInvoker
+  /** Rate, concurrency and breaker of each connection. Without one, calls are not limited. */
+  guard?: ConnectionGuard
   agent: AgentDefinition
   toolsByName: Record<string, ToolDescriptor>
   agentVersion: number
@@ -29,6 +31,9 @@ const TOOL_MAX_ATTEMPTS = 3
 const TOOL_RETRY_WAITS_MS = [500, 1000]
 const LLM_RETRY_WAITS_MS = [30_000, 60_000, 120_000, 240_000, 300_000]
 const LLM_MAX_WAIT_MS = 300_000
+const CONCURRENCY_MAX_WAIT_S = 30
+// A call that waits on its connection this long gets a tool error, so the agent can handle it.
+const DEFERRAL_MAX_MS = 3_600_000
 
 const jitter = (ms: number, random: () => number): number => Math.round(ms * (0.8 + 0.4 * random()))
 const sleepMs = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms))
@@ -307,6 +312,39 @@ function wakeUp(deps: RunnerDeps, proj: RunProjection): NewEvent[] {
   ]
 }
 
+type Gate = { lease?: string } | { stop: RunStatus | 'continue' }
+
+/**
+ * Asks the connection guard for a slot before a call is sent. When the guard says no, the call is deferred
+ * with a `retryAt` and the run waits: it neither fails nor waits for a human.
+ */
+async function passGuard(runId: string, deps: RunnerDeps, proj: RunProjection, call: ToolCall, tool: ToolDescriptor): Promise<Gate> {
+  if (deps.guard === undefined) return {}
+  const now = nowOf(deps).getTime()
+  const deferral = proj.deferral?.toolCallId === call.id ? proj.deferral : null
+  // Woken before `retryAt`, for example by input: wait on.
+  if (deferral !== null && now < Date.parse(deferral.retryAt)) return { stop: 'running' }
+  const res = await deps.guard.acquire(tool.connectionId)
+  if ('lease' in res) return { lease: res.lease }
+  if (deferral !== null && now - Date.parse(deferral.since) >= DEFERRAL_MAX_MS) {
+    await deps.store.append(runId, [toolError(call.id, 'Connection unavailable.')])
+    return { stop: 'continue' }
+  }
+  // Concurrency has no known free time: back off 1, 2, 4 ... s, so a busy connection does not flood the log.
+  const backoffS = Math.min(2 ** (deferral?.count ?? 0), CONCURRENCY_MAX_WAIT_S)
+  const retryAt = res.denied.retryAt ?? new Date(now + backoffS * 1000).toISOString()
+  await deps.store.append(runId, [
+    { type: 'tool.deferred', payload: { toolCallId: call.id, reason: res.denied.reason, retryAt }, labels: [] },
+  ])
+  return { stop: 'running' }
+}
+
+/** Gives the slot back. A failed release only delays the slot: the lease expires on its own. */
+async function releaseGate(deps: RunnerDeps, gate: Gate, outcome: 'ok' | 'failed'): Promise<void> {
+  if (!('lease' in gate) || gate.lease === undefined) return
+  await deps.guard?.release(gate.lease, outcome).catch(() => undefined)
+}
+
 async function execute(
   runId: string,
   deps: RunnerDeps,
@@ -316,6 +354,8 @@ async function execute(
   recordRequest: boolean,
 ): Promise<RunStatus | 'continue'> {
   const idempotencyKey = `${runId}:${call.id}`
+  let gate = await passGuard(runId, deps, proj, call, tool)
+  if ('stop' in gate) return gate.stop
   if (recordRequest) {
     await deps.store.append(runId, [
       {
@@ -336,6 +376,8 @@ async function execute(
     if (attempt > 1) {
       await sleep(jitter(TOOL_RETRY_WAITS_MS[attempt - 2]!, random))
       if (deps.signal?.aborted) return proj.status
+      gate = await passGuard(runId, deps, proj, call, tool)
+      if ('stop' in gate) return gate.stop
     }
     try {
       result = await deps.tools.call(tool, call.arguments, {
@@ -343,7 +385,10 @@ async function execute(
         dryRun: false,
         ...(proj.principal === null ? {} : { principal: proj.principal }),
       })
+      // A tool result with `isError` is a working connection.
+      await releaseGate(deps, gate, 'ok')
     } catch (err) {
+      await releaseGate(deps, gate, 'failed')
       if (!isNotSent(err)) sent = true
       if (retryable) {
         await deps.store.append(runId, [
