@@ -1,4 +1,5 @@
 import { MemoryRunStore } from '../support/memory-store'
+import { MemoryContentStore } from '../support/memory-content-store'
 import type { LLMPort, SubrunPort, ToolInvoker } from '../../src/ports'
 import { projectRun } from '../../src/events/projection'
 import { advance } from '../../src/runner/workflow'
@@ -66,6 +67,7 @@ async function start(workflow: Workflow, o: { tools?: ToolInvoker; llm?: LLMPort
     store,
     llm: o.llm ?? noLlm,
     tools: o.tools ?? fakeTools(),
+    content: new MemoryContentStore(),
     agent: o.agent ?? AGENT,
     toolsByName: TOOLS,
     agentVersion: 1,
@@ -254,7 +256,7 @@ test('a run without a workflow is an agent run', async () => {
   const llm: LLMPort = {
     complete: async () => ({ message: { role: 'assistant', content: 'hello' }, usage: { inputTokens: 1, outputTokens: 1 }, stopReason: 'end' }),
   }
-  const deps = { store, llm, tools: fakeTools(), agent: AGENT, toolsByName: TOOLS, agentVersion: 1, tenantCostToday: async () => 0 }
+  const deps = { store, llm, tools: fakeTools(), content: new MemoryContentStore(), agent: AGENT, toolsByName: TOOLS, agentVersion: 1, tenantCostToday: async () => 0 }
   expect(await advance('r1', deps)).toBe('completed')
   expect(projectRun(await store.readEvents('r1'), '').output).toBe('hello')
 })
@@ -331,7 +333,7 @@ test("a child run gets the parent's principal", async () => {
       labels: ['untrusted'],
     },
   ])
-  const deps = { store, llm: noLlm, tools: fakeTools(), agent: AGENT, toolsByName: TOOLS, agentVersion: 1, tenantCostToday: async () => 0, subruns }
+  const deps = { store, llm: noLlm, tools: fakeTools(), content: new MemoryContentStore(), agent: AGENT, toolsByName: TOOLS, agentVersion: 1, tenantCostToday: async () => 0, subruns }
   await advance('r1', deps)
   expect(subruns.started[0]!.principal).toEqual({ id: 'cus_1', roles: ['customer'] })
 })
@@ -358,4 +360,31 @@ test('an aborted LLM call leaves no error and no state change', async () => {
   expect(log.at(-1)!.type).toBe('llm.requested')
   expect(log.map((e) => e.type)).not.toContain('error.raised')
   expect(await advance('r1', { ...deps, signal: new AbortController().signal })).toBe('completed')
+})
+
+test('an llm step writes the context of its request, with the output schema when it has one', async () => {
+  const sent: { role: string; content: string }[][] = []
+  const llm: LLMPort = {
+    complete: async (req) => {
+      sent.push(req.messages)
+      return { message: { role: 'assistant', content: '{"ok":true}' }, usage: { inputTokens: 1, outputTokens: 1 }, stopReason: 'end' }
+    },
+  }
+  const schema = { type: 'object', properties: { ok: { type: 'boolean' } }, required: ['ok'] }
+  const { store, deps } = await start({ start: 's', steps: { s: { kind: 'llm', prompt: 'say hi', output_schema: schema } } }, { llm })
+  expect(await advance('r1', deps)).toBe('completed')
+  const requested = (await store.readEvents('r1')).find((e) => e.type === 'llm.requested')!
+  const ctx = (requested.payload as { context?: { snapshot: string; chars: number } }).context!
+  const manifest = JSON.parse((await deps.content.get([ctx.snapshot])).get(ctx.snapshot)!) as {
+    messages: (string | { inline: string })[]
+    tools: string[]
+    output?: unknown
+  }
+  expect(manifest.tools).toEqual([])
+  expect(manifest.output).toEqual({ name: 'step_s', schema })
+  const hashes = manifest.messages.filter((x): x is string => typeof x === 'string')
+  const texts = await deps.content.get(hashes)
+  const contents = manifest.messages.map((x) => (JSON.parse(typeof x === 'string' ? texts.get(x)! : x.inline) as { content: string }).content)
+  expect(contents).toEqual(sent[0]!.map((m) => m.content))
+  expect(ctx.chars).toBe(sent[0]!.reduce((n, m) => n + m.content.length, 0))
 })

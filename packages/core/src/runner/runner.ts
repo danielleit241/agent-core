@@ -1,15 +1,18 @@
-import { AppendConflictError, type ConnectionGuard, type LLMPort, type RunStore, type SubrunPort, type ToolInvoker } from '../ports'
+import { AppendConflictError, type ConnectionGuard, type ContentStore, type LLMPort, type RunStore, type SubrunPort, type ToolInvoker } from '../ports'
 import { projectRun, type RunProjection } from '../events/projection'
+import { snapshotRequest } from '../content/snapshot'
 import { decide } from '../policy/rules'
 import { resolveLimits, type LimitName, type Limits } from '../limits'
 import { repeatedCalls, stalledTurns } from './loops'
 import { FOLLOWUP_TOOL, MAX_FOLLOWUPS, builtinTools, isBuiltin, parseFollowup, parseHumanWait } from './builtins'
-import type { AgentDefinition, NewEvent, RunStatus, StoredEvent, ToolCall, ToolDescriptor, WaitingReason } from '../types'
+import type { AgentDefinition, Message, NewEvent, RunStatus, StoredEvent, ToolCall, ToolDescriptor, WaitingReason } from '../types'
 
 export type RunnerDeps = {
   store: RunStore
   llm: LLMPort
   tools: ToolInvoker
+  /** Holds a snapshot of every LLM request, by content hash. */
+  content: ContentStore
   /** Rate, concurrency and breaker of each connection. Without one, calls are not limited. */
   guard?: ConnectionGuard
   /** Child runs of workflow `subrun` steps. */
@@ -483,22 +486,26 @@ async function llmStep(
   const now = deps.now ?? (() => new Date())
   // The run waits for an LLM retry; the worker calls again once `retryAt` has passed.
   if (proj.llmRetry.retryAt !== null && new Date(proj.llmRetry.retryAt).getTime() > now().getTime()) return 'running'
-  await store.append(runId, [{ type: 'llm.requested', payload: { model: deps.agent.model }, labels: [] }])
+  // The time goes into the request only. It is not an event, so the projection never holds it.
+  const firstTurn = proj.messages.findIndex((m) => m.role !== 'system')
+  const at = firstTurn === -1 ? proj.messages.length : firstTurn
+  const requestedAt = now()
+  const messages: Message[] = [
+    ...proj.messages.slice(0, at),
+    { role: 'system', content: `Current time: ${requestedAt.toISOString()}`, volatile: true },
+    ...proj.messages.slice(at),
+  ]
+  // A tool changed since review stays hidden until an owner reviews it again.
+  const tools = Object.values(deps.toolsByName).filter((t) => t.changedSinceReview !== true)
+  // Stored before the event: a crash in between leaves only blobs, and the next step stores them again as no-ops.
+  const context = await snapshotRequest(deps.content, { messages, tools })
+  await store.append(runId, [{ type: 'llm.requested', payload: { model: deps.agent.model, context }, labels: [] }])
   let res: Awaited<ReturnType<LLMPort['complete']>>
   try {
-    // The time goes into the request only. It is not an event, so the projection never holds it.
-    const firstTurn = proj.messages.findIndex((m) => m.role !== 'system')
-    const at = firstTurn === -1 ? proj.messages.length : firstTurn
-    const requestedAt = now()
     res = await deps.llm.complete({
       model: deps.agent.model,
-      messages: [
-        ...proj.messages.slice(0, at),
-        { role: 'system', content: `Current time: ${requestedAt.toISOString()}`, volatile: true },
-        ...proj.messages.slice(at),
-      ],
-      // A tool changed since review stays hidden until an owner reviews it again.
-      tools: Object.values(deps.toolsByName).filter((t) => t.changedSinceReview !== true),
+      messages,
+      tools,
       ...(deps.signal === undefined ? {} : { signal: deps.signal }),
     })
   } catch (err) {

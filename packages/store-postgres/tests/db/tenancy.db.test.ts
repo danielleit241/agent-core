@@ -21,7 +21,7 @@ afterAll(async () => {
 })
 
 const HASH = 'a'.repeat(64)
-const TABLES = ['tenants', 'api_keys', 'agents', 'connections', 'runs', 'events', 'queue', 'webhooks', 'webhook_deliveries', 'idempotency_keys', 'connection_guards', 'connection_leases']
+const TABLES = ['tenants', 'api_keys', 'agents', 'connections', 'runs', 'events', 'queue', 'webhooks', 'webhook_deliveries', 'idempotency_keys', 'connection_guards', 'connection_leases', 'context_blobs']
 /** Tables where agentcore_app holds DELETE. */
 const DELETABLE = ['queue', 'idempotency_keys', 'connection_guards', 'connection_leases']
 /** One UPDATE per table where agentcore_app holds UPDATE; it matches every visible row. */
@@ -54,6 +54,7 @@ async function seed(tenant: string): Promise<void> {
     await c.query("INSERT INTO idempotency_keys (tenant_id, key, request_hash) VALUES ($1, 'k', $2)", [tenant, HASH])
     await c.query("INSERT INTO connection_guards (tenant_id, connection_id, window_start) VALUES ($1, 'cn', now())", [tenant])
     await c.query("INSERT INTO connection_leases (id, tenant_id, connection_id, expires_at) VALUES (gen_random_uuid(), $1, 'cn', now())", [tenant])
+    await c.query("INSERT INTO context_blobs (tenant_id, hash, content) VALUES ($1, $2, 'text')", [tenant, HASH])
   })
 }
 

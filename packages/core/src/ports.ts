@@ -69,3 +69,11 @@ export interface SubrunPort {
   }): Promise<string>
   status(runId: string): Promise<{ status: RunStatus; text: string | null } | null>
 }
+
+/** Content stored once by its SHA-256 (hex). Scoped to one tenant by construction. */
+export interface ContentStore {
+  /** Stores each text that is not stored yet. Returns the hashes in input order. */
+  put(texts: string[]): Promise<string[]>
+  /** The texts of the given hashes that exist. */
+  get(hashes: string[]): Promise<Map<string, string>>
+}

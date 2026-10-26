@@ -95,6 +95,7 @@ curl -s localhost:7300/v1/runs/$RUN/events -H "$AUTH"
 
 ### More of the API
 
+- **Context snapshots.** Every LLM request is stored by content hash, once per tenant. `GET /v1/runs/{id}/llm-calls` lists the calls with `parts`, `newParts` (parts first seen in that call) and `chars` per role (`system`, `user`, `assistant`, `tool`, `tools`). `GET /v1/runs/{id}/llm-calls/{seq}` returns the `messages`, `tools` and output schema the runner passed to the LLM adapter in one call (an adapter may rewrite them, for example merge system messages), or 404 for a call logged without a snapshot.
 - **Tool safety.** `GET /v1/connections/{id}/tools` shows what the model sees and each tool's safety. Hints only make a tool stricter; loosening needs `PATCH /v1/connections/{id}/tools/{tool}`. A tool whose definition changed since review is hidden from the model until you confirm it again.
 - **Webhook tools.** Register a connection with `"kind":"webhook"`. Each call is a signed `POST` with an idempotency key. Contract: [packages/tools/README.md](packages/tools/README.md).
 - **Run input.** Everything a human sends to a run goes to `POST /v1/runs/{id}/input` with an `action`: `approve`, `reject`, `outcome_happened`, `outcome_not_happened`, `continue`, `cancel`, `answer` with a `text` (the reply to a run that waits with `"waiting_reason":"input"` or `"escalated"`, after `agent_core.ask_human` or `agent_core.escalate`), or `message` with a `text` that steers the run at its next LLM call. `cancel` also stops a running run before its next step.
