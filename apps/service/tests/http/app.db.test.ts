@@ -1088,3 +1088,33 @@ test('only the admin key may set a limit above its default', async () => {
   expect((await authed('POST', '/v1/agents', { ...agentBody, limits: { llm_calls: 100 } })).statusCode).toBe(201)
   expect((await authed('POST', '/v1/agents', { ...agentBody, limits: { llm_calls: 0 } })).statusCode).toBe(400)
 })
+
+test('only the admin key may continue a run past the tenant daily cost', async () => {
+  const tenant = await createTenant(pool, 'acme')
+  const store = new PgRunStore(pool, 'acme')
+  await new ConfigRepo(pool, 'acme', box).putAgent({ ...agentBody, autonomy: 'supervised', model: 'default' })
+  await createRun(pool, { tenantId: 'acme', runId: 'r-day', agentId: 'helper', agentVersion: 1, input: { text: 'hi' } })
+  await store.append('r-day', [
+    { type: 'run.created', payload: { agentId: 'helper', input: { text: 'hi' } }, labels: ['trusted'] },
+    { type: 'run.state_changed', payload: { from: 'queued', to: 'running' }, labels: [] },
+    { type: 'limit.reached', payload: { limit: 'tenant_cost_usd_per_day', max: 20, value: 21 }, labels: [] },
+    { type: 'run.state_changed', payload: { from: 'running', to: 'waiting_human', reason: 'limit' }, labels: [] },
+  ])
+  const before = (await store.readEvents('r-day')).length
+  const asTenant = await app.inject({
+    method: 'POST',
+    url: '/v1/runs/r-day/resolve',
+    payload: { action: 'continue' },
+    headers: { authorization: `Bearer ${tenant!.apiKey}` },
+  })
+  expect(asTenant.statusCode).toBe(403)
+  expect(asTenant.json().error.code).toBe('limit_needs_admin')
+  expect((await store.readEvents('r-day')).length).toBe(before)
+  const cancel = await app.inject({
+    method: 'POST',
+    url: '/v1/runs/r-day/resolve',
+    payload: { action: 'cancel' },
+    headers: { authorization: `Bearer ${tenant!.apiKey}` },
+  })
+  expect(cancel.statusCode).toBe(202)
+})

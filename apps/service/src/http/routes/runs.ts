@@ -201,6 +201,15 @@ export function registerRunRoutes(app: FastifyInstance, deps: { pool: ReturnType
       // A legacy `breaker` wait has no limit.reached event; it was an llm_calls breach.
       const breached = logged.findLast((e) => e.type === 'limit.reached')
       const limit = proj.waitingReason === 'breaker' || breached?.type !== 'limit.reached' ? 'llm_calls' : breached.payload.limit
+      // The tenant's daily cost is an admin budget: a tenant key may not spend past it.
+      if (limit === 'tenant_cost_usd_per_day' && !req.auth.admin) {
+        throw apiError(
+          'limit_needs_admin',
+          'Only the admin key may let a run go past the tenant daily cost.',
+          'Ask an admin to continue the run, or cancel it.',
+          403,
+        )
+      }
       events = [{ type: 'limit.continued', payload: { limit }, labels: ['trusted'] }, stateTo('running')]
     } else if (action === 'approve' || action === 'reject') {
       events = [
