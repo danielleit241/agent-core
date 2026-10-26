@@ -388,3 +388,25 @@ test('an llm step writes the context of its request, with the output schema when
   expect(contents).toEqual(sent[0]!.map((m) => m.content))
   expect(ctx.chars).toBe(sent[0]!.reduce((n, m) => n + m.content.length, 0))
 })
+
+test('a tool step whose output was offloaded gets the preview as its step output, and a $ref into it has no value', async () => {
+  const rows = Array.from({ length: 1_000 }, (_, i) => ({ id: i, note: 'some note' }))
+  const big = JSON.stringify({ rows })
+  expect(big.length).toBeGreaterThan(20_000)
+  const wf: Workflow = {
+    start: 'lookup',
+    steps: {
+      lookup: { kind: 'tool', tool: 'orders.get', args: {}, next: 'use' },
+      use: { kind: 'tool', tool: 'orders.get', args: { first: { $ref: 'lookup.rows' } } },
+    },
+  }
+  const { store, deps } = await start(wf, { tools: fakeTools({ 'orders.get': { content: big } }) })
+  expect(await advance('r1', deps)).toBe('failed')
+  const log = await store.readEvents('r1')
+  const responded = log.find((e) => e.type === 'tool.responded')!
+  expect(responded.payload).toHaveProperty('offload')
+  const [[, output]] = completed(log)
+  expect(output).toBe((responded.payload as { content: string }).content)
+  expect(String(output).length).toBeLessThan(2_100)
+  expect(log.some((e) => e.type === 'error.raised' && e.payload.message.includes('has no value'))).toBe(true)
+})

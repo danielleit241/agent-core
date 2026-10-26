@@ -16,11 +16,44 @@ const DEFAULT_SEED: ShopSeed = {
   inventory: { 'tee-basic:S': 0, 'tee-basic:M': 3, 'tee-basic:L': 2 },
 }
 
+const SALES_ROWS = 10_000
+/** The row of the export that carries the unique note, in the middle. */
+const NOTE_ROW = SALES_ROWS / 2
+const UNIQUE_NOTE = 'giao gấp trước Tết'
+const FILLER_NOTES = [
+  'khách dặn gọi điện trước khi giao hàng tại địa chỉ số 12 ngõ 34 đường Láng',
+  'giao giờ hành chính nhờ bảo vệ tòa nhà nhận hộ khi khách không có nhà',
+  'đóng gói thêm một lớp xốp chống sốc theo yêu cầu của khách hàng thân thiết',
+  'không cần xuất hóa đơn đỏ khách đã nhận hóa đơn điện tử qua thư điện tử',
+  'khách đổi địa chỉ nhận hàng sang văn phòng tầng 5 tòa nhà phía sau chợ lớn',
+  'đơn từ chương trình khuyến mãi cuối tuần đã áp dụng mã giảm giá của cửa hàng',
+  'hàng dễ vỡ xin nhẹ tay khi vận chuyển và giao đúng hẹn cho khách hàng nhé',
+]
+
+/** A deterministic sales report for a month: about 10,000 rows (over 1 MB), one of them in the middle with a unique note. */
+function salesExport(month: string): string {
+  const sizes = ['S', 'M', 'L', 'XL']
+  const statuses = ['delivered', 'shipped', 'processing', 'returned']
+  const rows = ['order_id,date,customer_id,sku,size,quantity,amount,status,note']
+  for (let i = 0; i < SALES_ROWS; i++) {
+    const day = String((i % 28) + 1).padStart(2, '0')
+    const customer = String((i * 7919) % 9000 + 1000)
+    const quantity = (i % 3) + 1
+    const note = i === NOTE_ROW ? UNIQUE_NOTE : `${FILLER_NOTES[i % FILLER_NOTES.length]!} (mã ${i * 31 % 997})`
+    rows.push(
+      [20000 + i, `${month}-${day}`, `cus_${customer}`, `tee-basic-${i % 5}`, sizes[i % 4], quantity, quantity * (250_000 + (i % 4) * 50_000), statuses[i % 4], note].join(','),
+    )
+  }
+  return rows.join('\n')
+}
+
 export async function startShop(
   seed?: ShopSeed,
   port = 0,
 ): Promise<{
   url: string
+  /** A second MCP endpoint with the warehouse tools. */
+  warehouseUrl: string
   state: { refunds: { orderId: string; amount: number }[]; sizeChanges: SizeChange[]; initializeCount: number }
   /** Replaces orders and inventory with a deep copy of the seed (default seed when omitted); clears refunds and size changes. */
   reset(seed?: ShopSeed): void
@@ -131,9 +164,24 @@ export async function startShop(
     return server
   }
 
+  function buildWarehouse(): McpServer {
+    const server = new McpServer({ name: 'mock-warehouse', version: '0.0.0' })
+    server.registerTool(
+      'reports.sales_export',
+      {
+        description: 'Export the sales of a month as CSV: one row per order with date, customer, product, amount, status and note.',
+        inputSchema: { month: z.string().regex(/^\d{4}-\d{2}$/) },
+        annotations: { readOnlyHint: true, openWorldHint: false },
+      },
+      async ({ month }) => ({ content: [{ type: 'text', text: salesExport(month) }] }),
+    )
+    return server
+  }
+
   const http = createServer((req, res) => {
-    if (req.url !== '/mcp' || req.method !== 'POST') {
-      res.writeHead(req.url === '/mcp' ? 405 : 404).end()
+    const path = req.url
+    if ((path !== '/mcp' && path !== '/warehouse/mcp') || req.method !== 'POST') {
+      res.writeHead(path === '/mcp' || path === '/warehouse/mcp' ? 405 : 404).end()
       return
     }
     // Stateless mode: a fresh server and transport per request.
@@ -147,8 +195,8 @@ export async function startShop(
         res.writeHead(400).end()
         return
       }
-      if ((body as { method?: unknown } | null)?.method === 'initialize') state.initializeCount++
-      const server = buildServer(req.socket)
+      if ((body as { method?: unknown } | null)?.method === 'initialize' && path === '/mcp') state.initializeCount++
+      const server = path === '/mcp' ? buildServer(req.socket) : buildWarehouse()
       const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined })
       res.on('close', () => {
         void transport.close()
@@ -168,6 +216,7 @@ export async function startShop(
 
   return {
     url: `http://127.0.0.1:${boundPort}/mcp`,
+    warehouseUrl: `http://127.0.0.1:${boundPort}/warehouse/mcp`,
     state,
     reset,
     snapshot: () =>

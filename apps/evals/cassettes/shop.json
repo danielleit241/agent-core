@@ -1323,6 +1323,91 @@
         },
         "stopReason": "end"
       }
+    },
+    {
+      "hash": "1cffb5a4c1f2d3f981a60ac76f8c9800efab0a48f62f2534ae4837867e38779c",
+      "model": "default",
+      "tag": "large-export-find-fact",
+      "response": {
+        "message": {
+          "role": "assistant",
+          "content": "",
+          "toolCalls": [
+            {
+              "id": "call_350ebd38-b2a2-4ce7-be11-0502018d6125",
+              "name": "reports.sales_export",
+              "arguments": {
+                "month": "2026-09"
+              }
+            }
+          ]
+        },
+        "usage": {
+          "inputTokens": 636,
+          "outputTokens": 24
+        },
+        "stopReason": "tool_calls"
+      }
+    },
+    {
+      "hash": "a2c6691939c3c9489fc91b77e32dab4249d42bcd680178461609aa57fba141c6",
+      "model": "default",
+      "tag": "large-export-find-fact",
+      "response": {
+        "message": {
+          "role": "assistant",
+          "content": "",
+          "toolCalls": [
+            {
+              "id": "call_f92bcb30-3b3a-40d2-b4ab-21af00a716ae",
+              "name": "agent_core.read_output",
+              "arguments": {
+                "handle": "out_d98e736cca19",
+                "search": "giao gấp trước Tết",
+                "offset": 0,
+                "length": 4000
+              }
+            }
+          ]
+        },
+        "usage": {
+          "inputTokens": 1537,
+          "outputTokens": 46
+        },
+        "stopReason": "tool_calls"
+      }
+    },
+    {
+      "hash": "3bc8da12610543bcda94d2110c752e7639a5051d45bf3242a42b6540f0904978",
+      "model": "default",
+      "tag": "large-export-find-fact",
+      "response": {
+        "message": {
+          "role": "assistant",
+          "content": "Đã xuất báo cáo bán hàng tháng 2026-09. Có một đơn ghi chú “giao gấp trước Tết”: **đơn 25000**, ngày **2026-09-17** (trạng thái: delivered)."
+        },
+        "usage": {
+          "inputTokens": 1640,
+          "outputTokens": 55
+        },
+        "stopReason": "end"
+      }
+    },
+    {
+      "hash": "b378024a4a5f8f08ae9441a1ff6aa5d39412ec94b01b8ac1028e997be9951cbd",
+      "model": "smart",
+      "tag": "large-export-find-fact",
+      "response": {
+        "message": {
+          "role": "assistant",
+          "content": "{\"pass\":true,\"reason\":\"The reply names order 25000 as the order with the note “giao gấp trước Tết”.\"}"
+        },
+        "usage": {
+          "inputTokens": 1063,
+          "outputTokens": 35
+        },
+        "stopReason": "end"
+      }
     }
   ]
 }

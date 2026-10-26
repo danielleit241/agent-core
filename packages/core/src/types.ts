@@ -155,10 +155,13 @@ export type Usage = z.infer<typeof UsageSchema>
 // Kind → count of secrets removed from a content; never a value. Absent when nothing was removed.
 const RedactionsSchema = z.record(z.string(), z.number())
 
+// A content kept whole in the content store; the event holds a preview. `handle` is `out_` and 12 hex characters of `hash`.
+const OffloadSchema = z.object({ handle: z.string(), hash: z.string(), chars: z.number().int(), lines: z.number().int() })
+
 const payloadSchemas = {
   'run.created': z.object({
     agentId: z.string(),
-    input: z.object({ text: z.string(), redactions: RedactionsSchema.optional() }),
+    input: z.object({ text: z.string(), redactions: RedactionsSchema.optional(), offload: OffloadSchema.optional() }),
     principal: z.object({ id: z.string(), roles: z.array(z.string()) }).optional(),
     // A copy of the workflow when the run started: editing the agent does not change a running workflow.
     workflow: z.object({ name: z.string(), definition: WorkflowSchema }).optional(),
@@ -202,6 +205,8 @@ const payloadSchemas = {
     content: z.string(),
     isError: z.boolean(),
     redactions: RedactionsSchema.optional(),
+    // Set when the content is a preview of a longer text kept in the content store.
+    offload: OffloadSchema.optional(),
   }),
   // A read served from an earlier identical read in the same run: the tool was not called.
   'tool.cache_hit': z.object({
@@ -240,7 +245,7 @@ const payloadSchemas = {
   'input.received': z.union([
     z.object({ action: z.literal('cancel') }).strict(),
     z.object({ action: z.literal('message'), // The request limit is 32,000 characters; redaction can make the stored text longer (a marker is longer than a short secret).
-    text: z.string().min(1).max(200_000), redactions: RedactionsSchema.optional() }).strict(),
+    text: z.string().min(1).max(200_000), redactions: RedactionsSchema.optional(), offload: OffloadSchema.optional() }).strict(),
   ]),
   // `retryAt` (ISO 8601) is set only by an LLM retry wait.
   'error.raised': z.object({ message: z.string(), retryable: z.boolean(), retryAt: z.string().optional() }),

@@ -86,5 +86,13 @@
     "peakInputTokens": 858,
     "llmTurns": 3,
     "toolCalls": 2
+  },
+  "large-export-find-fact": {
+    "verdict": "pass",
+    "inputTokens": 3813,
+    "outputTokens": 125,
+    "peakInputTokens": 1640,
+    "llmTurns": 3,
+    "toolCalls": 2
   }
 }

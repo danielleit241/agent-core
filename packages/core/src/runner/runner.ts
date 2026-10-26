@@ -7,7 +7,8 @@ import { decide } from '../policy/rules'
 import { resolveLimits, type LimitName, type Limits } from '../limits'
 import { repeatedCalls, stalledTurns } from './loops'
 import { findCachedRead } from './read-cache'
-import { FOLLOWUP_TOOL, MAX_FOLLOWUPS, builtinTools, isBuiltin, parseFollowup, parseHumanWait } from './builtins'
+import { readOutput } from '../content/read-output'
+import { FOLLOWUP_TOOL, MAX_FOLLOWUPS, READ_OUTPUT_TOOL, builtinTools, isBuiltin, parseFollowup, parseHumanWait, parseReadOutput } from './builtins'
 import type { AgentDefinition, Message, NewEvent, RunStatus, StoredEvent, ToolCall, ToolDescriptor, WaitingReason } from '../types'
 
 export type RunnerDeps = {
@@ -54,21 +55,6 @@ const jitter = (ms: number, random: () => number): number => Math.round(ms * (0.
 const sleepMs = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms))
 const isRetryable = (tool: ToolDescriptor): boolean =>
   tool.safety.effect === 'read' || (tool.safety.effect === 'write' && tool.safety.idempotency === true)
-
-const isHighSurrogate = (code: number): boolean => code >= 0xd800 && code <= 0xdbff
-
-/** Keeps the head and the tail of a long output, so both a header and a final summary survive. */
-function capToolOutput(content: string, max: number): string {
-  if (content.length <= max) return content
-  let head = Math.floor(max / 2)
-  let tail = content.length - Math.floor(max / 2)
-  // Never split a surrogate pair: Postgres refuses a lone surrogate in jsonb.
-  if (isHighSurrogate(content.charCodeAt(head - 1))) head -= 1
-  if (isHighSurrogate(content.charCodeAt(tail - 1))) tail += 1
-  return `${content.slice(0, head)}
-[... ${tail - head} characters cut ...]
-${content.slice(tail)}`
-}
 
 // Shared with the workflow runner (./workflow.ts) from here to `handleToolCall`.
 export const stateChanged = (from: RunStatus, to: RunStatus, reason?: string): NewEvent => ({
@@ -309,6 +295,7 @@ async function serveFromCache(runId: string, deps: RunnerDeps, call: ToolCall, h
 
 /** Built-in tools do not go through the tool invoker; each one changes the run state itself. */
 function runBuiltin(runId: string, deps: RunnerDeps, proj: RunProjection, call: ToolCall, recordRequest: boolean): Promise<RunStatus | 'continue'> {
+  if (call.name === READ_OUTPUT_TOOL) return readOffloaded(runId, deps, proj, call, recordRequest)
   return call.name === FOLLOWUP_TOOL ? scheduleFollowup(runId, deps, proj, call, recordRequest) : waitForHuman(runId, deps, call, recordRequest)
 }
 
@@ -317,6 +304,28 @@ const requested = (runId: string, call: ToolCall): NewEvent => ({
   payload: { toolCallId: call.id, tool: call.name, args: call.arguments, idempotencyKey: `${runId}:${call.id}` },
   labels: [],
 })
+
+/**
+ * `read_output`: a search or a range of an offloaded content. It reads only the handles of this run, never a hash,
+ * and its result has the labels of the event that holds the handle. The result is at most 6,500 characters and is never offloaded.
+ */
+async function readOffloaded(runId: string, deps: RunnerDeps, proj: RunProjection, call: ToolCall, recordRequest: boolean): Promise<RunStatus | 'continue'> {
+  const args = parseReadOutput(call.arguments)
+  if (!args.success) {
+    await deps.store.append(runId, [
+      toolError(call.id, 'Invalid arguments: send handle (string), and either search (1 to 200 characters) or offset and length (1 to 6000), as the schema says.'),
+    ])
+    return 'continue'
+  }
+  const handle = proj.handles.get(args.data.handle)
+  const text = handle === undefined ? undefined : (await deps.content.get([handle.hash])).get(handle.hash)
+  const events: NewEvent[] = recordRequest ? [requested(runId, call)] : []
+  if (handle === undefined) events.push(toolError(call.id, `Unknown handle: ${args.data.handle}. Use a handle from a preview in this run.`))
+  else if (text === undefined) events.push(toolError(call.id, `The output ${args.data.handle} is no longer available.`))
+  else events.push({ type: 'tool.responded', payload: { toolCallId: call.id, content: readOutput(text, args.data), isError: false }, labels: handle.labels })
+  await deps.store.append(runId, events)
+  return 'continue'
+}
 
 /** `ask_human` and `escalate`: the call stays open until a human answers; see the `answer` input action. */
 async function waitForHuman(runId: string, deps: RunnerDeps, call: ToolCall, recordRequest: boolean): Promise<RunStatus | 'continue'> {
@@ -485,16 +494,10 @@ async function execute(
   }
   const screened = await screenedToolResponse({ toolCallId: call.id }, result, [tool.safety.outputLabel], {
     secrets: createSecretMatcher(deps.secretValues ?? []),
+    offload: { store: deps.content, atChars: limitsOf(deps).tool_output_chars },
   })
   if (screened.payload.redactions !== undefined) deps.onRedacted?.(screened.payload.redactions)
-  const maxChars = limitsOf(deps).tool_output_chars
-  const length = screened.payload.content.length
-  // The cut keeps the run safe, so a long output is recorded but does not stop the run.
-  const tooLong = length > maxChars ? [limitReached({ limit: 'tool_output_chars', max: maxChars, value: length })] : []
-  await deps.store.append(runId, [
-    ...tooLong,
-    { ...screened, payload: { ...screened.payload, content: capToolOutput(screened.payload.content, maxChars) } },
-  ])
+  await deps.store.append(runId, [screened])
   return 'continue'
 }
 
@@ -528,7 +531,8 @@ async function llmStep(
     ...proj.messages.slice(at),
   ]
   // A tool changed since review stays hidden until an owner reviews it again.
-  const tools = Object.values(deps.toolsByName).filter((t) => t.changedSinceReview !== true)
+  // `read_output` is offered only once the run holds a handle, so a run without large content pays nothing for it.
+  const tools = Object.values(deps.toolsByName).filter((t) => t.changedSinceReview !== true && (t.name !== READ_OUTPUT_TOOL || proj.handles.size > 0))
   // Stored before the event: a crash in between leaves only blobs, and the next step stores them again as no-ops.
   const context = await snapshotRequest(deps.content, { messages, tools })
   await store.append(runId, [{ type: 'llm.requested', payload: { model: deps.agent.model, context }, labels: [] }])

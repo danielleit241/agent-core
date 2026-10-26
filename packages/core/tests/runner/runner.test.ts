@@ -2,6 +2,8 @@ import { MemoryRunStore } from '../support/memory-store'
 import { MemoryContentStore } from '../support/memory-content-store'
 import { type ConnectionGuard, type ContentStore, type GuardDenial, type LLMPort, type RunStore, type ToolInvoker } from '../../src/ports'
 import { projectRun } from '../../src/events/projection'
+import { handleOf } from '../../src/content/offload'
+import { contentHash } from '../../src/content/snapshot'
 import type { Manifest } from '../../src/content/snapshot'
 import { advanceRun, expireWait } from '../../src/runner/runner'
 import type { AgentDefinition, Limits, Message, NewEvent, RunStatus, StoredEvent, ToolDescriptor } from '../../src/types'
@@ -320,15 +322,98 @@ test('an in-flight tool call finishes before run_time_s stops the run', async ()
   expect(types(await store.readEvents('r1')).slice(-3)).toEqual(['tool.responded', 'limit.reached', 'run.state_changed'])
 })
 
-test('tool_output_chars cuts a long output, records the breach and lets the run go on', async () => {
+// A 1 MB export with one fact in the middle (the old 48,000-character cut would have lost it).
+const FACT = 'giao gấp trước Tết'
+const BIG_EXPORT = Array.from({ length: 20_000 }, (_, i) => (i === 10_000 ? `order 99,${FACT}` : `order ${i},plain note`)).join('\n').padEnd(1_048_576, ' ')
+const bigTools = (content = BIG_EXPORT) => {
+  const calls: string[] = []
+  const tools: ToolInvoker & { calls: string[] } = {
+    calls,
+    async call(tool) {
+      calls.push(tool.name)
+      return { content, isError: false }
+    },
+  }
+  return tools
+}
+const bigHandle = (content = BIG_EXPORT) => handleOf(contentHash(content))
+type Responded = Extract<StoredEvent, { type: 'tool.responded' }>
+const responses = (log: StoredEvent[]) => log.filter((e): e is Responded => e.type === 'tool.responded')
+
+test('a long tool output is offloaded, not cut: preview in the log, no limit breach, read_output offered next', async () => {
+  const llm = scriptedLlm([callTool('orders.get', { order_id: '1042' }), say('done')])
+  const { store } = await setup()
+  const content = new MemoryContentStore()
+  expect(await advanceRun('r1', deps({ llm, store, tools: bigTools(), content }))).toBe('completed')
+  const log = await store.readEvents('r1')
+  expect(log.some((e) => e.type === 'limit.reached')).toBe(false)
+  const [res] = responses(log)
+  expect(res!.payload.offload).toEqual({ handle: bigHandle(), hash: contentHash(BIG_EXPORT), chars: 1_048_576, lines: 20_000 })
+  expect(res!.payload.content.length).toBeLessThan(2_100)
+  expect(res!.payload.content).toContain(bigHandle())
+  expect(res!.labels).toEqual(['internal'])
+  expect(content.blobs.get(contentHash(BIG_EXPORT))).toBe(BIG_EXPORT)
+  expect(llm.requests[0]!.tools.map((t) => t.name)).not.toContain('agent_core.read_output')
+  expect(llm.requests[1]!.tools.map((t) => t.name)).toContain('agent_core.read_output')
+  expect(projectRun(log, '').handles.get(bigHandle())).toEqual({ hash: contentHash(BIG_EXPORT), labels: ['internal'], chars: 1_048_576 })
+})
+
+test('agent_core.read_output finds the fact in the middle, as an allowed read with the labels of the output', async () => {
+  const llm = scriptedLlm([
+    callTool('orders.get', { order_id: '1042' }),
+    callTool('agent_core.read_output', { handle: bigHandle(), search: 'Tết' }),
+    say('order 99'),
+  ])
+  const { store } = await setup()
+  expect(await advanceRun('r1', deps({ llm, store, tools: bigTools() }))).toBe('completed')
+  const log = await store.readEvents('r1')
+  const decided = log.filter((e) => e.type === 'rule.decided' && e.payload.tool === 'agent_core.read_output')
+  expect(decided.map((e) => e.payload)).toEqual([expect.objectContaining({ decision: 'allow', reason: 'read' })])
+  const read = responses(log)[1]!
+  expect(read.payload.content).toContain(FACT)
+  expect(read.payload.isError).toBe(false)
+  expect(read.payload.offload).toBeUndefined()
+  expect(read.labels).toEqual(['internal'])
+})
+
+test('a run without handles never offers read_output', async () => {
   const llm = scriptedLlm([callTool('orders.get', { order_id: '1042' }), say('done')])
   const { store, tools } = await setup()
-  expect(await advanceRun('r1', deps({ llm, store, tools, limits: { tool_output_chars: 10 } }))).toBe('completed')
-  const log = await store.readEvents('r1')
-  const at = log.findIndex((e) => e.type === 'limit.reached')
-  expect(log[at]!.payload).toEqual({ limit: 'tool_output_chars', max: 10, value: 34 })
-  expect(log[at + 1]!.type).toBe('tool.responded')
-  expect((log[at + 1]!.payload as { content: string }).content).toContain('characters cut')
+  await advanceRun('r1', deps({ llm, store, tools }))
+  for (const r of llm.requests) expect(r.tools.map((t) => t.name)).toEqual(['orders.get', 'payments.refund', 'agent_core.ask_human', 'agent_core.escalate'])
+})
+
+test('read_output rejects a handle from another run', async () => {
+  const content = new MemoryContentStore()
+  const a = scriptedLlm([callTool('orders.get', { order_id: '1042' }), say('done')])
+  const { store } = await setup()
+  await advanceRun('r1', deps({ llm: a, store, tools: bigTools(), content }))
+  const b = scriptedLlm([callTool('agent_core.read_output', { handle: bigHandle() }), say('done')])
+  const storeB = new MemoryRunStore()
+  await storeB.append('r2', [created()])
+  await advanceRun('r2', deps({ llm: b, store: storeB, tools: bigTools(), content }))
+  const [err] = responses(await storeB.readEvents('r2'))
+  expect(err!.payload.isError).toBe(true)
+  expect(err!.payload.content).toContain('Unknown handle')
+  expect(err!.payload.content).not.toContain('plain note')
+})
+
+test('read_output with invalid arguments is a tool error', async () => {
+  const llm = scriptedLlm([callTool('orders.get', { order_id: '1042' }), callTool('agent_core.read_output', { handle: bigHandle(), length: 0 }), say('done')])
+  const { store } = await setup()
+  await advanceRun('r1', deps({ llm, store, tools: bigTools() }))
+  const read = responses(await store.readEvents('r1'))[1]!
+  expect(read.payload.isError).toBe(true)
+  expect(read.payload.content).toContain('Invalid arguments')
+})
+
+test('a lowered tool_output_chars sets the offload threshold', async () => {
+  const llm = scriptedLlm([callTool('orders.get', { order_id: '1042' }), say('done')])
+  const { store, tools } = await setup()
+  await advanceRun('r1', deps({ llm, store, tools, limits: { tool_output_chars: 10 } }))
+  const [res] = responses(await store.readEvents('r1'))
+  expect(res!.payload.offload).toMatchObject({ chars: 34 })
+  expect(res!.payload.content).toContain('Output out_')
 })
 
 test('a grant lets the run take one more full allowance, then it stops again', async () => {
@@ -1013,7 +1098,7 @@ test('a tool changed since review is hidden from the model until an owner review
   expect(llm.requests[0]!.tools.map((t) => t.name)).toEqual(['orders.get', 'agent_core.ask_human', 'agent_core.escalate'])
 })
 
-test('a long tool output is cut in the middle before it reaches the event log and the model', async () => {
+test('a long tool output reaches the event log and the model as head and tail with a handle', async () => {
   const llm = scriptedLlm([callTool('orders.get', { order_id: '1042' }), say('ok')])
   const { store } = await setup()
   const big = 'H' + 'x'.repeat(100_000) + 'T'
@@ -1021,10 +1106,11 @@ test('a long tool output is cut in the middle before it reaches the event log an
   expect(await advanceRun('r1', deps({ llm, store, tools }))).toBe('completed')
   const responded = (await store.readEvents('r1')).find((e) => e.type === 'tool.responded')!
   const content = (responded.payload as { content: string }).content
-  expect(content.length).toBeLessThanOrEqual(48_100)
-  expect(content.startsWith('Hxxx')).toBe(true)
+  expect(content.length).toBeLessThanOrEqual(2_100)
+  expect(content.startsWith('[Output out_')).toBe(true)
+  expect(content).toContain('Hxxx')
   expect(content.endsWith('xxxT')).toBe(true)
-  expect(content).toContain('characters cut')
+  expect(content).toContain('characters not shown')
   expect(llm.requests[1]!.messages.some((m) => m.content === content)).toBe(true)
 })
 
@@ -1879,4 +1965,43 @@ describe('read cache', () => {
     expect(inner.requests.at(-1)!.messages.filter((m) => m.role === 'tool').at(-1)!.content).toBe('key [REDACTED:known_secret]')
     expect(seen).toEqual([{ known_secret: 1 }])
   })
+})
+
+test('a cache hit on an offloaded read carries the same offload, handle and preview', async () => {
+  const llm = scriptedLlm([callTool('orders.get', { order_id: '1042' }), callTool('orders.get', { order_id: '1042' }), say('done')])
+  const { store } = await setup()
+  const tools = bigTools()
+  expect(await advanceRun('r1', deps({ llm, store, tools }))).toBe('completed')
+  expect(tools.calls).toHaveLength(1)
+  const log = await store.readEvents('r1')
+  expect(log.some((e) => e.type === 'tool.cache_hit')).toBe(true)
+  const [first, second] = responses(log)
+  expect(second!.payload.offload).toEqual(first!.payload.offload)
+  expect(second!.payload.offload!.handle).toBe(bigHandle())
+  expect(second!.payload.content).toBe(first!.payload.content)
+  expect(second!.labels).toEqual(first!.labels)
+})
+
+test('agent_core.read_output is never served from the cache', async () => {
+  const read = { handle: bigHandle(), search: 'Tết' }
+  const llm = scriptedLlm([callTool('orders.get', { order_id: '1042' }), callTool('agent_core.read_output', read), callTool('agent_core.read_output', read), say('done')])
+  const { store } = await setup()
+  expect(await advanceRun('r1', deps({ llm, store, tools: bigTools() }))).toBe('completed')
+  const log = await store.readEvents('r1')
+  expect(log.some((e) => e.type === 'tool.cache_hit')).toBe(false)
+  expect(log.filter((e) => e.type === 'tool.requested' && e.payload.tool === 'agent_core.read_output')).toHaveLength(2)
+})
+
+test('a tool output with NUL bytes and a lone surrogate is stored and previewed clean, and the run goes on', async () => {
+  const NUL = String.fromCharCode(0)
+  const dirty = `start${NUL}${'x'.repeat(9_000)}${String.fromCharCode(0xd83d)}end`
+  const llm = scriptedLlm([callTool('orders.get', { order_id: '1042' }), say('done')])
+  const { store } = await setup()
+  const content = new MemoryContentStore()
+  expect(await advanceRun('r1', deps({ llm, store, tools: bigTools(dirty), content }))).toBe('completed')
+  const [res] = responses(await store.readEvents('r1'))
+  const clean = dirty.replace(NUL, '\ufffd').replace(String.fromCharCode(0xd83d), '\ufffd')
+  expect(res!.payload.offload!.hash).toBe(contentHash(clean))
+  expect(content.blobs.get(contentHash(clean))).toBe(clean)
+  expect(res!.payload.content).not.toContain(NUL)
 })

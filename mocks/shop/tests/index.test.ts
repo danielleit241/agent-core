@@ -92,3 +92,34 @@ it('orders.change_size refuses the current size and an order without a size', as
   expect(shop.snapshot().sizeChanges).toEqual([])
   expect(before.sizeChanges).toEqual([])
 })
+
+it('the warehouse endpoint lists reports.sales_export; the shop endpoint does not', async () => {
+  const warehouse = new Client({ name: 'test', version: '0.0.0' })
+  await warehouse.connect(new StreamableHTTPClientTransport(new URL(shop.warehouseUrl)))
+  try {
+    expect(shop.warehouseUrl).toMatch(/\/warehouse\/mcp$/)
+    expect((await warehouse.listTools()).tools.map((t) => t.name)).toEqual(['reports.sales_export'])
+    expect((await client.listTools()).tools.map((t) => t.name)).not.toContain('reports.sales_export')
+  } finally {
+    await warehouse.close()
+  }
+})
+
+it('reports.sales_export returns a deterministic 1 MB CSV with one note in the middle', async () => {
+  const warehouse = new Client({ name: 'test', version: '0.0.0' })
+  await warehouse.connect(new StreamableHTTPClientTransport(new URL(shop.warehouseUrl)))
+  try {
+    const run = async () => ((await warehouse.callTool({ name: 'reports.sales_export', arguments: { month: '2026-09' } })) as { content: { text: string }[] }).content[0]!.text
+    const text = await run()
+    expect(text.length).toBeGreaterThanOrEqual(1_000_000)
+    expect(await run()).toBe(text)
+    const rows = text.split('\n')
+    const hits = rows.flatMap((r, i) => (r.includes('giao gấp trước Tết') ? [i] : []))
+    expect(hits).toHaveLength(1)
+    expect(hits[0]!).toBeGreaterThan(rows.length * 0.4)
+    expect(hits[0]!).toBeLessThan(rows.length * 0.6)
+    expect(rows[0]).toBe('order_id,date,customer_id,sku,size,quantity,amount,status,note')
+  } finally {
+    await warehouse.close()
+  }
+})

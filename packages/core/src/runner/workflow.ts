@@ -226,7 +226,10 @@ async function toolStep(
   // A workflow has no model to read an error and decide: an error stops the run.
   if (result.payload.isError) return fail(`Step "${id}" failed: ${result.payload.content}`)
   const label = result.labels[0] ?? 'untrusted'
-  await deps.store.append(runId, [stepCompleted(id, parseOutput(result.payload.content), label)])
+  // An offloaded output stays a preview, as in the agent loop: the log, later LLM steps and subrun inputs stay bounded.
+  // A workflow that needs fields of a large output raises `tool_output_chars` for its agent.
+  const output = result.payload.offload === undefined ? parseOutput(result.payload.content) : result.payload.content
+  await deps.store.append(runId, [stepCompleted(id, output, label)])
   return 'continue'
 }
 

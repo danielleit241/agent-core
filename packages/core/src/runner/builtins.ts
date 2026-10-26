@@ -7,6 +7,7 @@ export const BUILTIN_PREFIX = 'agent_core.'
 export const FOLLOWUP_TOOL = 'agent_core.schedule_followup'
 export const ASK_HUMAN_TOOL = 'agent_core.ask_human'
 export const ESCALATE_TOOL = 'agent_core.escalate'
+export const READ_OUTPUT_TOOL = 'agent_core.read_output'
 /** Follow-ups one run may schedule. A fixed safety cap, not a limit a human can raise. */
 export const MAX_FOLLOWUPS = 10
 
@@ -73,12 +74,45 @@ const TextArgs = {
   reason: z.object({ reason: z.string().min(1).max(MAX_TEXT) }).strict(),
 }
 
+const readOutput: ToolDescriptor = {
+  name: READ_OUTPUT_TOOL,
+  description:
+    'Read a long output that was cut to a preview. Pass the handle from the preview (out_...). ' +
+    'Use search to find text in it (not case sensitive), or offset and length to read a range of characters.',
+  inputSchema: {
+    type: 'object',
+    properties: {
+      handle: { type: 'string', description: 'The handle named in the preview, for example out_3f9a1c2b7d4e.' },
+      search: { type: 'string', minLength: 1, maxLength: 200, description: 'Text to find. Returns the matching lines.' },
+      offset: { type: 'integer', minimum: 0, description: 'First character to read.' },
+      length: { type: 'integer', minimum: 1, maximum: 6000, description: 'Characters to read (default 4000).' },
+    },
+    required: ['handle'],
+    additionalProperties: false,
+  },
+  // The labels of the result are those of the output it reads, set when the result is recorded.
+  safety: { effect: 'read', idempotency: true, reachesOutside: false, outputLabel: 'untrusted' },
+  connectionId: 'agent_core',
+}
+
+const ReadOutputArgs = z
+  .object({
+    handle: z.string(),
+    search: z.string().min(1).max(200).optional(),
+    offset: z.number().int().min(0).optional(),
+    length: z.number().int().min(1).max(6000).optional(),
+  })
+  .strict()
+
+export const parseReadOutput = (args: Record<string, unknown>) => ReadOutputArgs.safeParse(args)
+
 export const isBuiltin = (name: string): boolean => name.startsWith(BUILTIN_PREFIX)
 
-/** Every agent has `ask_human` and `escalate`; the others are on when one of its allow rules names the tool. */
+/** Every agent has `ask_human`, `escalate` and `read_output`; the others are on when one of its allow rules names the tool. */
 export const builtinTools = (agent: AgentDefinition): ToolDescriptor[] => [
   askHuman,
   escalate,
+  readOutput,
   ...[followup].filter((t) => agent.allow.some((rule) => toolMatches(rule.tool, t.name))),
 ]
 
