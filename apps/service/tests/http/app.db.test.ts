@@ -2,7 +2,7 @@ import type { FastifyInstance } from 'fastify'
 import { afterAll, beforeAll, beforeEach, expect, test } from 'vitest'
 import { toolFingerprint } from '@agent-core/core'
 import type { LLMPort, NewEvent, ToolDescriptor } from '@agent-core/core'
-import { ConfigRepo, PgRunStore, assertTestDatabase, createPool, runtimeTestUrl, createRun, getRunHead, runMigrations } from '@agent-core/store-postgres'
+import { ConfigRepo, PgRunStore, assertTestDatabase, createPool, runtimeTestUrl, createRun, createTenant, getRunHead, runMigrations } from '@agent-core/store-postgres'
 import { buildApp } from '../../src/http/app'
 import { checkChain } from '../../src/http/routes/runs'
 import { createRunSettledHandler } from '../../src/runs/settled'
@@ -119,12 +119,13 @@ async function runWaitingForOutcome(runId = 'r-out', reason: string | null = 'Th
   return runId
 }
 
-async function runWaitingFor(reason: 'breaker' | 'handoff' | 'needs_input', runId = 'r-other'): Promise<string> {
+async function runWaitingFor(reason: 'breaker' | 'handoff' | 'needs_input' | 'limit', runId = 'r-other', before: NewEvent[] = []): Promise<string> {
   const { version } = await seedAgent()
   await createRun(pool, { tenantId: 'default', runId, agentId: 'helper', agentVersion: version, input: { text: 'hi' } })
   await new PgRunStore(pool, 'default').append(runId, [
     { type: 'run.created', payload: { agentId: 'helper', input: { text: 'hi' } }, labels: ['trusted'] },
     { type: 'run.state_changed', payload: { from: 'queued', to: 'running' }, labels: [] },
+    ...before,
     { type: 'run.state_changed', payload: { from: 'running', to: 'waiting_human', reason }, labels: [] },
   ])
   return runId
@@ -838,8 +839,10 @@ test('an action that does not fit the waiting reason gives 409 action_not_allowe
     [approvalRun, 'outcome_not_happened', ['approve', 'reject', 'cancel']],
     [outcomeRun, 'approve', ['outcome_happened', 'outcome_not_happened', 'cancel']],
     [outcomeRun, 'reject', ['outcome_happened', 'outcome_not_happened', 'cancel']],
-    [breakerRun, 'approve', ['cancel']],
-    [breakerRun, 'outcome_happened', ['cancel']],
+    [breakerRun, 'approve', ['continue', 'cancel']],
+    [breakerRun, 'outcome_happened', ['continue', 'cancel']],
+    [approvalRun, 'continue', ['approve', 'reject', 'cancel']],
+    [outcomeRun, 'continue', ['outcome_happened', 'outcome_not_happened', 'cancel']],
   ]
   for (const [id, action, allowed] of cases) {
     const before = (await eventTypes(id)).length
@@ -1041,4 +1044,47 @@ test('an allow rule does not cover a tool whose definition changed: the worker w
     pending_approval: { tool: 'orders.get', reason: 'tool_changed_since_review' },
   })
   expect(toolCalls).toBe(0)
+})
+
+const tokensBreach: NewEvent = { type: 'limit.reached', payload: { limit: 'tokens', max: 10, value: 12 }, labels: [] }
+
+test('continue on a limit wait grants the breached limit and queues the run', async () => {
+  const runId = await runWaitingFor('limit', 'r-l', [tokensBreach])
+  const res = await authed('POST', `/v1/runs/${runId}/resolve`, { action: 'continue' })
+  expect(res.statusCode).toBe(202)
+  expect(res.json()).toEqual({ run_id: runId, status: 'queued' })
+  const events = await new PgRunStore(pool, 'default').readEvents(runId)
+  expect(events.at(-2)).toMatchObject({ type: 'limit.continued', payload: { limit: 'tokens' }, labels: ['trusted'] })
+  expect(events.at(-1)!.payload).toEqual({ from: 'waiting_human', to: 'running' })
+  expect(await queueRows(runId)).toBe(1)
+})
+
+test('continue on a legacy breaker wait grants llm_calls', async () => {
+  const runId = await runWaitingFor('breaker', 'r-b')
+  expect((await authed('POST', `/v1/runs/${runId}/resolve`, { action: 'continue' })).statusCode).toBe(202)
+  const events = await new PgRunStore(pool, 'default').readEvents(runId)
+  expect(events.at(-2)).toMatchObject({ type: 'limit.continued', payload: { limit: 'llm_calls' } })
+})
+
+test('approve after the wait expired gives 409 not_waiting_human', async () => {
+  const runId = await runWaitingForApproval('r-x')
+  await new PgRunStore(pool, 'default').append(runId, [
+    { type: 'limit.reached', payload: { limit: 'wait_human_s', max: 60, value: 61 }, labels: [] },
+    { type: 'run.state_changed', payload: { from: 'waiting_human', to: 'failed', reason: 'wait_expired' }, labels: [] },
+  ])
+  const res = await authed('POST', `/v1/runs/${runId}/resolve`, { action: 'approve' })
+  expect(res.statusCode).toBe(409)
+  expect(res.json().error.code).toBe('not_waiting_for_approval')
+})
+
+test('only the admin key may set a limit above its default', async () => {
+  const tenant = await createTenant(pool, 'acme')
+  const asTenant = (body: unknown) =>
+    app.inject({ method: 'POST', url: '/v1/agents', payload: body as object, headers: { authorization: `Bearer ${tenant!.apiKey}` } })
+  const above = await asTenant({ ...agentBody, limits: { llm_calls: 31 } })
+  expect(above.statusCode).toBe(403)
+  expect(above.json().error).toMatchObject({ code: 'limit_above_default', message: expect.stringContaining('llm_calls') })
+  expect((await asTenant({ ...agentBody, limits: { llm_calls: 10 } })).statusCode).toBe(201)
+  expect((await authed('POST', '/v1/agents', { ...agentBody, limits: { llm_calls: 100 } })).statusCode).toBe(201)
+  expect((await authed('POST', '/v1/agents', { ...agentBody, limits: { llm_calls: 0 } })).statusCode).toBe(400)
 })

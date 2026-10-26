@@ -645,3 +645,75 @@ test('a connection secret that cannot be decrypted fails the run once and does n
   expect(raised?.payload).toMatchObject({ message: 'connection secret could not be decrypted: hook', retryable: false })
   expect(JSON.stringify(events)).not.toContain('plain-secret')
 })
+
+const settledLog = () => {
+  const settled: Array<[string, RunStatus]> = []
+  return { settled, onRunSettled: async (id: string, _t: string, status: RunStatus) => void settled.push([id, status]) }
+}
+const queueDueAt = async (runId: string): Promise<Date | undefined> =>
+  (await pool.query<{ available_at: Date }>('SELECT available_at FROM queue WHERE run_id = $1', [runId])).rows[0]?.available_at
+
+test('a tenant over its daily cost pauses a new run before its first LLM call and keeps the job for the wait expiry', async () => {
+  const { version } = await new ConfigRepo(pool, 'default', box).putAgent(agent)
+  await seedRun('spent', 'helper', version)
+  await new PgRunStore(pool, 'default').append('spent', [
+    {
+      type: 'llm.responded',
+      payload: { message: { role: 'assistant', content: 'x' }, usage: { inputTokens: 1, outputTokens: 1, costUsd: 25 }, stopReason: 'end' },
+      labels: [],
+    },
+  ])
+  await pool.query('DELETE FROM queue')
+  await seedRun('r-cost', 'helper', version)
+  let llmCalls = 0
+  const countingLlm: LLMPort = { complete: async (req) => (llmCalls++, llm.complete(req)) }
+  const log = settledLog()
+  const worker = startRunWorker({ secrets: box, pool, llm: countingLlm, tools, workerId: 'w1', pollMs: 20, ...log })
+  await waitFor(() => log.settled.length === 1)
+  await worker.stop()
+  expect(log.settled).toEqual([['r-cost', 'waiting_human']])
+  expect(llmCalls).toBe(0)
+  const events = await new PgRunStore(pool, 'default').readEvents('r-cost')
+  expect(events.at(-2)!.payload).toMatchObject({ limit: 'tenant_cost_usd_per_day', max: 20, value: 25 })
+  const expiresAt = (events.at(-1)!.payload as { expiresAt: string }).expiresAt
+  expect((await queueDueAt('r-cost'))?.toISOString()).toBe(expiresAt)
+})
+
+test('a job claimed after the wait expired fails the run with reason wait_expired', async () => {
+  const { version } = await new ConfigRepo(pool, 'default', box).putAgent(agent)
+  await seedRun('r-exp', 'helper', version)
+  await new PgRunStore(pool, 'default').append('r-exp', [
+    { type: 'run.state_changed', payload: { from: 'queued', to: 'running' }, labels: [] },
+    {
+      type: 'run.state_changed',
+      payload: { from: 'running', to: 'waiting_human', reason: 'approval', expiresAt: new Date(Date.now() - 1000).toISOString() },
+      labels: [],
+    },
+  ])
+  const log = settledLog()
+  const worker = startRunWorker({ secrets: box, pool, llm, tools, workerId: 'w1', pollMs: 20, ...log })
+  await waitFor(() => log.settled.length === 1)
+  await worker.stop()
+  expect(log.settled).toEqual([['r-exp', 'failed']])
+  const events = await new PgRunStore(pool, 'default').readEvents('r-exp')
+  expect(events.at(-2)).toMatchObject({ type: 'limit.reached', payload: { limit: 'wait_human_s' } })
+  expect(events.at(-1)!.payload).toEqual({ from: 'waiting_human', to: 'failed', reason: 'wait_expired' })
+  expect(await queueRows()).toBe(0)
+})
+
+test('a job claimed before the wait expires changes nothing and is put back for the expiry', async () => {
+  const { version } = await new ConfigRepo(pool, 'default', box).putAgent(agent)
+  await seedRun('r-early', 'helper', version)
+  const expiresAt = new Date(Date.now() + 3_600_000).toISOString()
+  await new PgRunStore(pool, 'default').append('r-early', [
+    { type: 'run.state_changed', payload: { from: 'queued', to: 'running' }, labels: [] },
+    { type: 'run.state_changed', payload: { from: 'running', to: 'waiting_human', reason: 'approval', expiresAt }, labels: [] },
+  ])
+  const before = (await new PgRunStore(pool, 'default').readEvents('r-early')).length
+  const log = settledLog()
+  const worker = startRunWorker({ secrets: box, pool, llm, tools, workerId: 'w1', pollMs: 20, ...log })
+  await waitFor(() => log.settled.length === 1)
+  await worker.stop()
+  expect((await new PgRunStore(pool, 'default').readEvents('r-early')).length).toBe(before)
+  expect((await queueDueAt('r-early'))?.toISOString()).toBe(expiresAt)
+})

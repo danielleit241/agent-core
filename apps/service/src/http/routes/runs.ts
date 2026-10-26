@@ -17,7 +17,7 @@ const RunBody = z.object({
   // Bounded: the principal goes into the LLM context.
   principal: z.object({ id: z.string().max(200), roles: z.array(z.string().max(64)).max(20) }).optional(),
 })
-const ACTIONS = ['approve', 'reject', 'outcome_happened', 'outcome_not_happened', 'cancel'] as const
+const ACTIONS = ['approve', 'reject', 'outcome_happened', 'outcome_not_happened', 'continue', 'cancel'] as const
 type Action = (typeof ACTIONS)[number]
 const ResolveBody = z.object({ action: z.enum(ACTIONS) })
 
@@ -25,6 +25,8 @@ const ResolveBody = z.object({ action: z.enum(ACTIONS) })
 const ALLOWED: Partial<Record<WaitingReason, readonly Action[]>> = {
   approval: ['approve', 'reject', 'cancel'],
   unknown_outcome: ['outcome_happened', 'outcome_not_happened', 'cancel'],
+  limit: ['continue', 'cancel'],
+  breaker: ['continue', 'cancel'],
 }
 const allowedFor = (reason: WaitingReason | null): readonly Action[] => (reason && ALLOWED[reason]) || ['cancel']
 
@@ -195,6 +197,11 @@ export function registerRunRoutes(app: FastifyInstance, deps: { pool: ReturnType
     if (action === 'cancel') {
       events = [stateTo('cancelled')]
       enqueue = false
+    } else if (action === 'continue') {
+      // A legacy `breaker` wait has no limit.reached event; it was an llm_calls breach.
+      const breached = logged.findLast((e) => e.type === 'limit.reached')
+      const limit = proj.waitingReason === 'breaker' || breached?.type !== 'limit.reached' ? 'llm_calls' : breached.payload.limit
+      events = [{ type: 'limit.continued', payload: { limit }, labels: ['trusted'] }, stateTo('running')]
     } else if (action === 'approve' || action === 'reject') {
       events = [
         ...proj.awaitingApproval.map(
