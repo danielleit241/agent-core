@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, beforeAll, beforeEach, expect, test } from 'vitest'
 import { assertTestDatabase, createPool, runMigrations, runtimeTestUrl } from '@agent-core/store-postgres'
+import { ensureMasterKeyCheck } from '../../src/bootstrap'
 import { doctor, runDoctorChecks } from '../../src/cli/doctor'
 import type { DoctorDeps } from '../../src/cli/doctor'
 import { main } from '../../src/cli/main'
@@ -88,6 +89,17 @@ test('admin_key: none yet warns; a stored hash is ok; an env key is ok', async (
 test('master_key: a key file warns, an env key is ok', async () => {
   const noKey = without(goodEnv(), 'AGENT_CORE_MASTER_KEY')
   expect(find(await runDoctorChecks(noKey, deps()), 'master_key')).toMatchObject({ ok: true, level: 'warn', code: 'master_key_generated' })
+  expect(find(await runDoctorChecks(goodEnv(), deps()), 'master_key')).toEqual({ name: 'master_key', ok: true })
+})
+
+test('master_key: a key that differs from the stored check fails, and doctor does not write the check', async () => {
+  await ensureMasterKeyCheck(migrator, Buffer.alloc(32, 9), dataDir)
+  const checks = await runDoctorChecks(goodEnv(), deps())
+  expect(find(checks, 'master_key')).toMatchObject({ ok: false, code: 'master_key_mismatch', fix: expect.stringContaining('AGENT_CORE_MASTER_KEY') })
+  await migrator.query('DELETE FROM service_settings WHERE name = $1', ['master_key_check'])
+  await runDoctorChecks(goodEnv(), deps())
+  expect((await migrator.query('SELECT 1 FROM service_settings WHERE name = $1', ['master_key_check'])).rowCount).toBe(0)
+  await ensureMasterKeyCheck(migrator, Buffer.alloc(32, 7), dataDir)
   expect(find(await runDoctorChecks(goodEnv(), deps()), 'master_key')).toEqual({ name: 'master_key', ok: true })
 })
 

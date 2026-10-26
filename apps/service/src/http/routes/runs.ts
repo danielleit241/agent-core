@@ -188,7 +188,11 @@ export function registerRunRoutes(app: FastifyInstance, deps: { pool: ReturnType
     const head = await getRunHead(pool, tenantId, req.params.id)
     const events = await storeFor(req).readEvents(req.params.id)
     const chain = checkChain(events, head)
-    return { events, chain: chain.valid ? { valid: true } : { valid: false, broken_at_seq: chain.brokenAtSeq } }
+    return {
+      events,
+      chain: chain.valid ? { valid: true } : { valid: false, broken_at_seq: chain.brokenAtSeq },
+      head: { last_seq: head?.lastSeq ?? null, last_hash: head?.lastHash ?? null },
+    }
   })
 
   /**

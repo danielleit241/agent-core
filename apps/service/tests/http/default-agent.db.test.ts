@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, beforeEach, expect, test } from 'vitest'
 import { createSecretBox } from '@agent-core/core'
 import type { LLMPort } from '@agent-core/core'
-import { assertTestDatabase, createPool, runMigrations, runtimeTestUrl } from '@agent-core/store-postgres'
+import { assertTestDatabase, createPool, createRun, enqueue, runMigrations, runtimeTestUrl } from '@agent-core/store-postgres'
 import { ensureAdminKeyHash, hashAdminKey } from '../../src/bootstrap'
 import { createServiceStack } from '../../src/stack'
 
@@ -95,6 +95,19 @@ test('without an LLM: POST /v1/runs is 503 llm_not_configured with no run row, a
     const ready = await stack.app.inject({ method: 'GET', url: '/readyz' })
     expect(ready.statusCode).toBe(503)
     expect(ready.json().checks).toContainEqual(expect.objectContaining({ name: 'llm', ok: false, code: 'llm_not_configured' }))
+  } finally {
+    await stack.close()
+  }
+})
+
+test('without an LLM: a queued run stays queued and its job stays unlocked', async () => {
+  await createRun(migrator, { tenantId: 'default', runId: 'r1', agentId: 'default', agentVersion: 0, input: { text: 'hi' } })
+  await enqueue(migrator, { runId: 'r1', tenantId: 'default' })
+  const stack = start({ llm: null })
+  try {
+    await new Promise((r) => setTimeout(r, 300))
+    expect((await migrator.query('SELECT status FROM runs WHERE id = $1', ['r1'])).rows).toEqual([{ status: 'queued' }])
+    expect((await migrator.query('SELECT locked_by FROM queue WHERE run_id = $1', ['r1'])).rows).toEqual([{ locked_by: null }])
   } finally {
     await stack.close()
   }

@@ -2,7 +2,7 @@ import { hostname } from 'node:os'
 import { DEFAULT_MODEL_PROFILE, createSecretBox } from '@agent-core/core'
 import { createOpenAICompatible, probeModel } from '@agent-core/llm'
 import { ModelProfileRepo, createPool, runMigrations, runtimeUserOf } from '@agent-core/store-postgres'
-import { ensureAdminKeyHash, ensureMasterKey } from './bootstrap'
+import { ensureAdminKeyHash, ensureMasterKey, ensureMasterKeyCheck } from './bootstrap'
 import { readServiceConfig } from './config'
 import { createServiceStack } from './stack'
 
@@ -15,13 +15,15 @@ async function main(): Promise<void> {
   const { port, llm: llmConfig } = config
   const migrator = createPool(config.migratorUrl)
   let adminKeyHash: Buffer
+  let master: ReturnType<typeof ensureMasterKey>
   try {
     await runMigrations(migrator, { runtimeUser: runtimeUserOf(config.databaseUrl) })
     adminKeyHash = (await ensureAdminKeyHash(migrator, config.adminKey, console.log)).hash
+    master = ensureMasterKey(config.masterKey, config.dataDir, console.warn)
+    await ensureMasterKeyCheck(migrator, master.key, config.dataDir)
   } finally {
     await migrator.end()
   }
-  const master = ensureMasterKey(config.masterKey, config.dataDir, console.warn)
   const pool = createPool(config.databaseUrl)
 
   const profiles = new ModelProfileRepo(pool)
@@ -40,7 +42,7 @@ async function main(): Promise<void> {
         },
       })
     : null
-  if (llm === null) console.warn('agent-core: LLM_BASE_URL or LLM_MODEL_DEFAULT is not set; runs are refused until both are set and the service restarts.')
+  if (llm === null) console.warn('agent-core: LLM_BASE_URL or LLM_MODEL_DEFAULT is not set; runs are refused and queued runs are not processed until both are set and the service restarts.')
   const stack = createServiceStack({
     pool,
     adminKeyHash,

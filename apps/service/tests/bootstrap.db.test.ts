@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto'
 import { afterAll, beforeAll, beforeEach, expect, test } from 'vitest'
 import { assertTestDatabase, createPool, runMigrations, runtimeTestUrl } from '@agent-core/store-postgres'
-import { ensureAdminKeyHash } from '../src/bootstrap'
+import { ADMIN_KEY_SETTING, MASTER_KEY_CHECK_SETTING, ensureAdminKeyHash, ensureMasterKeyCheck, masterKeyCheckValue } from '../src/bootstrap'
 
 const url = process.env.TEST_DATABASE_URL ?? 'postgres://agentcore:agentcore@localhost:5433/agentcore_test'
 let migrator: ReturnType<typeof createPool>
@@ -83,4 +83,31 @@ test('the scope roles cannot read service_settings', async () => {
   } finally {
     await runtime.end()
   }
+})
+
+test('an env key deletes the stored generated hash, so unsetting it later generates a new key', async () => {
+  const first: string[] = []
+  await ensureAdminKeyHash(migrator, null, (l) => first.push(l))
+  const res = await ensureAdminKeyHash(migrator, 'my-key', () => {})
+  expect(res).toMatchObject({ source: 'env' })
+  expect(res.hash.equals(sha256('my-key'))).toBe(true)
+  expect((await migrator.query('SELECT 1 FROM service_settings WHERE name = $1', [ADMIN_KEY_SETTING])).rowCount).toBe(0)
+  const again: string[] = []
+  const gen = await ensureAdminKeyHash(migrator, null, (l) => again.push(l))
+  expect(gen.source).toBe('generated')
+  expect(again).toHaveLength(1)
+  expect(again[0]).not.toBe(first[0])
+})
+
+test('master key check: the first start writes it, the same key passes, a different key throws', async () => {
+  const key = Buffer.alloc(32, 7)
+  await ensureMasterKeyCheck(migrator, key, '/data')
+  const row = await migrator.query<{ value: Buffer }>('SELECT value FROM service_settings WHERE name = $1', [MASTER_KEY_CHECK_SETTING])
+  expect(row.rows[0]!.value.equals(masterKeyCheckValue(key))).toBe(true)
+  await ensureMasterKeyCheck(migrator, key, '/data')
+  const err = await ensureMasterKeyCheck(migrator, Buffer.alloc(32, 8), '/data').catch((e: Error) => e)
+  expect(err).toBeInstanceOf(Error)
+  for (const part of ['differs', 'AGENT_CORE_MASTER_KEY', 'master.key']) expect((err as Error).message).toContain(part)
+  const after = await migrator.query<{ value: Buffer }>('SELECT value FROM service_settings WHERE name = $1', [MASTER_KEY_CHECK_SETTING])
+  expect(after.rows[0]!.value.equals(masterKeyCheckValue(key))).toBe(true)
 })

@@ -1,5 +1,8 @@
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
 import type pg from 'pg'
-import { ADMIN_KEY_SETTING } from '../bootstrap'
+import { parseMasterKey } from '@agent-core/core'
+import { ADMIN_KEY_SETTING, masterKeyMismatchMessage, readMasterKeyCheck } from '../bootstrap'
 import { runReadyChecks } from '../checks'
 import type { Check } from '../checks'
 import { readServiceConfig } from '../config'
@@ -54,6 +57,27 @@ async function adminKeyCheck(envKey: string | null, migratorUrl: string, connect
   }
 }
 
+/** Compares the master key in use with the check value stored by the service. It only reads and never writes the row. */
+async function masterKeyMatchCheck(config: { masterKey: Buffer | null; dataDir: string; migratorUrl: string }, connect: DoctorDeps['connect']): Promise<Check | null> {
+  let key = config.masterKey
+  if (key === null) {
+    try {
+      key = parseMasterKey(readFileSync(join(config.dataDir, 'master.key'), 'utf8').trim())
+    } catch {
+      return null // no key file yet: the service creates it at its first start
+    }
+  }
+  const pool = connect(config.migratorUrl)
+  try {
+    if ((await readMasterKeyCheck(pool, key)) !== 'mismatch') return null
+    return { name: 'master_key', ok: false, code: 'master_key_mismatch', fix: masterKeyMismatchMessage(config.dataDir) }
+  } catch {
+    return null
+  } finally {
+    await pool.end().catch(() => undefined)
+  }
+}
+
 async function probeCheck(model: string, probe: DoctorDeps['probe']): Promise<Check> {
   const fix = 'Check LLM_BASE_URL, LLM_API_KEY and LLM_MODEL_DEFAULT.'
   try {
@@ -78,6 +102,8 @@ export async function runDoctorChecks(env: NodeJS.ProcessEnv, deps: DoctorDeps):
     if (ready[0]!.ok) {
       checks.push(await runtimeUserCheck(pool))
       checks.push(await adminKeyCheck(config.adminKey, config.migratorUrl, deps.connect))
+      const mismatch = await masterKeyMatchCheck(config, deps.connect)
+      if (mismatch) checks.splice(checks.findIndex((c) => c.name === 'master_key'), 1, mismatch)
     }
   } finally {
     await pool.end().catch(() => undefined)

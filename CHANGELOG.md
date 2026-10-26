@@ -10,6 +10,10 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions exist
 
 ### Added
 
+- `agent-core log verify` also compares the events with the head stored on the run, so deleted tail events are caught. `GET /v1/runs/{id}/events` returns `head`.
+- The service stores a check value of the master key and refuses to start with a different key. `agent-core doctor` fails the `master_key` check on a mismatch.
+- Without LLM settings the run worker does not start: queued runs stay queued until the service restarts with the settings.
+- Setting `AGENT_CORE_ADMIN_KEY` deletes the stored generated admin key hash.
 - Roadmap, agent guide, contributing guide, security policy, code of conduct, MIT license.
 - M0 walking skeleton: pure core (types, rule gate, runner, projection), Postgres event log with a hash chain, job queue and worker, OpenAI-compatible LLM adapter, MCP tool client, signed outbound webhooks with retries, HTTP Config and Control API, end-to-end refund-with-approval test.
 - README quickstart.

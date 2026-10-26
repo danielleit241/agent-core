@@ -15,7 +15,7 @@ export type ServiceStackDeps = {
   /** SHA-256 of the admin key. */
   adminKeyHash: Buffer
   secrets: SecretBox
-  /** Null when the LLM is not configured: runs are refused and the run worker fails any run it finds. */
+  /** Null when the LLM is not configured: runs are refused and the run worker does not start, so queued runs wait for a restart with LLM settings. */
   llm: LLMPort | null
   masterKeySource?: 'env' | 'file'
   /** Alias to real model id. */
@@ -53,7 +53,7 @@ export function createServiceStack(deps: ServiceStackDeps) {
     llmConfigured: deps.llm !== null,
     masterKeySource: deps.masterKeySource,
   })
-  const runWorker = startRunWorker({
+  const runWorker = deps.llm === null ? null : startRunWorker({
     pool,
     secrets: deps.secrets,
     llm,
@@ -73,7 +73,7 @@ export function createServiceStack(deps: ServiceStackDeps) {
     /** Stops the app first, then the workers, then the invoker. */
     async close(): Promise<void> {
       await app.close()
-      await Promise.all([runWorker.stop(), deliveryWorker.stop()])
+      await Promise.all([runWorker?.stop(), deliveryWorker.stop()])
       await tools.close()
     },
   }
