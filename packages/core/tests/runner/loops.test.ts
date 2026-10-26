@@ -55,7 +55,7 @@ test('stalledTurns is 0 without tool turns', () => {
 test('stalledTurns compares the original results, so a compacted (stubbed) result still counts as repeated', () => {
   const a1 = call('t', { q: 'a' })
   const a2 = call('t', { q: 'a' })
-  const stub = '[Output cleared to keep the context small: out_aaaaaaaaaaaa, 500 characters. Read it again with agent_core.read_output.]'
+  const stub = '[Output cleared to keep the context small: out_aaaaaaaaaaaa, 500 characters. You have already read it; call agent_core.read_output only for a detail you did not note.]'
   const messages = [turn(a1), result(a1, stub), turn(a2), result(a2, 'x'.repeat(500))]
   const keys: Record<string, string> = { [a1.id]: 'same', [a2.id]: 'same' }
   expect(stalledTurns(messages)).toBe(0)

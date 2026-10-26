@@ -23,7 +23,9 @@ test('search shows 20 matches and says how many there are', () => {
 })
 
 test('search says so when nothing matches', () => {
-  expect(readOutput('abc', { handle: H, search: 'zzz' })).toBe('No match for "zzz" in 3 characters.')
+  expect(readOutput('abc', { handle: H, search: 'zzz' })).toBe(
+    'No match for "zzz" in 3 characters. The search is plain text and ignores case: no OR, quotes or wildcards. Search one word or phrase at a time.',
+  )
 })
 
 test('a long line is cut to 300 characters around the match', () => {

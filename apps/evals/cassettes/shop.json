@@ -1419,7 +1419,7 @@
           "content": "",
           "toolCalls": [
             {
-              "id": "call_5ac7dd04-1403-44bc-a1f8-3c0a6eaa5ace",
+              "id": "call_e4503439-aa0f-442d-9ef7-fd85722fb3ab",
               "name": "shipments.get",
               "arguments": {
                 "id": "2001"
@@ -1444,7 +1444,7 @@
           "content": "",
           "toolCalls": [
             {
-              "id": "call_2d0f4c3e-27fe-40a7-91c6-3e3c3c64965a",
+              "id": "call_ce3a9d02-5d8b-4b05-9283-394206aaf24e",
               "name": "shipments.get",
               "arguments": {
                 "id": "2002"
@@ -1454,7 +1454,7 @@
         },
         "usage": {
           "inputTokens": 1314,
-          "outputTokens": 36
+          "outputTokens": 21
         },
         "stopReason": "tool_calls"
       }
@@ -1469,7 +1469,7 @@
           "content": "",
           "toolCalls": [
             {
-              "id": "call_4f4701f8-4d47-43ed-97e9-ecc891897734",
+              "id": "call_89caf7cb-dcc0-4cdf-8a08-82374d0bbf81",
               "name": "shipments.get",
               "arguments": {
                 "id": "2003"
@@ -1494,7 +1494,7 @@
           "content": "",
           "toolCalls": [
             {
-              "id": "call_8e3c8944-bb42-4481-9c1c-e2a5b04e64da",
+              "id": "call_6246e283-e427-4397-962a-d4d10a1410f1",
               "name": "shipments.get",
               "arguments": {
                 "id": "2004"
@@ -1504,7 +1504,7 @@
         },
         "usage": {
           "inputTokens": 2759,
-          "outputTokens": 35
+          "outputTokens": 32
         },
         "stopReason": "tool_calls"
       }
@@ -1519,7 +1519,7 @@
           "content": "",
           "toolCalls": [
             {
-              "id": "call_d4b48f40-04a9-4b00-be38-3f95f9e95e54",
+              "id": "call_1008ebb9-bf46-4906-99e9-d0a729856567",
               "name": "shipments.get",
               "arguments": {
                 "id": "2005"
@@ -1529,7 +1529,7 @@
         },
         "usage": {
           "inputTokens": 3481,
-          "outputTokens": 38
+          "outputTokens": 41
         },
         "stopReason": "tool_calls"
       }
@@ -1544,7 +1544,7 @@
           "content": "",
           "toolCalls": [
             {
-              "id": "call_f9ac91a2-4462-4329-9970-77de24f3026c",
+              "id": "call_bf8268cd-6954-40e5-a942-3da244007997",
               "name": "shipments.get",
               "arguments": {
                 "id": "2006"
@@ -1554,7 +1554,7 @@
         },
         "usage": {
           "inputTokens": 4206,
-          "outputTokens": 41
+          "outputTokens": 21
         },
         "stopReason": "tool_calls"
       }
@@ -1569,7 +1569,7 @@
           "content": "",
           "toolCalls": [
             {
-              "id": "call_50ba9f09-e33c-4e3b-a0cc-9b5297939512",
+              "id": "call_b10fe739-8ff3-4ba1-bccc-c9c844f9123b",
               "name": "shipments.get",
               "arguments": {
                 "id": "2007"
@@ -1579,7 +1579,7 @@
         },
         "usage": {
           "inputTokens": 4927,
-          "outputTokens": 56
+          "outputTokens": 21
         },
         "stopReason": "tool_calls"
       }
@@ -1594,7 +1594,7 @@
           "content": "",
           "toolCalls": [
             {
-              "id": "call_51580f75-4478-40ef-a0f5-27eb69785229",
+              "id": "call_47664233-9f50-42d2-94b8-6092d508a724",
               "name": "shipments.get",
               "arguments": {
                 "id": "2008"
@@ -1604,7 +1604,7 @@
         },
         "usage": {
           "inputTokens": 5649,
-          "outputTokens": 35
+          "outputTokens": 33
         },
         "stopReason": "tool_calls"
       }
@@ -1619,7 +1619,7 @@
           "content": "",
           "toolCalls": [
             {
-              "id": "call_689a0a68-ddd3-4c58-9f62-5ca7ee2f07e8",
+              "id": "call_1398fa1d-cbc4-4c35-9d65-8b0b952a7e41",
               "name": "shipments.get",
               "arguments": {
                 "id": "2009"
@@ -1629,7 +1629,7 @@
         },
         "usage": {
           "inputTokens": 6372,
-          "outputTokens": 37
+          "outputTokens": 40
         },
         "stopReason": "tool_calls"
       }
@@ -1644,7 +1644,7 @@
           "content": "",
           "toolCalls": [
             {
-              "id": "call_6f369f27-d8e7-415d-bae3-212e7d146ddd",
+              "id": "call_821945b8-2d8f-47a4-8d52-63fc5efea97e",
               "name": "shipments.get",
               "arguments": {
                 "id": "2010"
@@ -1669,7 +1669,7 @@
           "content": "",
           "toolCalls": [
             {
-              "id": "call_f10e1ca0-ab86-402d-8a18-9af00b672fe8",
+              "id": "call_0c97f4d6-f090-44c9-9255-ac1878c98e62",
               "name": "shipments.get",
               "arguments": {
                 "id": "2011"
@@ -1679,7 +1679,7 @@
         },
         "usage": {
           "inputTokens": 7817,
-          "outputTokens": 36
+          "outputTokens": 40
         },
         "stopReason": "tool_calls"
       }
@@ -1694,7 +1694,7 @@
           "content": "",
           "toolCalls": [
             {
-              "id": "call_8d68c159-ab3b-4fd0-b9ac-f947450e5e33",
+              "id": "call_fde26a22-a199-4da2-adfb-7c3e5d512bed",
               "name": "shipments.get",
               "arguments": {
                 "id": "2012"
@@ -1704,7 +1704,7 @@
         },
         "usage": {
           "inputTokens": 8539,
-          "outputTokens": 36
+          "outputTokens": 21
         },
         "stopReason": "tool_calls"
       }
@@ -1719,7 +1719,7 @@
           "content": "",
           "toolCalls": [
             {
-              "id": "call_2499c247-162e-46c9-957a-b2124c8a3830",
+              "id": "call_a660658c-dbbb-454c-8b92-2a846f1aed2f",
               "name": "shipments.get",
               "arguments": {
                 "id": "2013"
@@ -1729,7 +1729,7 @@
         },
         "usage": {
           "inputTokens": 9262,
-          "outputTokens": 33
+          "outputTokens": 21
         },
         "stopReason": "tool_calls"
       }
@@ -1744,7 +1744,7 @@
           "content": "",
           "toolCalls": [
             {
-              "id": "call_7daeb1c3-377e-4427-8840-32afa97e5614",
+              "id": "call_a6a5329c-2538-4727-b356-830f21c483c4",
               "name": "shipments.get",
               "arguments": {
                 "id": "2014"
@@ -1754,7 +1754,7 @@
         },
         "usage": {
           "inputTokens": 9984,
-          "outputTokens": 38
+          "outputTokens": 21
         },
         "stopReason": "tool_calls"
       }
@@ -1769,7 +1769,7 @@
           "content": "",
           "toolCalls": [
             {
-              "id": "call_97543213-3ebf-4344-8b6c-e616654771fb",
+              "id": "call_c1e27e34-90d5-4dd6-a2ca-dc00d9801888",
               "name": "shipments.get",
               "arguments": {
                 "id": "2015"
@@ -1779,7 +1779,7 @@
         },
         "usage": {
           "inputTokens": 10707,
-          "outputTokens": 38
+          "outputTokens": 21
         },
         "stopReason": "tool_calls"
       }
@@ -1794,7 +1794,7 @@
           "content": "",
           "toolCalls": [
             {
-              "id": "call_beb53be4-68bc-4c8c-9b9d-5497d881a483",
+              "id": "call_ec8abebd-fcf4-4a45-bfcf-d876d8fe908d",
               "name": "shipments.get",
               "arguments": {
                 "id": "2016"
@@ -1804,13 +1804,13 @@
         },
         "usage": {
           "inputTokens": 11429,
-          "outputTokens": 21
+          "outputTokens": 35
         },
         "stopReason": "tool_calls"
       }
     },
     {
-      "hash": "ffd2b0c15d92a86791053ab8515cf5c124651e596359875c989191ed2e0aaf37",
+      "hash": "97692cedac864a2ffcc3d0be03b63a96f5ad1ec977564063bb37a5050f01cc4c",
       "model": "default",
       "tag": "long-run-100-shipments",
       "response": {
@@ -1819,7 +1819,7 @@
           "content": "",
           "toolCalls": [
             {
-              "id": "call_ec9f027f-60aa-48e8-a165-57fea433dec7",
+              "id": "call_8e2aea36-97b3-4116-a23d-27cfe0cbec9e",
               "name": "shipments.get",
               "arguments": {
                 "id": "2017"
@@ -1828,14 +1828,14 @@
           ]
         },
         "usage": {
-          "inputTokens": 5752,
-          "outputTokens": 37
+          "inputTokens": 5862,
+          "outputTokens": 36
         },
         "stopReason": "tool_calls"
       }
     },
     {
-      "hash": "458c25285a606c916b196639a5ba79f59251db8f50b8da9e4adc2966aed7c7a7",
+      "hash": "bd061bef93f2dcc54e42aefe87b889b179e060fd1a09b41301d0b72e49260703",
       "model": "default",
       "tag": "long-run-100-shipments",
       "response": {
@@ -1844,7 +1844,7 @@
           "content": "2017 — lost. Tiếp tục kiểm tra các vận đơn còn lại.",
           "toolCalls": [
             {
-              "id": "call_bcb89ebe-3302-460a-941c-a0e1837d37c4",
+              "id": "call_5adf0856-98c9-470c-ae3c-18f25d6691b7",
               "name": "shipments.get",
               "arguments": {
                 "id": "2018"
@@ -1853,14 +1853,14 @@
           ]
         },
         "usage": {
-          "inputTokens": 6483,
-          "outputTokens": 60
+          "inputTokens": 6593,
+          "outputTokens": 44
         },
         "stopReason": "tool_calls"
       }
     },
     {
-      "hash": "6b8d82a6851ac8de8fbc487ad87ae53e2caa8815b9e5993101fa92b61f45a839",
+      "hash": "f20168e1285094d2fd440f1dce991b8adbf306a8884bdaac02018bb6a611f4e6",
       "model": "default",
       "tag": "long-run-100-shipments",
       "response": {
@@ -1869,7 +1869,7 @@
           "content": "",
           "toolCalls": [
             {
-              "id": "call_ed114f4b-e9a4-4a8a-9768-5f6a4cb2cffb",
+              "id": "call_5eb392fd-243d-4a9f-97bb-7f0e16d517e2",
               "name": "shipments.get",
               "arguments": {
                 "id": "2019"
@@ -1878,14 +1878,14 @@
           ]
         },
         "usage": {
-          "inputTokens": 7227,
-          "outputTokens": 35
+          "inputTokens": 7337,
+          "outputTokens": 37
         },
         "stopReason": "tool_calls"
       }
     },
     {
-      "hash": "2cbf8201423c0b756d3132f7465ee162ac61d669414423518901635f5a5faabd",
+      "hash": "c32996bdb82df3e73a41d14c9c65afe1d2f6616a9c30e2816bbf45c357993dec",
       "model": "default",
       "tag": "long-run-100-shipments",
       "response": {
@@ -1894,7 +1894,7 @@
           "content": "",
           "toolCalls": [
             {
-              "id": "call_81bb7535-b2cc-4f94-b58e-7f5ffc80c4a2",
+              "id": "call_61670bbf-4a25-4286-9fbb-f7caf60ba282",
               "name": "shipments.get",
               "arguments": {
                 "id": "2020"
@@ -1903,14 +1903,14 @@
           ]
         },
         "usage": {
-          "inputTokens": 7951,
-          "outputTokens": 38
+          "inputTokens": 8061,
+          "outputTokens": 21
         },
         "stopReason": "tool_calls"
       }
     },
     {
-      "hash": "423036e1d20447c5dcbcdae4d56baf50d09442f0cac096dc6003a04091d0edbe",
+      "hash": "c0a5069c70a4b9140ae495449fb1b5094259922200a0c900722d44d593ef912f",
       "model": "default",
       "tag": "long-run-100-shipments",
       "response": {
@@ -1919,7 +1919,7 @@
           "content": "",
           "toolCalls": [
             {
-              "id": "call_3480d3fc-b0d4-40ac-afeb-1df972f3f4a5",
+              "id": "call_354e81bd-35a2-4dae-adb9-0af2c4e01054",
               "name": "shipments.get",
               "arguments": {
                 "id": "2021"
@@ -1928,14 +1928,14 @@
           ]
         },
         "usage": {
-          "inputTokens": 8672,
-          "outputTokens": 34
+          "inputTokens": 8782,
+          "outputTokens": 33
         },
         "stopReason": "tool_calls"
       }
     },
     {
-      "hash": "606a9a7b25649df1e5fb2719b8eb2a249a4c02f552c407a73d8728f57b44077d",
+      "hash": "dade9ed5aee874fa99dba3b983e6b2a2298821b1001e81f0631af6a5a27350a9",
       "model": "default",
       "tag": "long-run-100-shipments",
       "response": {
@@ -1944,7 +1944,7 @@
           "content": "",
           "toolCalls": [
             {
-              "id": "call_8ded5178-825b-4897-a74b-4f97377f4db0",
+              "id": "call_20547021-2636-4384-b2cc-847a0db3a00e",
               "name": "shipments.get",
               "arguments": {
                 "id": "2022"
@@ -1953,14 +1953,14 @@
           ]
         },
         "usage": {
-          "inputTokens": 9397,
-          "outputTokens": 35
+          "inputTokens": 9507,
+          "outputTokens": 34
         },
         "stopReason": "tool_calls"
       }
     },
     {
-      "hash": "9297945e5a55963684e2fc15bb234c28ba9b7cf2d9737fc4c7b4b696ee899c96",
+      "hash": "d1e4cbcc292ececd3ddee5721e329ef072f69c9d18d455e640cb7c879937ee28",
       "model": "default",
       "tag": "long-run-100-shipments",
       "response": {
@@ -1969,7 +1969,7 @@
           "content": "",
           "toolCalls": [
             {
-              "id": "call_ae3317d1-a651-4ae5-9ea1-407451b03280",
+              "id": "call_efe7ab67-7f5f-4fe3-ad23-fc4f87b112e8",
               "name": "shipments.get",
               "arguments": {
                 "id": "2023"
@@ -1978,14 +1978,14 @@
           ]
         },
         "usage": {
-          "inputTokens": 10119,
+          "inputTokens": 10229,
           "outputTokens": 36
         },
         "stopReason": "tool_calls"
       }
     },
     {
-      "hash": "9ab8c30c7d47f6d397b83bf66557e08165dcaf70fb978a92f6d0bb084a299edf",
+      "hash": "1f1687f70f3246f52bd6c2e4611f44cd5151fb87ecc1e6cd05daf762e26a1d54",
       "model": "default",
       "tag": "long-run-100-shipments",
       "response": {
@@ -1994,7 +1994,7 @@
           "content": "",
           "toolCalls": [
             {
-              "id": "call_19f5fe44-fa7f-45b7-b65c-a3c8a6cce24c",
+              "id": "call_97436f7c-f0c9-4683-8732-9c55d629a608",
               "name": "shipments.get",
               "arguments": {
                 "id": "2024"
@@ -2003,14 +2003,14 @@
           ]
         },
         "usage": {
-          "inputTokens": 10843,
-          "outputTokens": 37
+          "inputTokens": 10953,
+          "outputTokens": 21
         },
         "stopReason": "tool_calls"
       }
     },
     {
-      "hash": "25d8328dbc92bbfa1c9d7a7837f107b8ba98eee23521df5844750b562e679fda",
+      "hash": "60c50ad73251cf506cea6f1f5b821ed878e22820f14ece6e9a5262458546a50b",
       "model": "default",
       "tag": "long-run-100-shipments",
       "response": {
@@ -2019,7 +2019,7 @@
           "content": "",
           "toolCalls": [
             {
-              "id": "call_82d41ebc-5d12-4dac-80ca-7565404e9b51",
+              "id": "call_6f2e9546-16df-41d2-88ed-e57b2b7d908a",
               "name": "shipments.get",
               "arguments": {
                 "id": "2025"
@@ -2028,14 +2028,14 @@
           ]
         },
         "usage": {
-          "inputTokens": 11564,
-          "outputTokens": 21
+          "inputTokens": 11674,
+          "outputTokens": 33
         },
         "stopReason": "tool_calls"
       }
     },
     {
-      "hash": "41aa9786eab9477d3439c02c21d3ed167433b01459b2b3ec5825dd717066d333",
+      "hash": "05eb0840bfef36cafbe16df6460916feab6ff44856f24dae9d6e84d112aaa75a",
       "model": "default",
       "tag": "long-run-100-shipments",
       "response": {
@@ -2044,7 +2044,7 @@
           "content": "",
           "toolCalls": [
             {
-              "id": "call_f63db00f-a838-4e7b-a3a8-3b48eb5f2660",
+              "id": "call_4f9888f2-c8a7-4f77-aaaa-525867a3a7f6",
               "name": "shipments.get",
               "arguments": {
                 "id": "2026"
@@ -2053,14 +2053,14 @@
           ]
         },
         "usage": {
-          "inputTokens": 5734,
-          "outputTokens": 34
+          "inputTokens": 5306,
+          "outputTokens": 35
         },
         "stopReason": "tool_calls"
       }
     },
     {
-      "hash": "14374a26197f7477dc2d3b54146712b1c086666929bfc04a3f1c84639aebf058",
+      "hash": "e845f6bc1285cbd20d0f275ce130db70879562f4e50affcbbdaf070bf39a3bf6",
       "model": "default",
       "tag": "long-run-100-shipments",
       "response": {
@@ -2069,7 +2069,7 @@
           "content": "",
           "toolCalls": [
             {
-              "id": "call_aa8a10d5-8e70-4499-a16b-8a249cf6b5f4",
+              "id": "call_bbd4b0ea-ccf6-431f-aa0a-0967ee531c32",
               "name": "shipments.get",
               "arguments": {
                 "id": "2027"
@@ -2078,14 +2078,14 @@
           ]
         },
         "usage": {
-          "inputTokens": 6457,
-          "outputTokens": 33
+          "inputTokens": 6029,
+          "outputTokens": 21
         },
         "stopReason": "tool_calls"
       }
     },
     {
-      "hash": "68e4f4464686b3afe0a051b007548ab7fc01a7072bce9f5cb39025e4396eb05f",
+      "hash": "9731d90fa67211fd625501b1920b6f20a5410d8c121ace5c08213fb5b99584cb",
       "model": "default",
       "tag": "long-run-100-shipments",
       "response": {
@@ -2094,7 +2094,7 @@
           "content": "",
           "toolCalls": [
             {
-              "id": "call_d4492ad4-16b5-4097-b158-493167c15ca1",
+              "id": "call_b39cd661-c6ba-4173-8aa7-810d69f70645",
               "name": "shipments.get",
               "arguments": {
                 "id": "2028"
@@ -2103,14 +2103,14 @@
           ]
         },
         "usage": {
-          "inputTokens": 7179,
-          "outputTokens": 37
+          "inputTokens": 6751,
+          "outputTokens": 50
         },
         "stopReason": "tool_calls"
       }
     },
     {
-      "hash": "b147895a3a8ba785a8fc55cb32676df24c87143c2875d761483ee67ea514cf82",
+      "hash": "e1bfb4985d73f2e835aa0c5f3a47e3b746f80e92d1d8a5e614088cde9b22afd9",
       "model": "default",
       "tag": "long-run-100-shipments",
       "response": {
@@ -2119,7 +2119,7 @@
           "content": "",
           "toolCalls": [
             {
-              "id": "call_ee048744-3db6-46b4-b579-02e595142eb6",
+              "id": "call_07d80fba-bc7e-45d3-b543-04cb3a59e681",
               "name": "shipments.get",
               "arguments": {
                 "id": "2029"
@@ -2128,14 +2128,14 @@
           ]
         },
         "usage": {
-          "inputTokens": 7902,
+          "inputTokens": 7474,
           "outputTokens": 21
         },
         "stopReason": "tool_calls"
       }
     },
     {
-      "hash": "91d641421b89ae28ee0f9137e6a5bedfe1f0938329c3848c50d57411aa25744e",
+      "hash": "1e2437eacd9ddb4a2396bb4e75013fb9757f88fa769d15660c2422a421239f73",
       "model": "default",
       "tag": "long-run-100-shipments",
       "response": {
@@ -2144,7 +2144,7 @@
           "content": "",
           "toolCalls": [
             {
-              "id": "call_2cc0029e-0b34-4c5b-b4e9-daf6cbeb721b",
+              "id": "call_626de67b-acfa-4da5-9781-b8f66341a573",
               "name": "shipments.get",
               "arguments": {
                 "id": "2030"
@@ -2153,14 +2153,14 @@
           ]
         },
         "usage": {
-          "inputTokens": 8624,
-          "outputTokens": 33
+          "inputTokens": 8196,
+          "outputTokens": 21
         },
         "stopReason": "tool_calls"
       }
     },
     {
-      "hash": "92736388a266a8041fbbc09eb00a126d821a15ac81862bbed82cf45e1a14a53a",
+      "hash": "54e3c8997da746030c68b8d745a078a8e7b146e073b749aef498ae06e26a719b",
       "model": "default",
       "tag": "long-run-100-shipments",
       "response": {
@@ -2169,7 +2169,7 @@
           "content": "",
           "toolCalls": [
             {
-              "id": "call_29d8ee64-4db9-4275-a5c4-03489088c6ba",
+              "id": "call_6eecddfd-5524-4af1-ae6e-af11f91008ab",
               "name": "shipments.get",
               "arguments": {
                 "id": "2031"
@@ -2178,14 +2178,14 @@
           ]
         },
         "usage": {
-          "inputTokens": 9347,
-          "outputTokens": 37
+          "inputTokens": 8919,
+          "outputTokens": 21
         },
         "stopReason": "tool_calls"
       }
     },
     {
-      "hash": "b5d8609d0f40d388bd8122c238581d3dfbe88a4c6505965fb4a0ffdf8ef0f555",
+      "hash": "aa358a207c367efc8f103fd2dbbddfa18f26c2b16fd87cdd1c06a24e13b0bef8",
       "model": "default",
       "tag": "long-run-100-shipments",
       "response": {
@@ -2194,7 +2194,7 @@
           "content": "",
           "toolCalls": [
             {
-              "id": "call_372b80e7-5f4a-4a71-a9ac-5c05f4e6b30f",
+              "id": "call_89014c44-6a51-469a-8183-65a610fcd77e",
               "name": "shipments.get",
               "arguments": {
                 "id": "2032"
@@ -2203,14 +2203,14 @@
           ]
         },
         "usage": {
-          "inputTokens": 10069,
-          "outputTokens": 32
+          "inputTokens": 9641,
+          "outputTokens": 35
         },
         "stopReason": "tool_calls"
       }
     },
     {
-      "hash": "8a108bc7828e5244dbc2efb20fe0798a4b7e787a004a2503cb9bfa61f9c66ec1",
+      "hash": "abc57313142f02708a1de59b481606e7830d000c925549b77f9aaa886c407dc8",
       "model": "default",
       "tag": "long-run-100-shipments",
       "response": {
@@ -2219,7 +2219,7 @@
           "content": "",
           "toolCalls": [
             {
-              "id": "call_2c92d01e-e423-49ec-b2a3-8705a0a03dd0",
+              "id": "call_9c3baf44-adcc-47ed-b7b8-121eca5f148a",
               "name": "shipments.get",
               "arguments": {
                 "id": "2033"
@@ -2228,14 +2228,14 @@
           ]
         },
         "usage": {
-          "inputTokens": 10792,
-          "outputTokens": 34
+          "inputTokens": 10364,
+          "outputTokens": 36
         },
         "stopReason": "tool_calls"
       }
     },
     {
-      "hash": "9b5a59306bcfaeae95c80a13305d518873638d6f28997d35c5b7753c2cb7e342",
+      "hash": "a8a1679da190874180115b27b102597fbd100a06462307895d147ea312ec267c",
       "model": "default",
       "tag": "long-run-100-shipments",
       "response": {
@@ -2244,7 +2244,7 @@
           "content": "",
           "toolCalls": [
             {
-              "id": "call_0d29fe78-c74c-406c-a07c-967b15c203f7",
+              "id": "call_7f92a6fe-65a8-4235-82cc-c2c230850f74",
               "name": "shipments.get",
               "arguments": {
                 "id": "2034"
@@ -2253,14 +2253,14 @@
           ]
         },
         "usage": {
-          "inputTokens": 11514,
-          "outputTokens": 33
+          "inputTokens": 11086,
+          "outputTokens": 21
         },
         "stopReason": "tool_calls"
       }
     },
     {
-      "hash": "ac35d64b198babf0935bc5666361173bc7b5ea2ddde64096a2803c95229821f8",
+      "hash": "5da5391b5c87fec58d8c580c58b526a088519d4c3a13e3c86b0f3135a2c2bd95",
       "model": "default",
       "tag": "long-run-100-shipments",
       "response": {
@@ -2269,7 +2269,7 @@
           "content": "",
           "toolCalls": [
             {
-              "id": "call_d4bb6628-308c-4c5a-a2f0-dc13cb03e516",
+              "id": "call_2e5e8b77-481f-4822-85ed-dd47fec2d061",
               "name": "shipments.get",
               "arguments": {
                 "id": "2035"
@@ -2278,14 +2278,14 @@
           ]
         },
         "usage": {
-          "inputTokens": 5684,
+          "inputTokens": 11807,
           "outputTokens": 21
         },
         "stopReason": "tool_calls"
       }
     },
     {
-      "hash": "9d8e62f998e87e09b39b4d119c61c8e15880d528a660a63482c475b6fb9fcc30",
+      "hash": "c1e40c72791cc6decd36a5598a757e7ac86b16c361bdf051a2285bae2b9cff5c",
       "model": "default",
       "tag": "long-run-100-shipments",
       "response": {
@@ -2294,7 +2294,7 @@
           "content": "",
           "toolCalls": [
             {
-              "id": "call_8f66a5ba-4daa-4182-9e66-8a7b02c846f7",
+              "id": "call_9df71a41-c306-4bfe-a1c0-99e544b53b57",
               "name": "shipments.get",
               "arguments": {
                 "id": "2036"
@@ -2303,14 +2303,14 @@
           ]
         },
         "usage": {
-          "inputTokens": 6408,
-          "outputTokens": 35
+          "inputTokens": 5450,
+          "outputTokens": 21
         },
         "stopReason": "tool_calls"
       }
     },
     {
-      "hash": "ddd2bc3b32610e3b553a96fb6a9314babc3f5a7bdf8fe6387ee633c6582518c6",
+      "hash": "ca58ccf5e957eb3713e674f63d68776a07dfb42ccf928146f74da701041b590a",
       "model": "default",
       "tag": "long-run-100-shipments",
       "response": {
@@ -2319,7 +2319,7 @@
           "content": "",
           "toolCalls": [
             {
-              "id": "call_86ae2216-59b5-4251-bf6b-572a7ef512c9",
+              "id": "call_43b079ed-a0be-4f5b-8189-70f6fe2a6821",
               "name": "shipments.get",
               "arguments": {
                 "id": "2037"
@@ -2328,14 +2328,14 @@
           ]
         },
         "usage": {
-          "inputTokens": 7129,
-          "outputTokens": 21
+          "inputTokens": 6171,
+          "outputTokens": 35
         },
         "stopReason": "tool_calls"
       }
     },
     {
-      "hash": "e091d369b76460b7a7eba1adbfe08132fa4f3c7847ba73936a04e5a627f2d341",
+      "hash": "b088802e1d99bf218b47358f913cc0aaa89db94bc3a32b7935227d781c58b18b",
       "model": "default",
       "tag": "long-run-100-shipments",
       "response": {
@@ -2344,7 +2344,7 @@
           "content": "",
           "toolCalls": [
             {
-              "id": "call_0423812c-2323-4018-9453-0cfe75496e15",
+              "id": "call_66f0012b-7f32-4ed0-8736-40f1178917ea",
               "name": "shipments.get",
               "arguments": {
                 "id": "2038"
@@ -2353,14 +2353,14 @@
           ]
         },
         "usage": {
-          "inputTokens": 7853,
+          "inputTokens": 6895,
           "outputTokens": 32
         },
         "stopReason": "tool_calls"
       }
     },
     {
-      "hash": "0b6b5efaa311cb7d0a21e707d57aab29dfc0feb0072b90bd691205960601d2af",
+      "hash": "73263066efd0c2a52784406673d7e44e9d8e8bc301b39f15d8ad34a075a7a39e",
       "model": "default",
       "tag": "long-run-100-shipments",
       "response": {
@@ -2369,7 +2369,7 @@
           "content": "",
           "toolCalls": [
             {
-              "id": "call_e6aa441c-9a19-4c8c-8e68-1d16dd38ef07",
+              "id": "call_98dc9c67-634a-46d1-893a-a12b4c2d3c5e",
               "name": "shipments.get",
               "arguments": {
                 "id": "2039"
@@ -2378,14 +2378,14 @@
           ]
         },
         "usage": {
-          "inputTokens": 8575,
+          "inputTokens": 7617,
           "outputTokens": 21
         },
         "stopReason": "tool_calls"
       }
     },
     {
-      "hash": "076f6e81844328896991a15e7b8207f3c060cb160689d37e766d6893ac614e09",
+      "hash": "3be82e3ab736efe7dece320374ef6b3cb9c9744da86ba84c2ca07cc2e42225b3",
       "model": "default",
       "tag": "long-run-100-shipments",
       "response": {
@@ -2394,7 +2394,7 @@
           "content": "",
           "toolCalls": [
             {
-              "id": "call_e6cbfe9a-6d29-4d95-add6-49487a5bf13f",
+              "id": "call_8b31770e-11e0-4e05-8bfc-16f6bad3d3c3",
               "name": "shipments.get",
               "arguments": {
                 "id": "2040"
@@ -2403,14 +2403,14 @@
           ]
         },
         "usage": {
-          "inputTokens": 9300,
-          "outputTokens": 38
+          "inputTokens": 8342,
+          "outputTokens": 21
         },
         "stopReason": "tool_calls"
       }
     },
     {
-      "hash": "90caa51ba992d1ff9e02d9e8bd9bdc142857c80ae06b6f4b596f1632e77c272c",
+      "hash": "5911cf3b14ce40fcb3679ca9b5a35ca248eb90b2ca881ba5d3086349c5388ec6",
       "model": "default",
       "tag": "long-run-100-shipments",
       "response": {
@@ -2419,7 +2419,7 @@
           "content": "",
           "toolCalls": [
             {
-              "id": "call_d859ea73-ee9a-4047-bf9b-fa6493c2c844",
+              "id": "call_cccd2fd8-5ad8-4e99-a37e-0de191c25f1a",
               "name": "shipments.get",
               "arguments": {
                 "id": "2041"
@@ -2428,14 +2428,14 @@
           ]
         },
         "usage": {
-          "inputTokens": 10021,
-          "outputTokens": 38
+          "inputTokens": 9063,
+          "outputTokens": 21
         },
         "stopReason": "tool_calls"
       }
     },
     {
-      "hash": "09a0b301eae4b3e423549c82f5450cdcf9303d5147bcda50df8c342d19e7f6c5",
+      "hash": "30e9ce362ed460bf5fa280c55ff899c7eeb81fdcb147ecb55d9f7e00179a52e2",
       "model": "default",
       "tag": "long-run-100-shipments",
       "response": {
@@ -2444,7 +2444,7 @@
           "content": "",
           "toolCalls": [
             {
-              "id": "call_3febedcb-92d8-443e-8908-912e39d17920",
+              "id": "call_5aed7ce0-35f9-46c2-8332-575faac79d44",
               "name": "shipments.get",
               "arguments": {
                 "id": "2042"
@@ -2453,14 +2453,14 @@
           ]
         },
         "usage": {
-          "inputTokens": 10745,
-          "outputTokens": 33
+          "inputTokens": 9787,
+          "outputTokens": 37
         },
         "stopReason": "tool_calls"
       }
     },
     {
-      "hash": "43ee3dcc98e46dd4ef71906f3a5c49edf56ea34f6307f69e78acf77fb68e19a8",
+      "hash": "deef331942aaf0ee00592433405417bab9a40e695e34f29018a33b5fcafc6e2d",
       "model": "default",
       "tag": "long-run-100-shipments",
       "response": {
@@ -2469,7 +2469,7 @@
           "content": "",
           "toolCalls": [
             {
-              "id": "call_38f177b9-2e56-4755-b0cd-b6f3f3dbff4c",
+              "id": "call_06876c16-f7c9-4ca6-9bd1-41b9bd5349a5",
               "name": "shipments.get",
               "arguments": {
                 "id": "2043"
@@ -2478,14 +2478,14 @@
           ]
         },
         "usage": {
-          "inputTokens": 11466,
-          "outputTokens": 37
+          "inputTokens": 10508,
+          "outputTokens": 32
         },
         "stopReason": "tool_calls"
       }
     },
     {
-      "hash": "e001c4038599afde9095316196522fb8de0ce4399803e8f1b8d112ce2431d5c3",
+      "hash": "61693df8271f680d74a885691288b46cbf0f254e0ca82fd34304824f945c3641",
       "model": "default",
       "tag": "long-run-100-shipments",
       "response": {
@@ -2494,7 +2494,7 @@
           "content": "",
           "toolCalls": [
             {
-              "id": "call_001ba082-6a44-4b72-baf9-4369971ea025",
+              "id": "call_f6c463ca-312b-4eba-b7d8-b7191b8fc5c7",
               "name": "shipments.get",
               "arguments": {
                 "id": "2044"
@@ -2503,14 +2503,14 @@
           ]
         },
         "usage": {
-          "inputTokens": 5638,
-          "outputTokens": 32
+          "inputTokens": 11230,
+          "outputTokens": 21
         },
         "stopReason": "tool_calls"
       }
     },
     {
-      "hash": "cede2e767ffdf9b8a51a60be0a5aab2ffd9e8bf02e5846f9d656003af1311e8f",
+      "hash": "c879cc00459b64d77eb9ea1b0208f09b40c881b2106a8e880b316f765fd41f77",
       "model": "default",
       "tag": "long-run-100-shipments",
       "response": {
@@ -2519,7 +2519,7 @@
           "content": "",
           "toolCalls": [
             {
-              "id": "call_92a81a09-708e-45a0-a42d-d337f6d79132",
+              "id": "call_c9b37aa2-17c9-404a-8551-3ff3812d99f0",
               "name": "shipments.get",
               "arguments": {
                 "id": "2045"
@@ -2528,14 +2528,14 @@
           ]
         },
         "usage": {
-          "inputTokens": 6361,
-          "outputTokens": 35
+          "inputTokens": 11953,
+          "outputTokens": 37
         },
         "stopReason": "tool_calls"
       }
     },
     {
-      "hash": "28a30af376b1a1e4e49b62d285a764b77577e215d6e495fb589624c2260135dc",
+      "hash": "0f3fe10c187789d0ad8a90ff79bc47333344353ecb73121ccb237de03e450265",
       "model": "default",
       "tag": "long-run-100-shipments",
       "response": {
@@ -2544,7 +2544,7 @@
           "content": "",
           "toolCalls": [
             {
-              "id": "call_4e7d19be-5802-4c44-8bbe-d07f4fdd78f0",
+              "id": "call_93f6c620-cb43-42e7-b070-991801d135eb",
               "name": "shipments.get",
               "arguments": {
                 "id": "2046"
@@ -2553,14 +2553,14 @@
           ]
         },
         "usage": {
-          "inputTokens": 7083,
-          "outputTokens": 37
+          "inputTokens": 4949,
+          "outputTokens": 36
         },
         "stopReason": "tool_calls"
       }
     },
     {
-      "hash": "bbb809abd5881fe64b73d5e728b3c35f388d7ecaeabdfc379eb2df6ab78fa50c",
+      "hash": "1c2a548fb2104ba2c88ab27e64ca61fad8587d0351e23e7048c44388a600c9c9",
       "model": "default",
       "tag": "long-run-100-shipments",
       "response": {
@@ -2569,7 +2569,7 @@
           "content": "",
           "toolCalls": [
             {
-              "id": "call_c6657db0-0e01-42fa-bdba-138f28f0bf44",
+              "id": "call_3cd49618-b0c9-492a-9af6-6a9667ce4463",
               "name": "shipments.get",
               "arguments": {
                 "id": "2047"
@@ -2578,14 +2578,14 @@
           ]
         },
         "usage": {
-          "inputTokens": 7806,
-          "outputTokens": 31
+          "inputTokens": 5672,
+          "outputTokens": 21
         },
         "stopReason": "tool_calls"
       }
     },
     {
-      "hash": "16bc4d705d54a7bab333d9d43adbe1887d1c04c16539c3f264ab51952d5339fa",
+      "hash": "7c3c385ab1f1bb55088f1f78e83062d14087270197b1906fc2cb4bdea82cce0e",
       "model": "default",
       "tag": "long-run-100-shipments",
       "response": {
@@ -2594,7 +2594,7 @@
           "content": "",
           "toolCalls": [
             {
-              "id": "call_4d2eb48c-1f45-4a89-bfa7-9cc912e69ee8",
+              "id": "call_59fe3dfa-7acd-428f-8e47-87a7f42f1179",
               "name": "shipments.get",
               "arguments": {
                 "id": "2048"
@@ -2603,14 +2603,14 @@
           ]
         },
         "usage": {
-          "inputTokens": 8528,
+          "inputTokens": 6394,
           "outputTokens": 21
         },
         "stopReason": "tool_calls"
       }
     },
     {
-      "hash": "86876308462b17ba20eaa73830ceb61c8e2e405cd41ed7d3f4f0175e00d9058c",
+      "hash": "925fc2a2fbaadbcade5e974fbbdcd5b08415fe860e89dd931ca4fd3e82641795",
       "model": "default",
       "tag": "long-run-100-shipments",
       "response": {
@@ -2619,7 +2619,7 @@
           "content": "",
           "toolCalls": [
             {
-              "id": "call_d238a18b-5a7e-4d94-b6db-d87f6a4ab7d9",
+              "id": "call_3afb4cd5-9921-4449-ab89-14af431744bd",
               "name": "shipments.get",
               "arguments": {
                 "id": "2049"
@@ -2628,14 +2628,14 @@
           ]
         },
         "usage": {
-          "inputTokens": 9251,
+          "inputTokens": 7117,
           "outputTokens": 21
         },
         "stopReason": "tool_calls"
       }
     },
     {
-      "hash": "1ad57f8405336b4229eb9029336a5a2e2b3161f5aa79550c5ad54282615ae088",
+      "hash": "1b57e021965d1e50974ac0478af0b6ae120c509dce92a7550fd503a40a49f548",
       "model": "default",
       "tag": "long-run-100-shipments",
       "response": {
@@ -2644,7 +2644,7 @@
           "content": "",
           "toolCalls": [
             {
-              "id": "call_8140f827-624f-460e-ba9a-dab98934dd3a",
+              "id": "call_d457829e-fd8b-4719-bf80-d9e6d4b2be62",
               "name": "shipments.get",
               "arguments": {
                 "id": "2050"
@@ -2653,14 +2653,14 @@
           ]
         },
         "usage": {
-          "inputTokens": 9973,
-          "outputTokens": 37
+          "inputTokens": 7839,
+          "outputTokens": 21
         },
         "stopReason": "tool_calls"
       }
     },
     {
-      "hash": "cfb8afa8955cfabf29a52a228db1822983ad54872e5a64672bdb8c819e74c0ba",
+      "hash": "e48c9e322ec8d0fc388b5f56628e1e455b867a1ae5eb8c72cf20ecc542a7e834",
       "model": "default",
       "tag": "long-run-100-shipments",
       "response": {
@@ -2669,7 +2669,7 @@
           "content": "",
           "toolCalls": [
             {
-              "id": "call_919c3a25-67ef-46dc-a0a7-f6520329700e",
+              "id": "call_631bf3a1-cf65-406d-b899-2808ce79c5db",
               "name": "shipments.get",
               "arguments": {
                 "id": "2051"
@@ -2678,14 +2678,14 @@
           ]
         },
         "usage": {
-          "inputTokens": 10696,
-          "outputTokens": 38
+          "inputTokens": 8562,
+          "outputTokens": 35
         },
         "stopReason": "tool_calls"
       }
     },
     {
-      "hash": "8d53acc40de292332aaced2120623a99153e6b6da0213b7fbc8be6b7e4a5c87f",
+      "hash": "e5db128116b28352ebd8be47a783c8ecf1b795e78dc5e5e2dbb7743d476bbe3b",
       "model": "default",
       "tag": "long-run-100-shipments",
       "response": {
@@ -2694,7 +2694,7 @@
           "content": "",
           "toolCalls": [
             {
-              "id": "call_e80f9189-6a72-443a-bbf6-4c4c8edf22de",
+              "id": "call_91d067e2-09eb-4ba1-bed7-6138ee449a30",
               "name": "shipments.get",
               "arguments": {
                 "id": "2052"
@@ -2703,14 +2703,14 @@
           ]
         },
         "usage": {
-          "inputTokens": 11418,
-          "outputTokens": 37
+          "inputTokens": 9284,
+          "outputTokens": 31
         },
         "stopReason": "tool_calls"
       }
     },
     {
-      "hash": "72eb783ff88288ba82f16e592150c3693cc6d59213b20c2c8a3ffda93aaa008d",
+      "hash": "b71a4f875c2e80a23c4b88cd98a539ad19f55a4aa6fabe08dd89f82f1b38307f",
       "model": "default",
       "tag": "long-run-100-shipments",
       "response": {
@@ -2719,7 +2719,7 @@
           "content": "",
           "toolCalls": [
             {
-              "id": "call_2df2720e-b4bf-4a1f-b15a-b0453c3834a6",
+              "id": "call_0d50659f-9c3a-4faa-99b3-67a3cb35044d",
               "name": "shipments.get",
               "arguments": {
                 "id": "2053"
@@ -2728,14 +2728,14 @@
           ]
         },
         "usage": {
-          "inputTokens": 5596,
-          "outputTokens": 39
+          "inputTokens": 10005,
+          "outputTokens": 21
         },
         "stopReason": "tool_calls"
       }
     },
     {
-      "hash": "5efd68226c3682679951ac9ef54e628b2aeb06916fb79bde563b387ec4eef2b3",
+      "hash": "8a5a9f176aa87dc42aae30debe1c589ea133975c4ae85ca60c0c4816012dc9a6",
       "model": "default",
       "tag": "long-run-100-shipments",
       "response": {
@@ -2744,7 +2744,7 @@
           "content": "",
           "toolCalls": [
             {
-              "id": "call_91ac628f-fd8d-4647-98a9-f62cae286155",
+              "id": "call_98a81231-782f-4b93-9869-5914acebb583",
               "name": "shipments.get",
               "arguments": {
                 "id": "2054"
@@ -2753,14 +2753,14 @@
           ]
         },
         "usage": {
-          "inputTokens": 6320,
-          "outputTokens": 32
+          "inputTokens": 10729,
+          "outputTokens": 33
         },
         "stopReason": "tool_calls"
       }
     },
     {
-      "hash": "f5cce4c7c79465726e67296c01dc5e287e685ec2e704dffa784f025d14ca9ccd",
+      "hash": "a488eea33d1932ad72c7af9a9b93480d57829d7100f72dc55ad996daf8943fca",
       "model": "default",
       "tag": "long-run-100-shipments",
       "response": {
@@ -2769,7 +2769,7 @@
           "content": "",
           "toolCalls": [
             {
-              "id": "call_e0a34566-fee2-4904-8d54-e6d8bdcaefd9",
+              "id": "call_33ae7d5d-e430-42b2-8e6f-1733f27c03a2",
               "name": "shipments.get",
               "arguments": {
                 "id": "2055"
@@ -2778,14 +2778,14 @@
           ]
         },
         "usage": {
-          "inputTokens": 7041,
+          "inputTokens": 11450,
           "outputTokens": 21
         },
         "stopReason": "tool_calls"
       }
     },
     {
-      "hash": "e1e5902b59d5f146833ebbb47aff4966118daf75ea76f2525fabb54792c04281",
+      "hash": "ee157027fd5405c8162fcb6763fa5c20685a7ac8c370cb638a0a1e5c5c07f6f7",
       "model": "default",
       "tag": "long-run-100-shipments",
       "response": {
@@ -2794,7 +2794,7 @@
           "content": "",
           "toolCalls": [
             {
-              "id": "call_a67e777f-51e7-48f7-a9b6-232c324e7d8e",
+              "id": "call_63828fea-42ae-43b6-9c2e-816a8a31fcd3",
               "name": "shipments.get",
               "arguments": {
                 "id": "2056"
@@ -2803,14 +2803,14 @@
           ]
         },
         "usage": {
-          "inputTokens": 7766,
-          "outputTokens": 32
+          "inputTokens": 5744,
+          "outputTokens": 21
         },
         "stopReason": "tool_calls"
       }
     },
     {
-      "hash": "651227758cecc64121b0d4971be932cb4a0340a9c8ee48f1bc8b356c4393ebea",
+      "hash": "abac8ad8faa4d05b2481d228f8e713477ed9cc5a02453653c1b63c5c8ce4056a",
       "model": "default",
       "tag": "long-run-100-shipments",
       "response": {
@@ -2819,7 +2819,7 @@
           "content": "",
           "toolCalls": [
             {
-              "id": "call_7d1d49ab-4563-4ba5-b8fd-8ca8e7ba2fa8",
+              "id": "call_fafe0662-da13-451b-bc46-d4f14ef3faf1",
               "name": "shipments.get",
               "arguments": {
                 "id": "2057"
@@ -2828,14 +2828,14 @@
           ]
         },
         "usage": {
-          "inputTokens": 8488,
+          "inputTokens": 6466,
           "outputTokens": 21
         },
         "stopReason": "tool_calls"
       }
     },
     {
-      "hash": "3d18a687cb38e0b5cb5c6545d3f2dbdeeb6d8ee64be671681b2be340bcae94e6",
+      "hash": "079e30db375116d25cd61ae76c3bb6f1f18f9ade5205c929cb7152e6a7df5eef",
       "model": "default",
       "tag": "long-run-100-shipments",
       "response": {
@@ -2844,7 +2844,7 @@
           "content": "",
           "toolCalls": [
             {
-              "id": "call_99151ca2-5a60-421d-b443-bece2a517e13",
+              "id": "call_bc8eac0d-5235-4fa1-abfc-f27134792e30",
               "name": "shipments.get",
               "arguments": {
                 "id": "2058"
@@ -2853,23 +2853,23 @@
           ]
         },
         "usage": {
-          "inputTokens": 9212,
+          "inputTokens": 7190,
           "outputTokens": 21
         },
         "stopReason": "tool_calls"
       }
     },
     {
-      "hash": "cc7f208ccec206ba7d02b73537c7eba103b4057202528af5653ea1db5630af94",
+      "hash": "b6c8ff2518a084492a5e3f8fae1c8d05f2bf2ddf364dd02556059e944f5d2d24",
       "model": "default",
       "tag": "long-run-100-shipments",
       "response": {
         "message": {
           "role": "assistant",
-          "content": "2058 — lost. Tiếp tục kiểm tra các vận đơn còn lại.",
+          "content": "2058 — lost. Tiếp tục kiểm tra.",
           "toolCalls": [
             {
-              "id": "call_09a6d11b-c1f1-4e59-badd-90df2bb476d7",
+              "id": "call_16f97708-f418-4909-8200-b9d0e7d8ea4a",
               "name": "shipments.get",
               "arguments": {
                 "id": "2059"
@@ -2878,14 +2878,14 @@
           ]
         },
         "usage": {
-          "inputTokens": 9941,
-          "outputTokens": 44
+          "inputTokens": 7919,
+          "outputTokens": 60
         },
         "stopReason": "tool_calls"
       }
     },
     {
-      "hash": "170dda874a09ea68709e3161b02810f153e524892639576bd6bf31e5fbf89c75",
+      "hash": "84c62332d1b8dc5eca33d13f4bc90ed94a5913348b9448e9e9a7358b32080cc6",
       "model": "default",
       "tag": "long-run-100-shipments",
       "response": {
@@ -2894,7 +2894,7 @@
           "content": "",
           "toolCalls": [
             {
-              "id": "call_8289ba35-b9e6-49d6-8998-6a3b6f8440e8",
+              "id": "call_f927301e-fd94-4995-b4d4-1b80df3be38e",
               "name": "shipments.get",
               "arguments": {
                 "id": "2060"
@@ -2903,14 +2903,14 @@
           ]
         },
         "usage": {
-          "inputTokens": 10688,
+          "inputTokens": 8661,
           "outputTokens": 21
         },
         "stopReason": "tool_calls"
       }
     },
     {
-      "hash": "209b97c74e4d1c49aaef3c01ad64f4b6e9d8c662733e2bfdf64a21bfb573027e",
+      "hash": "f04f4465e866aa677078c4546bf2675cf17ef133c9c961f9e713e2ffebbc173d",
       "model": "default",
       "tag": "long-run-100-shipments",
       "response": {
@@ -2919,7 +2919,7 @@
           "content": "",
           "toolCalls": [
             {
-              "id": "call_a8521c56-b92b-441f-9060-f355bba35617",
+              "id": "call_318ba374-73eb-4988-9ffc-f89a08d61316",
               "name": "shipments.get",
               "arguments": {
                 "id": "2061"
@@ -2928,14 +2928,14 @@
           ]
         },
         "usage": {
-          "inputTokens": 11409,
-          "outputTokens": 36
+          "inputTokens": 9382,
+          "outputTokens": 33
         },
         "stopReason": "tool_calls"
       }
     },
     {
-      "hash": "021eb59f5f5b1155cff45a227aa2024874331ce26b1a3d0c51e739f900b86a05",
+      "hash": "69a00255086a00abe256ff8df84a62f04cc6e5113759806148617e4949000d88",
       "model": "default",
       "tag": "long-run-100-shipments",
       "response": {
@@ -2944,7 +2944,7 @@
           "content": "",
           "toolCalls": [
             {
-              "id": "call_2649df04-2086-4aa0-92a0-3d89467e88e3",
+              "id": "call_fc3111e2-d8e2-46b1-b91f-de2900d6fa4b",
               "name": "shipments.get",
               "arguments": {
                 "id": "2062"
@@ -2953,14 +2953,14 @@
           ]
         },
         "usage": {
-          "inputTokens": 5581,
-          "outputTokens": 21
+          "inputTokens": 10104,
+          "outputTokens": 40
         },
         "stopReason": "tool_calls"
       }
     },
     {
-      "hash": "7046fbd09f106d873c60d3608aa452591b7b887e24cd1a6a99be9521f254b9e6",
+      "hash": "130271dcb11db35c9ccd2d84dd0f4af526a8f796d03ac6ce1a30835f62f27a07",
       "model": "default",
       "tag": "long-run-100-shipments",
       "response": {
@@ -2969,7 +2969,7 @@
           "content": "",
           "toolCalls": [
             {
-              "id": "call_be430ab1-b024-4675-863a-74c68ce26083",
+              "id": "call_7ea9c3ef-06ff-4ce3-af6c-7dabc85542b9",
               "name": "shipments.get",
               "arguments": {
                 "id": "2063"
@@ -2978,14 +2978,14 @@
           ]
         },
         "usage": {
-          "inputTokens": 6304,
-          "outputTokens": 36
+          "inputTokens": 10827,
+          "outputTokens": 34
         },
         "stopReason": "tool_calls"
       }
     },
     {
-      "hash": "89982308a4d3b87a91d36e85a846233b23b52e35f0ef8611e97e831c04ed98c3",
+      "hash": "a660da3332c4d8c64346f1bd3bc81f3ec2cd4ede3151bfe0990f4c5f32311d93",
       "model": "default",
       "tag": "long-run-100-shipments",
       "response": {
@@ -2994,7 +2994,7 @@
           "content": "",
           "toolCalls": [
             {
-              "id": "call_d581997d-8499-48f2-9491-85ce34f8471e",
+              "id": "call_ba1b41c3-f785-4158-8d96-3035c76065d7",
               "name": "shipments.get",
               "arguments": {
                 "id": "2064"
@@ -3003,14 +3003,14 @@
           ]
         },
         "usage": {
-          "inputTokens": 7026,
-          "outputTokens": 36
+          "inputTokens": 11549,
+          "outputTokens": 21
         },
         "stopReason": "tool_calls"
       }
     },
     {
-      "hash": "027552619f121ef8d32f4f18b15b148d14e1312fcebaa08fa68c7a471abba809",
+      "hash": "875c4bd533c29cd1f982ac8e9d298c517f65a80e443c867509913dae63b29746",
       "model": "default",
       "tag": "long-run-100-shipments",
       "response": {
@@ -3019,7 +3019,7 @@
           "content": "",
           "toolCalls": [
             {
-              "id": "call_95fed07d-5404-4ddf-aac8-0b909c21b280",
+              "id": "call_64c07ac1-0b47-4216-a5e1-e82647310c72",
               "name": "shipments.get",
               "arguments": {
                 "id": "2065"
@@ -3028,14 +3028,14 @@
           ]
         },
         "usage": {
-          "inputTokens": 7749,
+          "inputTokens": 6473,
           "outputTokens": 21
         },
         "stopReason": "tool_calls"
       }
     },
     {
-      "hash": "cba44ee8070c38680e6bdb3a9a95387d2e74676230f8ad2e50ade28c2eba5503",
+      "hash": "dde19768dd179e6f043d1aa241fdb096ed52b4356a104bbce08ea70becbfc72f",
       "model": "default",
       "tag": "long-run-100-shipments",
       "response": {
@@ -3044,7 +3044,7 @@
           "content": "",
           "toolCalls": [
             {
-              "id": "call_ec90207a-b981-4424-a346-d7cd446ab286",
+              "id": "call_eb08b8c2-17ac-4ec6-bace-a3c812c9520f",
               "name": "shipments.get",
               "arguments": {
                 "id": "2066"
@@ -3053,14 +3053,14 @@
           ]
         },
         "usage": {
-          "inputTokens": 8471,
+          "inputTokens": 7195,
           "outputTokens": 21
         },
         "stopReason": "tool_calls"
       }
     },
     {
-      "hash": "d58aea0396646cc0f4644e515e8e2b85581ae2170702c4a2b61b44d5b29c52f6",
+      "hash": "73da8dd8f4b7b039601045baa773ef9906d1abeac27aac38b65c80b36550dfa7",
       "model": "default",
       "tag": "long-run-100-shipments",
       "response": {
@@ -3069,7 +3069,7 @@
           "content": "",
           "toolCalls": [
             {
-              "id": "call_9917711c-f8b8-47d4-8dcc-7cf780226503",
+              "id": "call_b06bc658-966c-496c-b9b5-13a7d4f8a6f5",
               "name": "shipments.get",
               "arguments": {
                 "id": "2067"
@@ -3078,14 +3078,14 @@
           ]
         },
         "usage": {
-          "inputTokens": 9194,
-          "outputTokens": 39
+          "inputTokens": 7918,
+          "outputTokens": 38
         },
         "stopReason": "tool_calls"
       }
     },
     {
-      "hash": "58801dacbdfea74d4361b34b75229dbbb112512a346f3affb9e581c44840d322",
+      "hash": "38a94788320c8313b8c7e715bef8a784e24582ab3e19fe7e81fe1b86c905f900",
       "model": "default",
       "tag": "long-run-100-shipments",
       "response": {
@@ -3094,7 +3094,7 @@
           "content": "",
           "toolCalls": [
             {
-              "id": "call_4ac2a0d2-7ced-4924-8bb9-932f84281d3d",
+              "id": "call_c43bbb2a-039d-4e44-a064-dda4795d9e6e",
               "name": "shipments.get",
               "arguments": {
                 "id": "2068"
@@ -3103,14 +3103,14 @@
           ]
         },
         "usage": {
-          "inputTokens": 9916,
-          "outputTokens": 21
+          "inputTokens": 8640,
+          "outputTokens": 32
         },
         "stopReason": "tool_calls"
       }
     },
     {
-      "hash": "c10e95bcb19e16681a896f092d7f29eedcfb4ebc84e7aa9a01718567fbde1d50",
+      "hash": "d937d95a3882939fd9984a3db8f3930d6933553ee2d94eea0933931fb5a933b9",
       "model": "default",
       "tag": "long-run-100-shipments",
       "response": {
@@ -3119,7 +3119,7 @@
           "content": "",
           "toolCalls": [
             {
-              "id": "call_15fb6c49-8c21-47e6-934d-58bd64bd24de",
+              "id": "call_1d078c59-5399-4bd3-add4-0dc45ceb2144",
               "name": "shipments.get",
               "arguments": {
                 "id": "2069"
@@ -3128,14 +3128,14 @@
           ]
         },
         "usage": {
-          "inputTokens": 10639,
-          "outputTokens": 21
+          "inputTokens": 9363,
+          "outputTokens": 35
         },
         "stopReason": "tool_calls"
       }
     },
     {
-      "hash": "470fa450fbd85794a4ab4778aa2f32f16a40fc023a6bb78aeb0c43911f4e9472",
+      "hash": "2deef16adf3c8714c7961dd1cd17f915826e5781bbe41bcb1704c0c19efd21c3",
       "model": "default",
       "tag": "long-run-100-shipments",
       "response": {
@@ -3144,7 +3144,7 @@
           "content": "",
           "toolCalls": [
             {
-              "id": "call_e3744da2-97e4-46a3-aa99-3a480bae7a6a",
+              "id": "call_e7313d3c-098a-474b-be46-64b28da21ba4",
               "name": "shipments.get",
               "arguments": {
                 "id": "2070"
@@ -3153,14 +3153,14 @@
           ]
         },
         "usage": {
-          "inputTokens": 11361,
+          "inputTokens": 10085,
           "outputTokens": 21
         },
         "stopReason": "tool_calls"
       }
     },
     {
-      "hash": "ce00d20b967d1f3723dcca96123740c2f344b41705f86734eb269f40ceb1133c",
+      "hash": "6ac8ff896dc52c72e35646b30edc3a9dfc22052eed9e48fb7a7e6a1bfce58ed0",
       "model": "default",
       "tag": "long-run-100-shipments",
       "response": {
@@ -3169,7 +3169,7 @@
           "content": "",
           "toolCalls": [
             {
-              "id": "call_6d8ccad2-b7f9-48ad-ad7a-42438a485338",
+              "id": "call_0a1cf8d1-9274-42a4-952d-b75dfaf03660",
               "name": "shipments.get",
               "arguments": {
                 "id": "2071"
@@ -3178,14 +3178,14 @@
           ]
         },
         "usage": {
-          "inputTokens": 6188,
+          "inputTokens": 10806,
           "outputTokens": 21
         },
         "stopReason": "tool_calls"
       }
     },
     {
-      "hash": "bba93e0975ebed218da894946069a8d7cdb9fb0c1fb67773f67c6a5aec061f5d",
+      "hash": "78bb96f10937fba046ef5043207ff5410e47676d45e68c3efe144da1a78c2b24",
       "model": "default",
       "tag": "long-run-100-shipments",
       "response": {
@@ -3194,7 +3194,7 @@
           "content": "",
           "toolCalls": [
             {
-              "id": "call_0c34bb7f-ae1c-4096-992e-9020685b2520",
+              "id": "call_342f5f73-b8f4-417b-ada3-53939a333eeb",
               "name": "shipments.get",
               "arguments": {
                 "id": "2072"
@@ -3203,14 +3203,14 @@
           ]
         },
         "usage": {
-          "inputTokens": 6912,
-          "outputTokens": 21
+          "inputTokens": 11530,
+          "outputTokens": 32
         },
         "stopReason": "tool_calls"
       }
     },
     {
-      "hash": "dfe302b53cc199eb32434562e5a17e884ff8b881fca8bda7da062a1e521375b1",
+      "hash": "664ab62107c74f3b3a9e0b8750208f18de788893abc298fc22336f64d3cdbc87",
       "model": "default",
       "tag": "long-run-100-shipments",
       "response": {
@@ -3219,7 +3219,7 @@
           "content": "",
           "toolCalls": [
             {
-              "id": "call_e446a2f8-9822-4036-9475-4be32b66b5ee",
+              "id": "call_88910658-5a0e-4fa4-b437-fb267a42f81b",
               "name": "shipments.get",
               "arguments": {
                 "id": "2073"
@@ -3228,14 +3228,14 @@
           ]
         },
         "usage": {
-          "inputTokens": 7634,
-          "outputTokens": 32
+          "inputTokens": 7102,
+          "outputTokens": 21
         },
         "stopReason": "tool_calls"
       }
     },
     {
-      "hash": "3646346915ec9fc5f54a0ef50c38635c2890d0cb39f4f6fcf13133f12c48043f",
+      "hash": "b2a99e4a4978b5d0dbda8ad177dc5323f9ec5504aef7fdc57f4b1bdaf9ca1b71",
       "model": "default",
       "tag": "long-run-100-shipments",
       "response": {
@@ -3244,7 +3244,7 @@
           "content": "",
           "toolCalls": [
             {
-              "id": "call_1bbfcbbf-d39f-4376-ac76-4352c1caefd4",
+              "id": "call_efd2ac26-bfb8-4333-b965-8557dac912c8",
               "name": "shipments.get",
               "arguments": {
                 "id": "2074"
@@ -3253,14 +3253,14 @@
           ]
         },
         "usage": {
-          "inputTokens": 8359,
-          "outputTokens": 21
+          "inputTokens": 7827,
+          "outputTokens": 33
         },
         "stopReason": "tool_calls"
       }
     },
     {
-      "hash": "863b25c9e818f2a3a535ddf927e54464e3bf32af5acd3c6c1295bd1d72ab0b75",
+      "hash": "00150d02a224b0a4f8e04f856053adaf3dfad5d1b790ee6ccba30250f0ea81eb",
       "model": "default",
       "tag": "long-run-100-shipments",
       "response": {
@@ -3269,7 +3269,7 @@
           "content": "",
           "toolCalls": [
             {
-              "id": "call_67806d11-a8fd-426a-a80a-727b091e3b6e",
+              "id": "call_c57cf9e9-e405-4a17-a9df-6dafc8dc8864",
               "name": "shipments.get",
               "arguments": {
                 "id": "2075"
@@ -3278,14 +3278,14 @@
           ]
         },
         "usage": {
-          "inputTokens": 9080,
-          "outputTokens": 37
+          "inputTokens": 8548,
+          "outputTokens": 21
         },
         "stopReason": "tool_calls"
       }
     },
     {
-      "hash": "3d3da311065e5c3837b0df1f42f79abedc7e81c9ee22a4fd59a6eb32dadab2c6",
+      "hash": "44d52ae5b57eccd0fb6176c00082400de46130217efc8fd6cbea196f8752b6f8",
       "model": "default",
       "tag": "long-run-100-shipments",
       "response": {
@@ -3294,7 +3294,7 @@
           "content": "",
           "toolCalls": [
             {
-              "id": "call_3dbcf19d-f072-4859-9ab0-9b309470fa11",
+              "id": "call_caf59174-0edb-4a8d-8bc6-cea65f7c5bed",
               "name": "shipments.get",
               "arguments": {
                 "id": "2076"
@@ -3303,14 +3303,14 @@
           ]
         },
         "usage": {
-          "inputTokens": 9804,
-          "outputTokens": 36
+          "inputTokens": 9272,
+          "outputTokens": 21
         },
         "stopReason": "tool_calls"
       }
     },
     {
-      "hash": "7115bd2578aa867f09d091163d860a956dbc1c4093889697547ddf00b10648ec",
+      "hash": "94565e989e8a128c90ebe488e5c7dbc6916bff0d9b37018cc9691c8d4cf4d2b2",
       "model": "default",
       "tag": "long-run-100-shipments",
       "response": {
@@ -3319,7 +3319,7 @@
           "content": "",
           "toolCalls": [
             {
-              "id": "call_d862c597-3401-4638-9541-eb1ab8b3bb54",
+              "id": "call_2759eced-d5f1-466c-980f-94cb9426153c",
               "name": "shipments.get",
               "arguments": {
                 "id": "2077"
@@ -3328,14 +3328,14 @@
           ]
         },
         "usage": {
-          "inputTokens": 10525,
+          "inputTokens": 9993,
           "outputTokens": 21
         },
         "stopReason": "tool_calls"
       }
     },
     {
-      "hash": "ac638f5cec7dd727b58d83e8fe6af7b3d6769540272e9b725e9838bda8c824de",
+      "hash": "ce9e3a20cff0563d24154c289ab5d624e70ef7c53be2f39f77b922ec4af78d8f",
       "model": "default",
       "tag": "long-run-100-shipments",
       "response": {
@@ -3344,7 +3344,7 @@
           "content": "",
           "toolCalls": [
             {
-              "id": "call_7875fce4-c1ab-4b5f-80d3-367ffb8709a6",
+              "id": "call_875ad040-f389-4a79-a2d6-de16820a23cb",
               "name": "shipments.get",
               "arguments": {
                 "id": "2078"
@@ -3353,14 +3353,14 @@
           ]
         },
         "usage": {
-          "inputTokens": 11249,
-          "outputTokens": 21
+          "inputTokens": 10717,
+          "outputTokens": 35
         },
         "stopReason": "tool_calls"
       }
     },
     {
-      "hash": "799b5f33cc2c1bf470c6e50460f1b09fdadffda0494152c72fdaa5711f791a20",
+      "hash": "e543b3064b14121c4c5c90d52930ca2f47d589bb8f8a4a1b9139b6a64a5cb2c0",
       "model": "default",
       "tag": "long-run-100-shipments",
       "response": {
@@ -3369,7 +3369,7 @@
           "content": "",
           "toolCalls": [
             {
-              "id": "call_8a7eeea3-052c-48d6-ad20-926f1efc5bcc",
+              "id": "call_8f82a757-ae34-4980-8ebc-0c1b4e920070",
               "name": "shipments.get",
               "arguments": {
                 "id": "2079"
@@ -3378,14 +3378,14 @@
           ]
         },
         "usage": {
-          "inputTokens": 11970,
+          "inputTokens": 11438,
           "outputTokens": 21
         },
         "stopReason": "tool_calls"
       }
     },
     {
-      "hash": "7c64341c3e8780a2dd1061ee067a863a0dcbc98585a38cffbd119d866678ce85",
+      "hash": "3f7b789cbf742be0a07c9352c9f68793ee9d81d8cbd63b9c3c9f348553b7e13e",
       "model": "default",
       "tag": "long-run-100-shipments",
       "response": {
@@ -3394,7 +3394,7 @@
           "content": "",
           "toolCalls": [
             {
-              "id": "call_72653ae1-47e7-4131-b810-c6b691f9de98",
+              "id": "call_233d1159-3e7e-46f3-a3c0-096c37484908",
               "name": "shipments.get",
               "arguments": {
                 "id": "2080"
@@ -3403,14 +3403,14 @@
           ]
         },
         "usage": {
-          "inputTokens": 6797,
+          "inputTokens": 7650,
           "outputTokens": 21
         },
         "stopReason": "tool_calls"
       }
     },
     {
-      "hash": "933f891aa7e598dd5dff81b5c59a7fbce8a0f454ba852f2835987a66cf63990c",
+      "hash": "70c652f42943a86ce6154e6e5c09f59d502250abd84d01c253587e1148ffedcf",
       "model": "default",
       "tag": "long-run-100-shipments",
       "response": {
@@ -3419,7 +3419,7 @@
           "content": "",
           "toolCalls": [
             {
-              "id": "call_6875f4c6-6033-4886-9202-b60c3e408614",
+              "id": "call_493e2179-bde0-428d-9398-747cd9e9223c",
               "name": "shipments.get",
               "arguments": {
                 "id": "2081"
@@ -3428,14 +3428,14 @@
           ]
         },
         "usage": {
-          "inputTokens": 7520,
-          "outputTokens": 33
+          "inputTokens": 8373,
+          "outputTokens": 21
         },
         "stopReason": "tool_calls"
       }
     },
     {
-      "hash": "6b9eaedd7ddcdf861f9bfa8cf12a5777bda612d05d537badb5fde0d773b3458d",
+      "hash": "d9c0d4914ae7e8d87b661384f0b813b2d1251f1e92d5790d294bb52ab4ded1f3",
       "model": "default",
       "tag": "long-run-100-shipments",
       "response": {
@@ -3444,7 +3444,7 @@
           "content": "",
           "toolCalls": [
             {
-              "id": "call_92ed4c2a-4790-4c07-beb1-720dfc4a199e",
+              "id": "call_28517abf-6fc3-40e4-b1cc-fb2de4fe8d56",
               "name": "shipments.get",
               "arguments": {
                 "id": "2082"
@@ -3453,14 +3453,14 @@
           ]
         },
         "usage": {
-          "inputTokens": 8242,
+          "inputTokens": 9095,
           "outputTokens": 21
         },
         "stopReason": "tool_calls"
       }
     },
     {
-      "hash": "4917b5593269c7fa2c5cf22062ae75169ed2e6235e69e5f9fe758ae3a655ce23",
+      "hash": "8f43cc3c55512cb33b2fe0e493372ac314171921052f951a061f76cc7bddb9c1",
       "model": "default",
       "tag": "long-run-100-shipments",
       "response": {
@@ -3469,7 +3469,7 @@
           "content": "",
           "toolCalls": [
             {
-              "id": "call_e60c8a95-1d22-4a35-846e-f2f19d88b978",
+              "id": "call_74049d37-40d4-40f2-b658-4e890223b381",
               "name": "shipments.get",
               "arguments": {
                 "id": "2083"
@@ -3478,14 +3478,14 @@
           ]
         },
         "usage": {
-          "inputTokens": 8965,
+          "inputTokens": 9818,
           "outputTokens": 21
         },
         "stopReason": "tool_calls"
       }
     },
     {
-      "hash": "f910934c0cb79bb13669641fb6e82279b0871a0ccc662a2534c9d162dd20047a",
+      "hash": "24a65bbb01bec2696f43fa383ca8145baa7255e9a84a8e7f40098fee1ef229fa",
       "model": "default",
       "tag": "long-run-100-shipments",
       "response": {
@@ -3494,7 +3494,7 @@
           "content": "",
           "toolCalls": [
             {
-              "id": "call_12982f19-1b86-4167-b689-b2f442fe45f1",
+              "id": "call_a5ce20fc-7933-429e-8192-1232bb8088c4",
               "name": "shipments.get",
               "arguments": {
                 "id": "2084"
@@ -3503,14 +3503,14 @@
           ]
         },
         "usage": {
-          "inputTokens": 9687,
+          "inputTokens": 10540,
           "outputTokens": 21
         },
         "stopReason": "tool_calls"
       }
     },
     {
-      "hash": "61b339143979c91fe5ac03803430624d55c7920d8f483d8712cc4ccaca9e82a4",
+      "hash": "2bd36917281a3b62fc1e0434badbdb442c45f46b25c5eefcb3fea73beb9571a9",
       "model": "default",
       "tag": "long-run-100-shipments",
       "response": {
@@ -3519,7 +3519,7 @@
           "content": "",
           "toolCalls": [
             {
-              "id": "call_3e4c52dc-30cd-4be7-984f-1a7362a9b0e3",
+              "id": "call_f66220d6-a7ed-459d-9356-00c618777d57",
               "name": "shipments.get",
               "arguments": {
                 "id": "2085"
@@ -3528,14 +3528,14 @@
           ]
         },
         "usage": {
-          "inputTokens": 10410,
+          "inputTokens": 11263,
           "outputTokens": 34
         },
         "stopReason": "tool_calls"
       }
     },
     {
-      "hash": "3ed204a82f8f3193fe5ea7ed5fffa8a6a3dc2682a6dc2e30e8b989d31c4da203",
+      "hash": "d0370a91dc9322c278b1989447ea2f938d480e9c984dc640d9e53362e05e45d3",
       "model": "default",
       "tag": "long-run-100-shipments",
       "response": {
@@ -3544,7 +3544,7 @@
           "content": "",
           "toolCalls": [
             {
-              "id": "call_535e5bbf-a5ad-4a0d-9572-3a7732f9a278",
+              "id": "call_fa9f82df-3b98-498e-a906-5fec2e1feb2f",
               "name": "shipments.get",
               "arguments": {
                 "id": "2086"
@@ -3553,14 +3553,14 @@
           ]
         },
         "usage": {
-          "inputTokens": 11132,
-          "outputTokens": 33
+          "inputTokens": 11985,
+          "outputTokens": 21
         },
         "stopReason": "tool_calls"
       }
     },
     {
-      "hash": "7a191b97c9c132f80ea8f9833638d24119782fcbbe3f1248cf8b6881398a79d8",
+      "hash": "6091547f318dc9436c927f0d6d978eeaa1e292877234ee2e1d73eacec17fb43e",
       "model": "default",
       "tag": "long-run-100-shipments",
       "response": {
@@ -3569,7 +3569,7 @@
           "content": "",
           "toolCalls": [
             {
-              "id": "call_09f2c12a-35f3-459a-888f-a9a380d2252c",
+              "id": "call_63803abc-3767-40cf-8d88-f78f95808b96",
               "name": "shipments.get",
               "arguments": {
                 "id": "2087"
@@ -3578,14 +3578,14 @@
           ]
         },
         "usage": {
-          "inputTokens": 11855,
-          "outputTokens": 35
+          "inputTokens": 8209,
+          "outputTokens": 21
         },
         "stopReason": "tool_calls"
       }
     },
     {
-      "hash": "e15954cedb90d19161a0a5dff9fcf14680fd28acf93743a5befe7803adf6dd44",
+      "hash": "32872625e445fa664ecd8c9ef71bfccc3b0e0a5c443ada5772f76c76e8137f0e",
       "model": "default",
       "tag": "long-run-100-shipments",
       "response": {
@@ -3594,7 +3594,7 @@
           "content": "",
           "toolCalls": [
             {
-              "id": "call_2ef2a799-f5e5-405b-bdde-f3649331c9a2",
+              "id": "call_d5b70b90-5595-4579-982a-ac7a1d06da1e",
               "name": "shipments.get",
               "arguments": {
                 "id": "2088"
@@ -3603,14 +3603,14 @@
           ]
         },
         "usage": {
-          "inputTokens": 7345,
+          "inputTokens": 8931,
           "outputTokens": 21
         },
         "stopReason": "tool_calls"
       }
     },
     {
-      "hash": "5b6cddd76453a9021a35becf551dae91420bd2118184274808e065137a55686d",
+      "hash": "dcb47dfd0916ca35bc3d54a3efc7de83f2032b5a38ec8ff177575bd4d0ab74b9",
       "model": "default",
       "tag": "long-run-100-shipments",
       "response": {
@@ -3619,7 +3619,7 @@
           "content": "",
           "toolCalls": [
             {
-              "id": "call_d3aaf354-c5c9-4ddc-8c0f-2e6e0d958de9",
+              "id": "call_be59acb8-24b9-4655-8a5b-7ee0a947fe3c",
               "name": "shipments.get",
               "arguments": {
                 "id": "2089"
@@ -3628,14 +3628,14 @@
           ]
         },
         "usage": {
-          "inputTokens": 8066,
+          "inputTokens": 9652,
           "outputTokens": 21
         },
         "stopReason": "tool_calls"
       }
     },
     {
-      "hash": "a6195fbb69a04b76bc4e87dd356f69166d278982e981f80ce62f2aa99edac198",
+      "hash": "336c05c674f1be57efd1027284f0cd4bd1caaed2dbd1bc19f49c67a53cf79b75",
       "model": "default",
       "tag": "long-run-100-shipments",
       "response": {
@@ -3644,7 +3644,7 @@
           "content": "",
           "toolCalls": [
             {
-              "id": "call_fcd0afbe-3222-4e49-a83a-da0b1ad31985",
+              "id": "call_2c89282d-22c2-4546-9d4c-dbbf72ca6b9a",
               "name": "shipments.get",
               "arguments": {
                 "id": "2090"
@@ -3653,14 +3653,14 @@
           ]
         },
         "usage": {
-          "inputTokens": 8791,
+          "inputTokens": 10377,
           "outputTokens": 21
         },
         "stopReason": "tool_calls"
       }
     },
     {
-      "hash": "6810366e3b15a58a4ca286cfa17152ca8beeec635c1c1146140b5fba35d58ec4",
+      "hash": "dd162fd8436645ca6383465e1ea0748a141cc0c947e08f8806b5c839f28ccc19",
       "model": "default",
       "tag": "long-run-100-shipments",
       "response": {
@@ -3669,7 +3669,7 @@
           "content": "",
           "toolCalls": [
             {
-              "id": "call_d80b1920-970d-4629-8c5c-7eb3de4bb2e4",
+              "id": "call_74e1cb60-de01-4281-b0cd-5ca9608ff19d",
               "name": "shipments.get",
               "arguments": {
                 "id": "2091"
@@ -3678,14 +3678,14 @@
           ]
         },
         "usage": {
-          "inputTokens": 9513,
+          "inputTokens": 11099,
           "outputTokens": 21
         },
         "stopReason": "tool_calls"
       }
     },
     {
-      "hash": "8a4daa21c1534bd3c9686733b066beb04fc25e7a2c165341587496cdebeedb2a",
+      "hash": "fec18ec6cefa12fc35a280372ed5c932912d9c0d8724a6030db2db5d5efb7621",
       "model": "default",
       "tag": "long-run-100-shipments",
       "response": {
@@ -3694,7 +3694,7 @@
           "content": "",
           "toolCalls": [
             {
-              "id": "call_04e4c70a-7147-4409-ad55-7080673e69f8",
+              "id": "call_3e84a62c-7ccb-414e-9987-ee317b349028",
               "name": "shipments.get",
               "arguments": {
                 "id": "2092"
@@ -3703,14 +3703,14 @@
           ]
         },
         "usage": {
-          "inputTokens": 10237,
-          "outputTokens": 21
+          "inputTokens": 11823,
+          "outputTokens": 42
         },
         "stopReason": "tool_calls"
       }
     },
     {
-      "hash": "69f15a5a22dcd6635063645b2cb03502249c0e37f224eea300cd78d0a5687cc8",
+      "hash": "e3e5e944e7826a5c6438befaf3273712c77486f99ac88c7a428a65fc925c7217",
       "model": "default",
       "tag": "long-run-100-shipments",
       "response": {
@@ -3719,7 +3719,7 @@
           "content": "",
           "toolCalls": [
             {
-              "id": "call_e7566116-2a88-4105-832b-d4c89e5e8d77",
+              "id": "call_aacd0982-6e22-460b-8742-73c5303756f9",
               "name": "shipments.get",
               "arguments": {
                 "id": "2093"
@@ -3728,23 +3728,23 @@
           ]
         },
         "usage": {
-          "inputTokens": 10958,
+          "inputTokens": 8680,
           "outputTokens": 21
         },
         "stopReason": "tool_calls"
       }
     },
     {
-      "hash": "c7e6dd3bd9ff6f76dcbd379bad4110ed7cc47c7641aa37be2b4d3756b1179735",
+      "hash": "827bf152a5723b152b68734ee14fc7cd073a42b4206c245a092136ee6d051caf",
       "model": "default",
       "tag": "long-run-100-shipments",
       "response": {
         "message": {
           "role": "assistant",
-          "content": "2093 — lost. Tiếp tục kiểm tra các vận đơn còn lại.",
+          "content": "2093 — lost. Tiếp tục kiểm tra.",
           "toolCalls": [
             {
-              "id": "call_b7a4b646-fd71-4ed6-b13f-d8117c007867",
+              "id": "call_7bf59d25-bf1e-4829-9890-4ebdef3ff6d8",
               "name": "shipments.get",
               "arguments": {
                 "id": "2094"
@@ -3753,14 +3753,14 @@
           ]
         },
         "usage": {
-          "inputTokens": 11689,
-          "outputTokens": 44
+          "inputTokens": 9411,
+          "outputTokens": 39
         },
         "stopReason": "tool_calls"
       }
     },
     {
-      "hash": "293133f814d434ed167b470e1448a088bc136e0214519dd2bf0d5ea6a9a44404",
+      "hash": "b73489940b57733a49d399941b13b998b5d998d63f7022ab59d520849ac0c5b7",
       "model": "default",
       "tag": "long-run-100-shipments",
       "response": {
@@ -3769,7 +3769,7 @@
           "content": "",
           "toolCalls": [
             {
-              "id": "call_f95050ba-15d6-46bb-94f1-78a936d09acf",
+              "id": "call_4b45d1bc-52ec-4dff-a3a1-fe592323375a",
               "name": "shipments.get",
               "arguments": {
                 "id": "2095"
@@ -3778,14 +3778,14 @@
           ]
         },
         "usage": {
-          "inputTokens": 7846,
+          "inputTokens": 10150,
           "outputTokens": 21
         },
         "stopReason": "tool_calls"
       }
     },
     {
-      "hash": "0b85faa6c5aa63c8c5e81718795330c405cae2e20c755454ebb2c341e1d8971d",
+      "hash": "6c9d1aa0f5a785409a8826d03c08146203cfe09e497b6972da8e0b61e29990d1",
       "model": "default",
       "tag": "long-run-100-shipments",
       "response": {
@@ -3794,7 +3794,7 @@
           "content": "",
           "toolCalls": [
             {
-              "id": "call_5d364f27-4630-4e21-bb05-14fb2d38fb53",
+              "id": "call_56e9e1c8-e36c-46fb-96c1-364a59b7b408",
               "name": "shipments.get",
               "arguments": {
                 "id": "2096"
@@ -3803,14 +3803,14 @@
           ]
         },
         "usage": {
-          "inputTokens": 8570,
+          "inputTokens": 10874,
           "outputTokens": 21
         },
         "stopReason": "tool_calls"
       }
     },
     {
-      "hash": "1b4d31e1f97fb0ea0997ecf8897928d02b7c9dae579ee02fedff0f125f22243e",
+      "hash": "db23cad8b1598866acb2c6f6be1e73c9c732023827f8b1fd4eecf1b531408802",
       "model": "default",
       "tag": "long-run-100-shipments",
       "response": {
@@ -3819,7 +3819,7 @@
           "content": "",
           "toolCalls": [
             {
-              "id": "call_80ffc947-8ab6-46fc-8c88-e68f525e420d",
+              "id": "call_3a091658-60f2-4c5e-8633-3e7bfc8813ac",
               "name": "shipments.get",
               "arguments": {
                 "id": "2097"
@@ -3828,14 +3828,14 @@
           ]
         },
         "usage": {
-          "inputTokens": 9291,
+          "inputTokens": 11595,
           "outputTokens": 21
         },
         "stopReason": "tool_calls"
       }
     },
     {
-      "hash": "3ae74df238cb67da5f174d18a18e2ea04879b8d330d2515edf37be441142c2c1",
+      "hash": "c7aff75edb6726ad86760b132693e9900eef5531e6659915b4dc58644310cf14",
       "model": "default",
       "tag": "long-run-100-shipments",
       "response": {
@@ -3844,7 +3844,7 @@
           "content": "",
           "toolCalls": [
             {
-              "id": "call_8b973e50-bdba-43f3-8177-4b68f9df74b4",
+              "id": "call_d27804c5-57d3-4d18-9f60-babeb77b8d67",
               "name": "shipments.get",
               "arguments": {
                 "id": "2098"
@@ -3853,14 +3853,14 @@
           ]
         },
         "usage": {
-          "inputTokens": 10013,
+          "inputTokens": 9093,
           "outputTokens": 21
         },
         "stopReason": "tool_calls"
       }
     },
     {
-      "hash": "39cccbab3ffcc5fa23dca40a6316500b1d152054b2c3c688384bb08b1e17ee24",
+      "hash": "ce17da493d290fe1eb37ea64a2ac54e7370b399f3079efc74900d659efbde35c",
       "model": "default",
       "tag": "long-run-100-shipments",
       "response": {
@@ -3869,7 +3869,7 @@
           "content": "",
           "toolCalls": [
             {
-              "id": "call_891f5105-4308-413c-9607-efaaf6cb54ef",
+              "id": "call_35a87163-b97c-460f-85d5-be0e03aa7b93",
               "name": "shipments.get",
               "arguments": {
                 "id": "2099"
@@ -3878,14 +3878,14 @@
           ]
         },
         "usage": {
-          "inputTokens": 10736,
+          "inputTokens": 9816,
           "outputTokens": 21
         },
         "stopReason": "tool_calls"
       }
     },
     {
-      "hash": "a2f445fbf94d9345db19178c86f7f97477ab1cf0f2fc84743afbaef75952f44a",
+      "hash": "733f0652a67ff96bef67e924c8a83344418040357addbf33627f47066b810d42",
       "model": "default",
       "tag": "long-run-100-shipments",
       "response": {
@@ -3894,7 +3894,7 @@
           "content": "",
           "toolCalls": [
             {
-              "id": "call_e1a4812d-3cf1-4aa4-93a1-25358c6a9c66",
+              "id": "call_237f07ad-6f62-4ab2-9ae3-ce22d0eed0c8",
               "name": "shipments.get",
               "arguments": {
                 "id": "2100"
@@ -3903,30 +3903,30 @@
           ]
         },
         "usage": {
-          "inputTokens": 11458,
+          "inputTokens": 10538,
           "outputTokens": 21
         },
         "stopReason": "tool_calls"
       }
     },
     {
-      "hash": "b04542ec0666a7fcac84c300327da90b5d1d81e3d3d658bb67f1fa16ba09706a",
+      "hash": "0be04bc0a16f906b3f24b7aa04e883817a5bce1f5e4a9bcce5f7f7dd822906c9",
       "model": "default",
       "tag": "long-run-100-shipments",
       "response": {
         "message": {
           "role": "assistant",
-          "content": "Các vận đơn có trạng thái lost:\n\n- 2017 — lost\n- 2058 — lost\n- 2093 — lost"
+          "content": "Các vận đơn có trạng thái **lost**:\n\n- 2017 — lost\n- 2058 — lost\n- 2093 — lost"
         },
         "usage": {
-          "inputTokens": 8256,
-          "outputTokens": 32
+          "inputTokens": 11261,
+          "outputTokens": 34
         },
         "stopReason": "end"
       }
     },
     {
-      "hash": "901c110cb81708e84f94a6beea19f8c4acc230326c19a640cb00580d5f0dbe08",
+      "hash": "47f2b97eba9ec72753a9ba1d932dfb0dae931a2eed96bbecd21ba97593ecf640",
       "model": "smart",
       "tag": "long-run-100-shipments",
       "response": {
@@ -3935,7 +3935,7 @@
           "content": "{\"pass\":true,\"reason\":\"The reply lists exactly shipments 2017, 2058, and 2093 as lost, with no others.\"}"
         },
         "usage": {
-          "inputTokens": 71594,
+          "inputTokens": 71596,
           "outputTokens": 36
         },
         "stopReason": "end"

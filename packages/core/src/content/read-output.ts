@@ -44,7 +44,7 @@ function search(text: string, needle: string): string {
     if (found.length < MAX_MATCHES) found.push(i)
     total++
   }
-  if (total === 0) return `No match for "${needle}" in ${formatCount(text.length)} characters.`
+  if (total === 0) return `No match for "${needle}" in ${formatCount(text.length)} characters. The search is plain text and ignores case: no OR, quotes or wildcards. Search one word or phrase at a time.`
   const lines: string[] = []
   let used = 0
   let lineNo = 1
