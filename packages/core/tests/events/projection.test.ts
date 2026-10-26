@@ -127,3 +127,56 @@ test('a wait without expiresAt never expires', () => {
   const proj = projectRun(stored([created, running, toState('running', 'waiting_human', { reason: 'approval' })]), '')
   expect(proj.waitExpiresAt).toBeNull()
 })
+
+describe('run input', () => {
+  const message = (text: string): NewEvent => ({ type: 'input.received', payload: { action: 'message', text }, labels: ['untrusted'] })
+  const cancel: NewEvent = { type: 'input.received', payload: { action: 'cancel' }, labels: [] }
+  const callTurn: NewEvent = {
+    type: 'llm.responded',
+    payload: {
+      message: { role: 'assistant', content: '', toolCalls: [{ id: 'c1', name: 't', arguments: {} }, { id: 'c2', name: 't', arguments: {} }] },
+      usage: { inputTokens: 1, outputTokens: 1 },
+      stopReason: 'tool_calls',
+    },
+    labels: [],
+  }
+  const result = (id: string): NewEvent => ({ type: 'tool.responded', payload: { toolCallId: id, content: 'r', isError: false }, labels: [] })
+
+  test('input.received accepts cancel and a bounded message, and refuses a message without text', () => {
+    expect(NewEventSchema.safeParse(message('steer')).success).toBe(true)
+    expect(NewEventSchema.safeParse(cancel).success).toBe(true)
+    expect(NewEventSchema.safeParse({ ...cancel, payload: { action: 'message' } }).success).toBe(false)
+    expect(NewEventSchema.safeParse(message('x'.repeat(32_001))).success).toBe(false)
+  })
+
+  test('a message becomes a user message where it arrives when no tool call is open', () => {
+    const p = projectRun(stored([created, running, requested, responded, message('steer')]), 'sys')
+    expect(p.messages.at(-1)).toEqual({ role: 'user', content: 'steer' })
+  })
+
+  test('a message that arrives while tool calls are open waits until the last result', () => {
+    const p = projectRun(stored([created, running, requested, callTurn, result('c1'), message('steer'), result('c2')]), 'sys')
+    expect(p.messages.slice(-3).map((m) => m.role)).toEqual(['tool', 'tool', 'user'])
+    const open = projectRun(stored([created, running, requested, callTurn, message('steer'), result('c1')]), 'sys')
+    expect(open.messages.some((m) => m.role === 'user' && m.content === 'steer')).toBe(false)
+  })
+
+  test('a message that arrives during an LLM call goes after its answer, or after an LLM error', () => {
+    const answered = projectRun(stored([created, running, requested, message('steer'), responded]), 'sys')
+    expect(answered.messages.slice(-2).map((m) => m.role)).toEqual(['assistant', 'user'])
+    const failed = projectRun(stored([created, running, requested, message('steer'), retryError('2026-01-01T00:00:30.000Z')]), 'sys')
+    expect(failed.messages.at(-1)).toEqual({ role: 'user', content: 'steer' })
+  })
+
+  test('unreadMessages counts messages after the last LLM request', () => {
+    expect(projectRun(stored([created, running, message('a'), requested]), 'sys').unreadMessages).toBe(0)
+    expect(projectRun(stored([created, running, requested, message('a'), message('b')]), 'sys').unreadMessages).toBe(2)
+  })
+
+  test('cancelRequested is set by a cancel input and lastSeq is the seq of the last event', () => {
+    const p = projectRun(stored([created, running, cancel]), 'sys')
+    expect(p.cancelRequested).toBe(true)
+    expect(p.lastSeq).toBe(3)
+    expect(projectRun(stored([created, running]), 'sys').cancelRequested).toBe(false)
+  })
+})

@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, beforeEach, expect, test } from 'vitest'
 import type { AgentDefinition, LLMPort, RunStatus, ToolInvoker } from '@agent-core/core'
-import { ConfigRepo, PgRunStore, assertTestDatabase, createPool, createRun, createTenant, enqueue, getRun, runMigrations } from '@agent-core/store-postgres'
+import { ConfigRepo, PgRunStore, assertTestDatabase, createPool, createRun, createTenant, enqueue, getRun, makeDue, runMigrations } from '@agent-core/store-postgres'
 import { startRunWorker } from '../../src/worker/worker'
 import type { RunWorkerDeps } from '../../src/worker/worker'
 import { createSecretBox } from '@agent-core/core'
@@ -453,6 +453,42 @@ test('a retryable LLM error re-enqueues the run at retryAt without failing or se
   expect(rows.rows).toHaveLength(1)
   expect(rows.rows[0]?.locked_by).toBeNull()
   expect(rows.rows[0]?.available_at.getTime()).toBe(new Date(retryAt!).getTime())
+})
+
+test('a cancel input sent while the run waits for an LLM retry stops it at once, not at retryAt', async () => {
+  const { version } = await new ConfigRepo(pool, 'default', box).putAgent(agent)
+  await seedRun('r-cx', 'helper', version)
+  const failing: LLMPort = {
+    complete: async () => {
+      throw new RetryableLlmError('provider busy')
+    },
+  }
+  const settled: RunStatus[] = []
+  const worker = startRunWorker({
+    secrets: box,
+    pool,
+    llm: failing,
+    tools,
+    workerId: 'w1',
+    pollMs: 20,
+    onRunSettled: async (_id, _t, status) => {
+      settled.push(status)
+    },
+  })
+  const store = new PgRunStore(pool, 'default')
+  let waiting = false
+  await waitFor(() => {
+    void store.readEvents('r-cx').then((events) => {
+      waiting = events.some((e) => e.type === 'error.raised')
+    })
+    return waiting
+  })
+  await store.append('r-cx', [{ type: 'input.received', payload: { action: 'cancel' }, labels: [] }])
+  await makeDue(pool, 'default', 'r-cx')
+  await waitFor(() => settled.includes('cancelled'))
+  await worker.stop()
+  expect(await runStatus('r-cx')).toBe('cancelled')
+  expect(await queueRows()).toBe(0)
 })
 
 // Seeds the log of a run whose worker died right after `tool.requested` for call_1.

@@ -428,7 +428,7 @@ test('unknown runs give 404 run_not_found on get, events and resolve', async () 
   for (const [method, path, body] of [
     ['GET', '/v1/runs/ghost', undefined],
     ['GET', '/v1/runs/ghost/events', undefined],
-    ['POST', '/v1/runs/ghost/resolve', { action: 'approve' }],
+    ['POST', '/v1/runs/ghost/input', { action: 'approve' }],
   ] as const) {
     const res = await authed(method, path, body)
     expect(res.statusCode).toBe(404)
@@ -504,10 +504,10 @@ test('GET run shows the pending approval, and events report a valid chain', asyn
 
 test('rejects a second resolve with 409', async () => {
   const runId = await runWaitingForApproval()
-  const first = await authed('POST', `/v1/runs/${runId}/resolve`, { action: 'approve' })
+  const first = await authed('POST', `/v1/runs/${runId}/input`, { action: 'approve' })
   expect(first.statusCode).toBe(202)
   expect(first.json()).toEqual({ run_id: runId, status: 'queued' })
-  const second = await authed('POST', `/v1/runs/${runId}/resolve`, { action: 'approve' })
+  const second = await authed('POST', `/v1/runs/${runId}/input`, { action: 'approve' })
   expect(second.statusCode).toBe(409)
   expect(second.json().error.code).toBe('not_waiting_for_approval')
   const types = (await new PgRunStore(pool, 'default').readEvents(runId)).map((e) => e.type)
@@ -518,8 +518,8 @@ test('rejects a second resolve with 409', async () => {
 test('two concurrent resolves: exactly one 202 and one 409', async () => {
   const runId = await runWaitingForApproval()
   const results = await Promise.all([
-    authed('POST', `/v1/runs/${runId}/resolve`, { action: 'approve' }),
-    authed('POST', `/v1/runs/${runId}/resolve`, { action: 'reject' }),
+    authed('POST', `/v1/runs/${runId}/input`, { action: 'approve' }),
+    authed('POST', `/v1/runs/${runId}/input`, { action: 'reject' }),
   ])
   expect(results.map((r) => r.statusCode).sort()).toEqual([202, 409])
   const resolved = (await new PgRunStore(pool, 'default').readEvents(runId)).filter((e) => e.type === 'approval.resolved')
@@ -529,7 +529,7 @@ test('two concurrent resolves: exactly one 202 and one 409', async () => {
 test('resolve on a run that is not waiting gives 409', async () => {
   await seedAgent()
   const { run_id } = (await authed('POST', '/v1/runs', runBody)).json()
-  const res = await authed('POST', `/v1/runs/${run_id}/resolve`, { action: 'approve' })
+  const res = await authed('POST', `/v1/runs/${run_id}/input`, { action: 'approve' })
   expect(res.statusCode).toBe(409)
   expect(res.json().error.code).toBe('not_waiting_for_approval')
 })
@@ -787,7 +787,7 @@ test('a pending outcome logged without a reason shows reason null', async () => 
 
 test('outcome_happened settles the call, answers the model, and enqueues', async () => {
   const runId = await runWaitingForOutcome()
-  const res = await authed('POST', `/v1/runs/${runId}/resolve`, { action: 'outcome_happened' })
+  const res = await authed('POST', `/v1/runs/${runId}/input`, { action: 'outcome_happened' })
   expect(res.statusCode).toBe(202)
   expect(res.json()).toEqual({ run_id: runId, status: 'queued' })
   const events = await new PgRunStore(pool, 'default').readEvents(runId)
@@ -804,7 +804,7 @@ test('outcome_happened settles the call, answers the model, and enqueues', async
 
 test('outcome_not_happened settles the call and enqueues without answering the model', async () => {
   const runId = await runWaitingForOutcome()
-  const res = await authed('POST', `/v1/runs/${runId}/resolve`, { action: 'outcome_not_happened' })
+  const res = await authed('POST', `/v1/runs/${runId}/input`, { action: 'outcome_not_happened' })
   expect(res.statusCode).toBe(202)
   const events = await new PgRunStore(pool, 'default').readEvents(runId)
   expect(events.slice(-2).map((e) => e.type)).toEqual(['outcome.settled', 'run.state_changed'])
@@ -821,7 +821,7 @@ test('cancel through resolve ends a run waiting for any reason', async () => {
     await runWaitingFor('needs_input', 'r-n'),
   ]
   for (const id of ids) {
-    const res = await authed('POST', `/v1/runs/${id}/resolve`, { action: 'cancel' })
+    const res = await authed('POST', `/v1/runs/${id}/input`, { action: 'cancel' })
     expect(res.statusCode).toBe(202)
     expect(res.json()).toEqual({ run_id: id, status: 'cancelled' })
     expect((await authed('GET', `/v1/runs/${id}`)).json().status).toBe('cancelled')
@@ -846,7 +846,7 @@ test('an action that does not fit the waiting reason gives 409 action_not_allowe
   ]
   for (const [id, action, allowed] of cases) {
     const before = (await eventTypes(id)).length
-    const res = await authed('POST', `/v1/runs/${id}/resolve`, { action })
+    const res = await authed('POST', `/v1/runs/${id}/input`, { action })
     expect(res.statusCode).toBe(409)
     expect(res.json().error.code).toBe('action_not_allowed')
     for (const a of allowed) expect(res.json().error.fix).toContain(a)
@@ -854,11 +854,12 @@ test('an action that does not fit the waiting reason gives 409 action_not_allowe
   }
 })
 
-test('resolve with a new action on a run that is not waiting gives 409 not_waiting_human', async () => {
+// cancel is left out: it also cancels a run that is not waiting.
+test('an outcome action on a run that is not waiting gives 409 not_waiting_human', async () => {
   await seedAgent()
   const { run_id } = (await authed('POST', '/v1/runs', runBody)).json()
-  for (const action of ['outcome_happened', 'outcome_not_happened', 'cancel']) {
-    const res = await authed('POST', `/v1/runs/${run_id}/resolve`, { action })
+  for (const action of ['outcome_happened', 'outcome_not_happened']) {
+    const res = await authed('POST', `/v1/runs/${run_id}/input`, { action })
     expect(res.statusCode).toBe(409)
     expect(res.json().error.code).toBe('not_waiting_human')
   }
@@ -866,59 +867,108 @@ test('resolve with a new action on a run that is not waiting gives 409 not_waiti
 
 test('resolve rejects an unknown action with 400', async () => {
   const runId = await runWaitingForOutcome()
-  expect((await authed('POST', `/v1/runs/${runId}/resolve`, { action: 'resume' })).statusCode).toBe(400)
+  expect((await authed('POST', `/v1/runs/${runId}/input`, { action: 'resume' })).statusCode).toBe(400)
 })
 
 test('concurrent outcome resolves: exactly one wins', async () => {
   const runId = await runWaitingForOutcome()
   const results = await Promise.all([
-    authed('POST', `/v1/runs/${runId}/resolve`, { action: 'outcome_happened' }),
-    authed('POST', `/v1/runs/${runId}/resolve`, { action: 'outcome_not_happened' }),
-    authed('POST', `/v1/runs/${runId}/resolve`, { action: 'cancel' }),
+    authed('POST', `/v1/runs/${runId}/input`, { action: 'outcome_happened' }),
+    authed('POST', `/v1/runs/${runId}/input`, { action: 'outcome_not_happened' }),
   ])
-  expect(results.map((r) => r.statusCode).sort()).toEqual([202, 409, 409])
+  expect(results.map((r) => r.statusCode).sort()).toEqual([202, 409])
   const settled = (await eventTypes(runId)).filter((t) => t === 'outcome.settled')
-  expect(settled.length).toBeLessThanOrEqual(1)
+  expect(settled.length).toBe(1)
 })
 
-test('POST /cancel cancels a queued run', async () => {
+test('a cancel racing an outcome action never fails: it cancels the waiting run, or the run that the outcome resumed', async () => {
+  const runId = await runWaitingForOutcome()
+  const [outcome, cancel] = await Promise.all([
+    authed('POST', `/v1/runs/${runId}/input`, { action: 'outcome_happened' }),
+    authed('POST', `/v1/runs/${runId}/input`, { action: 'cancel' }),
+  ])
+  expect(cancel.statusCode).toBe(202)
+  const log = await new PgRunStore(pool, 'default').readEvents(runId)
+  if (outcome.statusCode === 202) {
+    expect(log.filter((e) => e.type === 'outcome.settled')).toHaveLength(1)
+    expect(cancel.json().status).toBe('running')
+    expect([log.at(-1)!.type, log.at(-1)!.payload]).toEqual(['input.received', { action: 'cancel' }])
+  } else {
+    expect(outcome.statusCode).toBe(409)
+    expect(log.at(-1)!.payload).toEqual({ from: 'waiting_human', to: 'cancelled' })
+  }
+})
+
+test('input cancel cancels a queued run', async () => {
   await seedAgent()
   const { run_id } = (await authed('POST', '/v1/runs', runBody)).json()
-  const res = await authed('POST', `/v1/runs/${run_id}/cancel`)
+  const res = await authed('POST', `/v1/runs/${run_id}/input`, { action: 'cancel' })
   expect(res.statusCode).toBe(202)
   expect(res.json()).toEqual({ run_id, status: 'cancelled' })
   expect((await authed('GET', `/v1/runs/${run_id}`)).json().status).toBe('cancelled')
   expect((await new PgRunStore(pool, 'default').readEvents(run_id)).at(-1)!.payload).toEqual({ from: 'queued', to: 'cancelled' })
 })
 
-test('POST /cancel cancels a waiting run', async () => {
+test('input cancel cancels a waiting run', async () => {
   const runId = await runWaitingForApproval()
-  const res = await authed('POST', `/v1/runs/${runId}/cancel`)
+  const res = await authed('POST', `/v1/runs/${runId}/input`, { action: 'cancel' })
   expect(res.statusCode).toBe(202)
   expect(res.json()).toEqual({ run_id: runId, status: 'cancelled' })
   expect((await new PgRunStore(pool, 'default').readEvents(runId)).at(-1)!.payload).toEqual({ from: 'waiting_human', to: 'cancelled' })
 })
 
-test('POST /cancel on a running or finished run gives 409 run_not_cancellable; unknown run gives 404', async () => {
-  const runId = await runWaitingForApproval()
-  await migrator.query("UPDATE runs SET status = 'running', waiting_reason = NULL WHERE id = $1", [runId])
-  const running = await authed('POST', `/v1/runs/${runId}/cancel`)
-  expect(running.statusCode).toBe(409)
-  expect(running.json().error.code).toBe('run_not_cancellable')
-  expect(running.json().error.fix).toBe('A running run can be cancelled from M2; wait for it to pause or end.')
-
+test('input cancel on a finished run gives 409 run_not_cancellable; unknown run gives 404', async () => {
   const done = await runWaitingForApproval('r-done')
-  expect((await authed('POST', `/v1/runs/${done}/cancel`)).statusCode).toBe(202)
-  const again = await authed('POST', `/v1/runs/${done}/cancel`)
+  expect((await authed('POST', `/v1/runs/${done}/input`, { action: 'cancel' })).statusCode).toBe(202)
+  const again = await authed('POST', `/v1/runs/${done}/input`, { action: 'cancel' })
   expect(again.statusCode).toBe(409)
   expect(again.json().error.code).toBe('run_not_cancellable')
 
-  expect((await authed('POST', '/v1/runs/ghost/cancel')).statusCode).toBe(404)
+  expect((await authed('POST', '/v1/runs/ghost/input', { action: 'cancel' })).statusCode).toBe(404)
+})
+
+test('input cancel on a running run records a cancel input, keeps the state and makes its job due', async () => {
+  const runId = await runWaitingForApproval()
+  await migrator.query("UPDATE runs SET status = 'running', waiting_reason = NULL WHERE id = $1", [runId])
+  await migrator.query("INSERT INTO queue (run_id, tenant_id, available_at) VALUES ($1, 'default', now() + interval '5 minutes') ON CONFLICT (run_id) DO UPDATE SET available_at = EXCLUDED.available_at", [runId])
+  const res = await authed('POST', `/v1/runs/${runId}/input`, { action: 'cancel' })
+  expect(res.statusCode).toBe(202)
+  expect(res.json()).toEqual({ run_id: runId, status: 'running' })
+  const last = (await new PgRunStore(pool, 'default').readEvents(runId)).at(-1)!
+  expect([last.type, last.payload]).toEqual(['input.received', { action: 'cancel' }])
+  const due = await migrator.query('SELECT available_at <= now() AS due FROM queue WHERE run_id = $1', [runId])
+  expect(due.rows[0].due).toBe(true)
+})
+
+test('a message to a waiting run is recorded as untrusted input and leaves the state unchanged', async () => {
+  const runId = await runWaitingForApproval()
+  const res = await authed('POST', `/v1/runs/${runId}/input`, { action: 'message', text: 'Use express shipping' })
+  expect(res.statusCode).toBe(202)
+  expect(res.json()).toEqual({ run_id: runId, status: 'waiting_human' })
+  const last = (await new PgRunStore(pool, 'default').readEvents(runId)).at(-1)!
+  expect([last.type, last.payload, last.labels]).toEqual(['input.received', { action: 'message', text: 'Use express shipping' }, ['untrusted']])
+  expect((await authed('GET', `/v1/runs/${runId}`)).json().status).toBe('waiting_human')
+})
+
+test('a message to a finished run gives 409 run_ended; an empty or overlong message gives 400', async () => {
+  const runId = await runWaitingForApproval()
+  expect((await authed('POST', `/v1/runs/${runId}/input`, { action: 'message', text: '' })).statusCode).toBe(400)
+  expect((await authed('POST', `/v1/runs/${runId}/input`, { action: 'message', text: 'x'.repeat(32_001) })).statusCode).toBe(400)
+  await authed('POST', `/v1/runs/${runId}/input`, { action: 'cancel' })
+  const res = await authed('POST', `/v1/runs/${runId}/input`, { action: 'message', text: 'hi' })
+  expect(res.statusCode).toBe(409)
+  expect(res.json().error.code).toBe('run_ended')
+})
+
+test('the old resolve and cancel endpoints are gone', async () => {
+  const runId = await runWaitingForApproval()
+  expect((await authed('POST', `/v1/runs/${runId}/resolve`, { action: 'approve' })).statusCode).toBe(404)
+  expect((await authed('POST', `/v1/runs/${runId}/cancel`)).statusCode).toBe(404)
 })
 
 test('two concurrent cancels: exactly one 202 and one 409', async () => {
   const runId = await runWaitingForOutcome()
-  const results = await Promise.all([authed('POST', `/v1/runs/${runId}/cancel`), authed('POST', `/v1/runs/${runId}/cancel`)])
+  const results = await Promise.all([authed('POST', `/v1/runs/${runId}/input`, { action: 'cancel' }), authed('POST', `/v1/runs/${runId}/input`, { action: 'cancel' })])
   expect(results.map((r) => r.statusCode).sort()).toEqual([202, 409])
 })
 
@@ -987,7 +1037,7 @@ test('a cancel that lands while a worker starts the run wins, and the worker wri
   await holder.query('SET LOCAL ROLE agentcore_app')
   await holder.query("SELECT set_config('app.tenant_id', 'default', true)")
   await holder.query("SELECT 1 FROM runs WHERE id = 'r-race' FOR UPDATE")
-  const cancel = authed('POST', '/v1/runs/r-race/cancel')
+  const cancel = authed('POST', '/v1/runs/r-race/input', { action: 'cancel' })
   await until(1)
   // The worker reads the run as queued, then waits to write queued -> running.
   const worker = startRunWorker({ secrets: box, pool, llm, tools: () => ({ call: async () => ({ content: '', isError: false }) }), workerId: 'w-race', pollMs: 10 })
@@ -1050,7 +1100,7 @@ const tokensBreach: NewEvent = { type: 'limit.reached', payload: { limit: 'token
 
 test('continue on a limit wait grants the breached limit and queues the run', async () => {
   const runId = await runWaitingFor('limit', 'r-l', [tokensBreach])
-  const res = await authed('POST', `/v1/runs/${runId}/resolve`, { action: 'continue' })
+  const res = await authed('POST', `/v1/runs/${runId}/input`, { action: 'continue' })
   expect(res.statusCode).toBe(202)
   expect(res.json()).toEqual({ run_id: runId, status: 'queued' })
   const events = await new PgRunStore(pool, 'default').readEvents(runId)
@@ -1061,7 +1111,7 @@ test('continue on a limit wait grants the breached limit and queues the run', as
 
 test('continue on a legacy breaker wait grants llm_calls', async () => {
   const runId = await runWaitingFor('breaker', 'r-b')
-  expect((await authed('POST', `/v1/runs/${runId}/resolve`, { action: 'continue' })).statusCode).toBe(202)
+  expect((await authed('POST', `/v1/runs/${runId}/input`, { action: 'continue' })).statusCode).toBe(202)
   const events = await new PgRunStore(pool, 'default').readEvents(runId)
   expect(events.at(-2)).toMatchObject({ type: 'limit.continued', payload: { limit: 'llm_calls' } })
 })
@@ -1072,7 +1122,7 @@ test('approve after the wait expired gives 409 not_waiting_human', async () => {
     { type: 'limit.reached', payload: { limit: 'wait_human_s', max: 60, value: 61 }, labels: [] },
     { type: 'run.state_changed', payload: { from: 'waiting_human', to: 'failed', reason: 'wait_expired' }, labels: [] },
   ])
-  const res = await authed('POST', `/v1/runs/${runId}/resolve`, { action: 'approve' })
+  const res = await authed('POST', `/v1/runs/${runId}/input`, { action: 'approve' })
   expect(res.statusCode).toBe(409)
   expect(res.json().error.code).toBe('not_waiting_for_approval')
 })
@@ -1103,7 +1153,7 @@ test('only the admin key may continue a run past the tenant daily cost', async (
   const before = (await store.readEvents('r-day')).length
   const asTenant = await app.inject({
     method: 'POST',
-    url: '/v1/runs/r-day/resolve',
+    url: '/v1/runs/r-day/input',
     payload: { action: 'continue' },
     headers: { authorization: `Bearer ${tenant!.apiKey}` },
   })
@@ -1112,7 +1162,7 @@ test('only the admin key may continue a run past the tenant daily cost', async (
   expect((await store.readEvents('r-day')).length).toBe(before)
   const cancel = await app.inject({
     method: 'POST',
-    url: '/v1/runs/r-day/resolve',
+    url: '/v1/runs/r-day/input',
     payload: { action: 'cancel' },
     headers: { authorization: `Bearer ${tenant!.apiKey}` },
   })

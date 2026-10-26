@@ -98,12 +98,12 @@ test('POST /v1/webhooks: a replay has the same id, no secret, and no secret at r
   expect(stored).not.toContain(a.json().secret)
 })
 
-test('POST /v1/runs/:id/resolve: a replay appends no second event', async () => {
+test('POST /v1/runs/:id/input: a replay appends no second event', async () => {
   const runId = await waitingRun()
   const store = new PgRunStore(pool, 'default')
-  const a = await send('POST', `/v1/runs/${runId}/resolve`, { action: 'cancel' }, 'r1')
+  const a = await send('POST', `/v1/runs/${runId}/input`, { action: 'cancel' }, 'r1')
   const n = (await store.readEvents(runId)).length
-  const b = await send('POST', `/v1/runs/${runId}/resolve`, { action: 'cancel' }, 'r1')
+  const b = await send('POST', `/v1/runs/${runId}/input`, { action: 'cancel' }, 'r1')
   expect(a.statusCode).toBe(202)
   expect(b.statusCode).toBe(202)
   expect(b.headers['idempotent-replayed']).toBe('true')
@@ -113,7 +113,7 @@ test('POST /v1/runs/:id/resolve: a replay appends no second event', async () => 
 test('the same key on a different endpoint is refused', async () => {
   const runId = await waitingRun()
   await send('POST', '/v1/agents', agentBody, 'shared')
-  const res = await send('POST', `/v1/runs/${runId}/cancel`, {}, 'shared')
+  const res = await send('POST', `/v1/runs/${runId}/input`, { action: 'cancel' }, 'shared')
   expect(res.statusCode).toBe(422)
   expect(res.json().error.code).toBe('idempotency_key_reused')
 })

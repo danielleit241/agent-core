@@ -2,8 +2,8 @@ import { randomUUID } from 'node:crypto'
 import type { FastifyInstance, FastifyRequest } from 'fastify'
 import { z } from 'zod'
 import { projectRun, verifyChain } from '@agent-core/core'
-import type { NewEvent, SecretBox, StoredEvent, WaitingReason } from '@agent-core/core'
-import { ConfigRepo, PgRunStore, StateConflictError, createRunWithEvent, getRun, getRunHead } from '@agent-core/store-postgres'
+import type { NewEvent, RunStatus, SecretBox, StoredEvent, WaitingReason } from '@agent-core/core'
+import { ConfigRepo, PgRunStore, StateConflictError, createRunWithEvent, getRun, getRunHead, makeDue } from '@agent-core/store-postgres'
 import type { createPool } from '@agent-core/store-postgres'
 import { apiError, validationError } from '../errors'
 import { getRunView } from '../../runs/views'
@@ -19,7 +19,12 @@ const RunBody = z.object({
 })
 const ACTIONS = ['approve', 'reject', 'outcome_happened', 'outcome_not_happened', 'continue', 'cancel'] as const
 type Action = (typeof ACTIONS)[number]
-const ResolveBody = z.object({ action: z.enum(ACTIONS) })
+/** Everything a human sends to a run. `message` steers it; the other actions answer a wait or cancel it. */
+const InputBody = z.union([
+  z.object({ action: z.enum(ACTIONS) }).strict(),
+  z.object({ action: z.literal('message'), text: z.string().min(1).max(32_000) }).strict(),
+])
+const ENDED: readonly RunStatus[] = ['completed', 'failed', 'cancelled']
 
 /** The actions a human may take for each waiting reason. A reason without an entry only allows `cancel`. */
 const ALLOWED: Partial<Record<WaitingReason, readonly Action[]>> = {
@@ -33,6 +38,7 @@ const allowedFor = (reason: WaitingReason | null): readonly Action[] => (reason 
 const HAPPENED_TEXT = 'A human confirmed that this action happened. Its result is not available.'
 
 const notCancellable = (fix: string) => apiError('run_not_cancellable', 'The run cannot be cancelled in its current state.', fix, 409)
+const runEnded = () => apiError('run_ended', 'The run has ended and takes no more input.', 'Start a new run with POST /v1/runs.', 409)
 
 const runNotFound = (id: string) =>
   apiError('run_not_found', `Run "${id}" does not exist.`, 'Check the run id returned by POST /v1/runs.', 404)
@@ -151,14 +157,64 @@ export function registerRunRoutes(app: FastifyInstance, deps: { pool: ReturnType
     return { events, chain: chain.valid ? { valid: true } : { valid: false, broken_at_seq: chain.brokenAtSeq } }
   })
 
-  app.post<{ Params: { id: string } }>('/v1/runs/:id/resolve', { config: { idempotent: true } }, async (req, reply) => {
-    const parsed = ResolveBody.safeParse(req.body)
+  /**
+   * A run that is not running is cancelled at once. A running run gets a cancel input and its job is made due:
+   * the runner stops it before its next step, so a tool call in flight still finishes.
+   */
+  async function cancelRun(req: FastifyRequest, runId: string, firstStatus: RunStatus): Promise<{ run_id: string; status: RunStatus }> {
+    const store = storeFor(req)
+    let status = firstStatus
+    // One retry: the run may move on meanwhile (a worker starts it, or a human resumes it); a cancel still applies.
+    for (let attempt = 0; ; attempt++) {
+      if (ENDED.includes(status)) throw notCancellable('The run has already ended.')
+      try {
+        if (status === 'running') {
+          await store.append(runId, [{ type: 'input.received', payload: { action: 'cancel' }, labels: [] }], { expect: { status: 'running' } })
+          await makeDue(pool, req.auth.tenantId, runId)
+          return { run_id: runId, status: 'running' }
+        }
+        await store.append(runId, [{ type: 'run.state_changed', payload: { from: status, to: 'cancelled' }, labels: [] }], { expect: { status } })
+        return { run_id: runId, status: 'cancelled' }
+      } catch (err) {
+        if (!(err instanceof StateConflictError)) throw err
+        if (attempt > 0) {
+          throw notCancellable('The run changed state while cancelling. Check GET /v1/runs/{id} and retry.')
+        }
+        status = (await getRun(pool, req.auth.tenantId, runId))?.status ?? status
+      }
+    }
+  }
+
+  /** Records a message for the run. The runner adds it to the context before its next LLM call; the run's state does not change. */
+  async function sendMessage(req: FastifyRequest, runId: string, firstStatus: RunStatus, text: string): Promise<{ run_id: string; status: RunStatus }> {
+    const store = storeFor(req)
+    let status = firstStatus
+    // One retry: the run may move between states (for example queued to running) while the message is sent.
+    for (let attempt = 0; ; attempt++) {
+      if (ENDED.includes(status)) throw runEnded()
+      try {
+        await store.append(runId, [{ type: 'input.received', payload: { action: 'message', text }, labels: ['untrusted'] }], {
+          expect: { status },
+        })
+        return { run_id: runId, status }
+      } catch (err) {
+        if (!(err instanceof StateConflictError) || attempt > 0) throw err
+        status = (await getRun(pool, req.auth.tenantId, runId))?.status ?? status
+      }
+    }
+  }
+
+  app.post<{ Params: { id: string } }>('/v1/runs/:id/input', { config: { idempotent: true } }, async (req, reply) => {
+    const parsed = InputBody.safeParse(req.body)
     if (!parsed.success) throw validationError(parsed.error)
-    const { action } = parsed.data
+    const body = parsed.data
     const runId = req.params.id
     const store = storeFor(req)
     const run = await getRun(pool, req.auth.tenantId, runId)
     if (!run) throw runNotFound(runId)
+    if (body.action === 'cancel') return reply.code(202).send(await cancelRun(req, runId, run.status))
+    if (body.action === 'message') return reply.code(202).send(await sendMessage(req, runId, run.status, body.text))
+    const { action } = body
     // approve and reject keep their original error code for a run that is not waiting.
     const notWaiting =
       action === 'approve' || action === 'reject'
@@ -187,17 +243,13 @@ export function registerRunRoutes(app: FastifyInstance, deps: { pool: ReturnType
         409,
       )
     }
-    const stateTo = (to: 'running' | 'cancelled'): NewEvent => ({
+    const stateTo = (to: 'running'): NewEvent => ({
       type: 'run.state_changed',
       payload: { from: 'waiting_human', to },
       labels: [],
     })
     let events: NewEvent[]
-    let enqueue = true
-    if (action === 'cancel') {
-      events = [stateTo('cancelled')]
-      enqueue = false
-    } else if (action === 'continue') {
+    if (action === 'continue') {
       // A legacy `breaker` wait has no limit.reached event; it was an llm_calls breach.
       const breached = logged.findLast((e) => e.type === 'limit.reached')
       const limit = proj.waitingReason === 'breaker' || breached?.type !== 'limit.reached' ? 'llm_calls' : breached.payload.limit
@@ -232,34 +284,12 @@ export function registerRunRoutes(app: FastifyInstance, deps: { pool: ReturnType
     }
     try {
       // The expectation is checked under the row lock, so two concurrent resolves cannot both write.
-      await store.append(runId, events, { expect: { status: 'waiting_human', waitingReason: proj.waitingReason ?? undefined, lastSeq: logged.at(-1)!.seq }, enqueue })
+      await store.append(runId, events, { expect: { status: 'waiting_human', waitingReason: proj.waitingReason ?? undefined, lastSeq: logged.at(-1)!.seq }, enqueue: true })
     } catch (err) {
       if (err instanceof StateConflictError) throw notWaiting
       throw err
     }
-    return reply.code(202).send({ run_id: runId, status: action === 'cancel' ? 'cancelled' : 'queued' })
+    return reply.code(202).send({ run_id: runId, status: 'queued' })
   })
 
-  app.post<{ Params: { id: string } }>('/v1/runs/:id/cancel', { config: { idempotent: true } }, async (req, reply) => {
-    const runId = req.params.id
-    const store = storeFor(req)
-    const run = await getRun(pool, req.auth.tenantId, runId)
-    if (!run) throw runNotFound(runId)
-    if (run.status !== 'queued' && run.status !== 'waiting_human') {
-      throw notCancellable(
-        run.status === 'running' ? 'A running run can be cancelled from M2; wait for it to pause or end.' : 'The run has already ended.',
-      )
-    }
-    try {
-      await store.append(
-        runId,
-        [{ type: 'run.state_changed', payload: { from: run.status, to: 'cancelled' }, labels: [] }],
-        { expect: { status: run.status } },
-      )
-    } catch (err) {
-      if (err instanceof StateConflictError) throw notCancellable('The run changed state while cancelling. Check GET /v1/runs/{id} and retry.')
-      throw err
-    }
-    return reply.code(202).send({ run_id: runId, status: 'cancelled' })
-  })
 }

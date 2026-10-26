@@ -203,7 +203,7 @@ async function processJob(deps: RunWorkerDeps, job: { runId: string; tenantId: s
     return
   }
   if (status === 'waiting_human') {
-    // Keep the job, due when the wait expires; a human's answer makes it due at once (resolve enqueues).
+    // Keep the job, due when the wait expires; a human's answer makes it due at once (the input route enqueues).
     try {
       const proj = projectRun(await new PgRunStore(deps.pool, tenantId).readEvents(runId), '')
       if (proj.status === 'waiting_human' && proj.waitExpiresAt !== null) {

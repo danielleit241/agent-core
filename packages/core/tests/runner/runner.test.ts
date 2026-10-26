@@ -1,5 +1,5 @@
 import { GENESIS_HASH, hashEvent } from '../../src/events/hash'
-import type { LLMPort, RunStore, ToolInvoker } from '../../src/ports'
+import { AppendConflictError, type LLMPort, type RunStore, type ToolInvoker } from '../../src/ports'
 import { projectRun } from '../../src/events/projection'
 import { advanceRun, expireWait } from '../../src/runner/runner'
 import type { AgentDefinition, Limits, Message, NewEvent, RunStatus, StoredEvent, ToolDescriptor } from '../../src/types'
@@ -11,8 +11,9 @@ class MemoryRunStore implements RunStore {
   async readEvents(runId: string): Promise<StoredEvent[]> {
     return [...(this.logs.get(runId) ?? [])]
   }
-  async append(runId: string, events: NewEvent[]): Promise<StoredEvent[]> {
+  async append(runId: string, events: NewEvent[], opts?: { expect?: { lastSeq: number } }): Promise<StoredEvent[]> {
     const log = this.logs.get(runId) ?? []
+    if (opts?.expect !== undefined && (log.at(-1)?.seq ?? 0) !== opts.expect.lastSeq) throw new AppendConflictError(`run ${runId} moved on`)
     const stored: StoredEvent[] = []
     for (const e of events) {
       const prev = log.at(-1)
@@ -1200,4 +1201,71 @@ test('a crash after any append never repeats a completed tool call or an unkeyed
       expect(status, ctx).toBe('completed')
     }
   }
+})
+
+describe('run input', () => {
+  const cancelInput: NewEvent = { type: 'input.received', payload: { action: 'cancel' }, labels: [] }
+  const message = (text: string): NewEvent => ({ type: 'input.received', payload: { action: 'message', text }, labels: ['untrusted'] })
+  /** A tool fake that lets a human send input while the tool runs, as the API would. */
+  function toolsSending(store: RunStore, input: NewEvent) {
+    const tools = fakeTools()
+    const call = tools.call.bind(tools)
+    tools.call = async (tool, args, ctx) => {
+      await store.append('r1', [input])
+      return call(tool, args, ctx)
+    }
+    return tools
+  }
+
+  test('a cancel input stops a running run before its next step; the call in flight finishes', async () => {
+    const llm = scriptedLlm([callTool('orders.get', { order_id: '1042' }), say('done')])
+    const store = new MemoryRunStore()
+    await store.append('r1', [created()])
+    const tools = toolsSending(store, cancelInput)
+    expect(await advanceRun('r1', deps({ llm, store, tools }))).toBe('cancelled')
+    const log = await store.readEvents('r1')
+    expect(log.at(-2)!.type).toBe('tool.responded')
+    expect(log.at(-1)!.payload).toEqual({ from: 'running', to: 'cancelled', reason: 'cancelled' })
+    expect(llm.requests).toHaveLength(1)
+  })
+
+  test('a cancel input stops a run that waits for an LLM retry', async () => {
+    const T0 = new Date('2026-01-01T00:00:00.000Z')
+    const { store, tools } = await setupWithEvents([
+      created(),
+      stateChanged('queued', 'running'),
+      { type: 'llm.requested', payload: { model: 'test-model' }, labels: [] },
+      { type: 'error.raised', payload: { message: 'busy', retryable: true, retryAt: '2026-01-01T00:05:00.000Z' }, labels: [] },
+      cancelInput,
+    ])
+    expect(await advanceRun('r1', deps({ llm: scriptedLlm([]), store, tools, now: () => T0 }))).toBe('cancelled')
+  })
+
+  test('a steering message reaches the next LLM request after the tool results', async () => {
+    const llm = scriptedLlm([callTool('orders.get', { order_id: '1042' }), say('done')])
+    const store = new MemoryRunStore()
+    await store.append('r1', [created()])
+    const tools = toolsSending(store, message('Use express shipping'))
+    expect(await advanceRun('r1', deps({ llm, store, tools }))).toBe('completed')
+    expect(llm.lastRequest().messages.slice(-2).map((m) => [m.role, m.content])).toEqual([
+      ['tool', JSON.stringify({ id: '1042', status: 'delivered' })],
+      ['user', 'Use express shipping'],
+    ])
+  })
+
+  test('a message that arrives during the final LLM call is read before the run completes', async () => {
+    const store = new MemoryRunStore()
+    await store.append('r1', [created()])
+    const inner = scriptedLlm([say('Done.'), say('Express it is.')])
+    const llm: LLMPort = {
+      async complete(req) {
+        if (inner.requests.length === 0) await store.append('r1', [message('Use express shipping')])
+        return inner.complete(req)
+      },
+    }
+    expect(await advanceRun('r1', deps({ llm, store, tools: fakeTools() }))).toBe('completed')
+    expect(inner.requests).toHaveLength(2)
+    expect(inner.lastRequest().messages.at(-1)).toEqual({ role: 'user', content: 'Use express shipping' })
+    expect(projectRun(await store.readEvents('r1'), '').output).toBe('Express it is.')
+  })
 })

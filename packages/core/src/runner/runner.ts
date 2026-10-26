@@ -1,4 +1,4 @@
-import type { LLMPort, RunStore, ToolInvoker } from '../ports'
+import { AppendConflictError, type LLMPort, type RunStore, type ToolInvoker } from '../ports'
 import { projectRun, type RunProjection } from '../events/projection'
 import { decide } from '../policy/rules'
 import { resolveLimits, type LimitName, type Limits } from '../limits'
@@ -155,6 +155,10 @@ export async function advanceRun(runId: string, deps: RunnerDeps): Promise<RunSt
       continue
     }
     if (proj.status !== 'running') return proj.status
+    if (proj.cancelRequested) {
+      await deps.store.append(runId, [stateChanged('running', 'cancelled', 'cancelled')])
+      return 'cancelled'
+    }
 
     const call = proj.pendingToolCalls[0]
     // A call in flight finishes first: stopping there would leave its outcome unknown.
@@ -386,8 +390,16 @@ async function llmStep(
     return 'failed'
   }
   if (res.stopReason === 'end') {
-    await store.append(runId, [responded, stateChanged('running', 'completed')])
-    return 'completed'
+    try {
+      // Written only if nothing arrived during the call: a message sent meanwhile must still be read.
+      await store.append(runId, [responded, stateChanged('running', 'completed')], { expect: { lastSeq: proj.lastSeq + 1 } })
+      return 'completed'
+    } catch (err) {
+      if (!(err instanceof AppendConflictError)) throw err
+      // Input arrived. Keep the answer; the next step reads the input (a message or a cancel).
+      await store.append(runId, [responded])
+      return 'continue'
+    }
   }
   if (res.stopReason === 'length' && !hasToolCalls) {
     await store.append(runId, [

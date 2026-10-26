@@ -1,6 +1,6 @@
 import pg from 'pg'
 import { afterAll, beforeAll, beforeEach, expect, test } from 'vitest'
-import { claim, assertTestDatabase, runtimeTestUrl, createPool, enqueue, heartbeat, release, requeueIfHolder, runMigrations } from '../../src'
+import { claim, assertTestDatabase, runtimeTestUrl, createPool, enqueue, heartbeat, makeDue, release, requeueIfHolder, runMigrations } from '../../src'
 
 const url = process.env.TEST_DATABASE_URL ?? 'postgres://agentcore:agentcore@localhost:5433/agentcore_test'
 let migrator: pg.Pool
@@ -88,6 +88,32 @@ test('requeueIfHolder with availableAt sets the time only for the lock holder', 
   const row = (await migrator.query('SELECT locked_by, available_at FROM queue')).rows[0]
   expect(row.locked_by).toBeNull()
   expect(new Date(row.available_at).getTime()).toBe(at.getTime())
+})
+
+test('makeDue makes a waiting job due now and keeps the lock of a running one', async () => {
+  await enqueue(pool, { runId: 'r1', tenantId: 'default', availableAt: new Date(Date.now() + 60_000) })
+  await makeDue(pool, 'default', 'r1')
+  expect(await claim(pool, 'w1')).toEqual({ runId: 'r1', tenantId: 'default' })
+  await makeDue(pool, 'default', 'r1')
+  expect((await migrator.query('SELECT locked_by FROM queue')).rows).toEqual([{ locked_by: 'w1' }])
+})
+
+test('requeueIfHolder makes the job due now when it was nudged while held', async () => {
+  await enqueue(pool, { runId: 'r1', tenantId: 'default' })
+  await claim(pool, 'w1')
+  await makeDue(pool, 'default', 'r1')
+  await requeueIfHolder(pool, 'r1', 'w1', new Date(Date.now() + 300_000))
+  expect(await claim(pool, 'w2')).toEqual({ runId: 'r1', tenantId: 'default' })
+  // The nudge was used: the next requeue keeps its own time.
+  const at = new Date(Date.now() + 60_000)
+  await requeueIfHolder(pool, 'r1', 'w2', at)
+  expect(new Date((await migrator.query('SELECT available_at FROM queue')).rows[0].available_at).getTime()).toBe(at.getTime())
+})
+
+test('makeDue does nothing for a job of another tenant', async () => {
+  await enqueue(pool, { runId: 'r1', tenantId: 'default', availableAt: new Date(Date.now() + 60_000) })
+  await makeDue(pool, 't2', 'r1')
+  expect(await claim(pool, 'w1')).toBeNull()
 })
 
 const lockedCount = async (tenant: string): Promise<number> =>

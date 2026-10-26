@@ -1,6 +1,6 @@
 import pg from 'pg'
 import { afterAll, beforeAll, beforeEach, expect, test } from 'vitest'
-import { verifyChain } from '@agent-core/core'
+import { AppendConflictError, verifyChain } from '@agent-core/core'
 import type { NewEvent, RunStatus } from '@agent-core/core'
 import {
   ChainIntegrityError,
@@ -145,6 +145,15 @@ test('append with expect.lastSeq throws StateConflictError and writes nothing wh
   expect((await store.readEvents('r9b')).length).toBe(before)
   await store.append('r9b', [ev.llmRequested()], { expect: { status: 'queued', lastSeq: 2 } })
   expect((await store.readEvents('r9b')).length).toBe(before + 1)
+})
+
+test('the port form of expect (lastSeq only) refuses a moved log with the core AppendConflictError', async () => {
+  await createRun(pool, { tenantId: 'default', runId: 'r9c', agentId: 'a', agentVersion: 1, input: { text: 'hi' } })
+  const store = new PgRunStore(pool, 'default')
+  await store.append('r9c', [ev.runCreated(), ev.llmRequested()])
+  await expect(store.append('r9c', [ev.llmRequested()], { expect: { lastSeq: 1 } })).rejects.toBeInstanceOf(AppendConflictError)
+  await store.append('r9c', [ev.llmRequested()], { expect: { lastSeq: 2 } })
+  expect(await store.readEvents('r9c')).toHaveLength(3)
 })
 
 test('a state change from a status the run is no longer in throws StateConflictError and writes nothing', async () => {
