@@ -302,6 +302,13 @@ export class PgRunStore implements RunStore {
     return res.rows.map(toStored)
   }
 
+  async readEventsAfter(runId: string, afterSeq: number): Promise<StoredEvent[]> {
+    const res = await withTenant(this.pool, this.tenantId, (client) =>
+      client.query('SELECT * FROM events WHERE tenant_id = $1 AND run_id = $2 AND seq > $3 ORDER BY seq', [this.tenantId, runId, afterSeq]),
+    )
+    return res.rows.map(toStored)
+  }
+
   /** Sum of `usage.costUsd` over the tenant's LLM responses since `since`. A response without a cost adds 0. */
   async tenantCostSince(since: Date): Promise<number> {
     const res = await withTenant(this.pool, this.tenantId, (client) =>

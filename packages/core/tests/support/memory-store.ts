@@ -10,6 +10,9 @@ export class MemoryRunStore implements RunStore {
   async readEvents(runId: string): Promise<StoredEvent[]> {
     return [...(this.logs.get(runId) ?? [])]
   }
+  async readEventsAfter(runId: string, afterSeq: number): Promise<StoredEvent[]> {
+    return (this.logs.get(runId) ?? []).filter((e) => e.seq > afterSeq)
+  }
   async append(runId: string, events: NewEvent[], opts?: { expect?: { lastSeq: number } }): Promise<StoredEvent[]> {
     const log = this.logs.get(runId) ?? []
     if (opts?.expect !== undefined && (log.at(-1)?.seq ?? 0) !== opts.expect.lastSeq) throw new AppendConflictError(`run ${runId} moved on`)

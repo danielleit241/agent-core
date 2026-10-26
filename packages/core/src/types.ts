@@ -136,7 +136,7 @@ export const RunStatusSchema = z.enum([
 export type RunStatus = z.infer<typeof RunStatusSchema>
 
 // `breaker` is the old name of an `llm_calls` breach; only old logs carry it.
-export const WaitingReasonSchema = z.enum(['approval', 'unknown_outcome', 'limit', 'breaker', 'handoff', 'needs_input'])
+export const WaitingReasonSchema = z.enum(['approval', 'unknown_outcome', 'limit', 'breaker', 'handoff', 'input', 'escalated'])
 export type WaitingReason = z.infer<typeof WaitingReasonSchema>
 
 export const UsageSchema = z.object({
@@ -201,6 +201,9 @@ const payloadSchemas = {
     expiresAt: z.string().optional(),
     // ISO 8601; set when a run starts to sleep until a follow-up.
     wakeAt: z.string().optional(),
+    // The question of `ask_human`, or the agent's reason for `escalate`; shown to the human who answers.
+    question: z.string().optional(),
+    escalation: z.string().optional(),
   }),
   // A connection guard made the call wait; the call has not been sent. `retryAt` is ISO 8601.
   'tool.deferred': z.object({

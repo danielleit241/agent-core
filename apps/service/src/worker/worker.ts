@@ -1,5 +1,6 @@
 import { SecretDecryptError, advance, expireWait, projectRun } from '@agent-core/core'
 import type { AgentDefinition, ConnectionGuard, ConnectionLimits, LLMPort, RunStatus, SecretBox, ToolDescriptor, ToolInvoker } from '@agent-core/core'
+import { resolveAgent } from '../default-agent'
 import { createSubruns } from '../runs/subruns'
 import {
   ConfigRepo,
@@ -62,7 +63,7 @@ async function loadContext(pool: Pool, secrets: SecretBox, runId: string, tenant
   const run = await getRun(pool, tenantId, runId)
   if (!run) throw new ConfigError(`run not found: ${runId}`)
   const config = new ConfigRepo(pool, tenantId, secrets)
-  const agent = await config.getAgent(run.agentId)
+  const agent = await resolveAgent(config, run.agentId)
   if (!agent) throw new ConfigError(`agent not found: ${run.agentId}`)
   // No prototype: a tool named `toString` must not collide with inherited members.
   const toolsByName: Record<string, ToolDescriptor> = Object.create(null)

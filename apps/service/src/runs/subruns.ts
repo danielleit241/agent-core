@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import { projectRun } from '@agent-core/core'
 import type { SecretBox, SubrunPort } from '@agent-core/core'
+import { resolveAgent } from '../default-agent'
 import { ConfigRepo, PgRunStore, createRunWithEvent, getRun } from '@agent-core/store-postgres'
 import type { createPool } from '@agent-core/store-postgres'
 
@@ -10,7 +11,7 @@ type Pool = ReturnType<typeof createPool>
 export function createSubruns(pool: Pool, secrets: SecretBox, tenantId: string): SubrunPort {
   return {
     async start({ agentId, input, parent, principal }) {
-      const agent = await new ConfigRepo(pool, tenantId, secrets).getAgent(agentId)
+      const agent = await resolveAgent(new ConfigRepo(pool, tenantId, secrets), agentId)
       if (!agent) throw new Error(`subrun agent not found: ${agentId}`)
       const created = await createRunWithEvent(pool, {
         tenantId,

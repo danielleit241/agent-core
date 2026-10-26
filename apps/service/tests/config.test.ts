@@ -18,16 +18,19 @@ test('a full env', () => {
     databaseUrl: full.DATABASE_URL,
     migratorUrl: full.MIGRATOR_DATABASE_URL,
     adminKey: 'admin',
-    llmBaseUrl: 'http://llm.test/v1',
-    llmApiKey: 'k',
-    models: { default: 'm1', smart: 'm2' },
+    llm: { baseUrl: 'http://llm.test/v1', apiKey: 'k', models: { default: 'm1', smart: 'm2' } },
     port: 8080,
   })
-  expect(c.ok && c.masterKey.equals(Buffer.alloc(32, 7))).toBe(true)
+  expect(c.ok && c.masterKey?.equals(Buffer.alloc(32, 7))).toBe(true)
 })
 
 test('defaults: port 7300, empty llm api key, only the default model', () => {
-  expect(readServiceConfig(full)).toMatchObject({ ok: true, port: 7300, llmApiKey: '', models: { default: 'm1' } })
+  expect(readServiceConfig(full)).toMatchObject({
+    ok: true,
+    port: 7300,
+    dataDir: './.data',
+    llm: { apiKey: '', models: { default: 'm1' } },
+  })
 })
 
 test('missing MIGRATOR_DATABASE_URL', () => {
@@ -35,9 +38,22 @@ test('missing MIGRATOR_DATABASE_URL', () => {
   expect(readServiceConfig(env)).toEqual({ ok: false, error: 'missing required environment variable(s): MIGRATOR_DATABASE_URL' })
 })
 
-test('missing AGENT_CORE_MASTER_KEY', () => {
-  const env = { ...full, AGENT_CORE_MASTER_KEY: undefined }
-  expect(readServiceConfig(env)).toEqual({ ok: false, error: 'missing required environment variable(s): AGENT_CORE_MASTER_KEY' })
+test('only the two database URLs are required', () => {
+  const c = readServiceConfig({ DATABASE_URL: full.DATABASE_URL, MIGRATOR_DATABASE_URL: full.MIGRATOR_DATABASE_URL })
+  expect(c).toMatchObject({ ok: true, adminKey: null, masterKey: null, llm: null })
+})
+
+test.each(['LLM_BASE_URL', 'LLM_MODEL_DEFAULT'] as const)('without %s the llm is null', (name) => {
+  expect(readServiceConfig({ ...full, [name]: undefined })).toMatchObject({ ok: true, llm: null })
+})
+
+test('AGENT_CORE_DATA_DIR sets the data directory', () => {
+  expect(readServiceConfig({ ...full, AGENT_CORE_DATA_DIR: '/data' })).toMatchObject({ ok: true, dataDir: '/data' })
+})
+
+test('missing DATABASE_URL', () => {
+  const env = { ...full, DATABASE_URL: undefined }
+  expect(readServiceConfig(env)).toEqual({ ok: false, error: 'missing required environment variable(s): DATABASE_URL' })
 })
 
 test('master key of 16 bytes', () => {

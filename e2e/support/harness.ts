@@ -1,7 +1,7 @@
 import { createServer } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import { createSecretBox } from '@agent-core/core'
-import { createServiceStack } from '@agent-core/service'
+import { createServiceStack, hashAdminKey } from '@agent-core/service'
 import { createOpenAICompatible } from '@agent-core/llm'
 import { assertTestDatabase, assertTestPool, createPool, runMigrations, runtimeTestUrl } from '@agent-core/store-postgres'
 import { startFakeLlm } from '@agent-core/fake-llm'
@@ -65,7 +65,7 @@ export async function startStack(script: FakeTurn[], opts: StackOpts = {}): Prom
     : createOpenAICompatible({ baseUrl: fakeLlm!.url, apiKey: 'fake', models: { default: 'fake-model' } })
   const stack = createServiceStack({
     pool,
-    adminKey: ADMIN_KEY,
+    adminKeyHash: hashAdminKey(ADMIN_KEY),
     secrets: createSecretBox(Buffer.alloc(32, 7)),
     llm,
     workerId: 'e2e-worker',

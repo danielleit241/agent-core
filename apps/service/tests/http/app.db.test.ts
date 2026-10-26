@@ -1,6 +1,7 @@
+import { hashAdminKey } from '../../src/bootstrap'
 import type { FastifyInstance } from 'fastify'
 import { afterAll, beforeAll, beforeEach, expect, test } from 'vitest'
-import { toolFingerprint } from '@agent-core/core'
+import { projectRun, toolFingerprint } from '@agent-core/core'
 import type { LLMPort, NewEvent, ToolDescriptor } from '@agent-core/core'
 import { ConfigRepo, PgRunStore, assertTestDatabase, createPool, runtimeTestUrl, createRun, createRunWithEvent, createTenant, getRun, getRunHead, runMigrations } from '@agent-core/store-postgres'
 import { buildApp } from '../../src/http/app'
@@ -41,7 +42,7 @@ beforeAll(() => {
 beforeEach(async () => {
   await migrator.query('DROP SCHEMA public CASCADE; CREATE SCHEMA public')
   await runMigrations(migrator, { runtimeUser: 'agentcore_runtime' })
-  app = buildApp({ secrets: box, pool, adminKey: ADMIN_KEY, discoverTools })
+  app = buildApp({ secrets: box, pool, adminKeyHash: hashAdminKey(ADMIN_KEY), discoverTools })
 })
 afterAll(async () => {
   await pool.end()
@@ -120,7 +121,7 @@ async function runWaitingForOutcome(runId = 'r-out', reason: string | null = 'Th
   return runId
 }
 
-async function runWaitingFor(reason: 'breaker' | 'handoff' | 'needs_input' | 'limit', runId = 'r-other', before: NewEvent[] = []): Promise<string> {
+async function runWaitingFor(reason: 'breaker' | 'handoff' | 'input' | 'escalated' | 'limit', runId = 'r-other', before: NewEvent[] = []): Promise<string> {
   const { version } = await seedAgent()
   await createRun(pool, { tenantId: 'default', runId, agentId: 'helper', agentVersion: version, input: { text: 'hi' } })
   await new PgRunStore(pool, 'default').append(runId, [
@@ -151,7 +152,7 @@ test('healthz needs no key', async () => {
 
 test('healthz reports 503 when the database is down', async () => {
   const dead = createPool('postgres://agentcore:agentcore@localhost:1/none')
-  const res = await buildApp({ secrets: box, pool: dead, adminKey: ADMIN_KEY }).inject({ method: 'GET', url: '/healthz' })
+  const res = await buildApp({ secrets: box, pool: dead, adminKeyHash: hashAdminKey(ADMIN_KEY) }).inject({ method: 'GET', url: '/healthz' })
   await dead.end()
   expect(res.statusCode).toBe(503)
   expect(res.json()).toEqual({ status: 'degraded', db: 'error' })
@@ -256,7 +257,7 @@ const changedApp = (change: Partial<ToolDescriptor>) =>
   buildApp({
     secrets: box,
     pool,
-    adminKey: ADMIN_KEY,
+    adminKeyHash: hashAdminKey(ADMIN_KEY),
     discoverTools: async (id: string) => (await discoverTools(id)).map((d) => ({ ...d, tool: { ...d.tool, ...change } })),
   })
 const register = (a: FastifyInstance) =>
@@ -311,7 +312,7 @@ test('a tool added when a connection is registered again waits for review', asyn
   const renamed = buildApp({
     secrets: box,
     pool,
-    adminKey: ADMIN_KEY,
+    adminKeyHash: hashAdminKey(ADMIN_KEY),
     discoverTools: async (id: string) => (await discoverTools(id)).map((d) => ({ ...d, tool: { ...d.tool, name: 'orders.list' } })),
   })
   const res = await renamed.inject({
@@ -368,7 +369,7 @@ test('a connection may not register a tool named with the built-in prefix agent_
   const mcp = buildApp({
     secrets: box,
     pool,
-    adminKey: ADMIN_KEY,
+    adminKeyHash: hashAdminKey(ADMIN_KEY),
     discoverTools: async (id: string) => (await discoverTools(id)).map((d) => ({ ...d, tool: { ...d.tool, name: 'agent_core.escalate' } })),
   })
   const res = await mcp.inject({
@@ -388,7 +389,7 @@ test('an unreachable connection gives 422 and a non-http url gives 400', async (
   const failing = buildApp({
     secrets: box,
     pool,
-    adminKey: ADMIN_KEY,
+    adminKeyHash: hashAdminKey(ADMIN_KEY),
     discoverTools: async () => {
       throw new Error('connection_unreachable: boom')
     },
@@ -665,7 +666,7 @@ test('connection responses never contain url credentials', async () => {
   const failing = buildApp({
     secrets: box,
     pool,
-    adminKey: ADMIN_KEY,
+    adminKeyHash: hashAdminKey(ADMIN_KEY),
     discoverTools: async () => {
       throw new Error('connection_unreachable: http://user:pass@host.test/mcp')
     },
@@ -861,7 +862,7 @@ test('cancel through resolve ends a run waiting for any reason', async () => {
     await runWaitingForOutcome('r-o'),
     await runWaitingFor('breaker', 'r-b'),
     await runWaitingFor('handoff', 'r-h'),
-    await runWaitingFor('needs_input', 'r-n'),
+    await runWaitingFor('input', 'r-n'),
   ]
   for (const id of ids) {
     const res = await authed('POST', `/v1/runs/${id}/input`, { action: 'cancel' })
@@ -895,6 +896,66 @@ test('an action that does not fit the waiting reason gives 409 action_not_allowe
     for (const a of allowed) expect(res.json().error.fix).toContain(a)
     expect((await eventTypes(id)).length).toBe(before)
   }
+})
+
+const askHumanCall = (): NewEvent[] => [
+  { type: 'llm.requested', payload: { model: 'm' }, labels: [] },
+  {
+    type: 'llm.responded',
+    payload: {
+      message: { role: 'assistant', content: '', toolCalls: [{ id: 'c1', name: 'agent_core.ask_human', arguments: { question: 'Which order?' } }] },
+      usage: { inputTokens: 1, outputTokens: 1 },
+      stopReason: 'tool_calls',
+    },
+    labels: [],
+  },
+  {
+    type: 'tool.requested',
+    payload: { toolCallId: 'c1', tool: 'agent_core.ask_human', args: { question: 'Which order?' }, idempotencyKey: 'r:c1' },
+    labels: [],
+  },
+]
+
+test.each(['input', 'escalated'] as const)('answer resumes a run waiting for %s', async (reason) => {
+  const runId = await runWaitingFor(reason, `r-${reason}`, askHumanCall())
+  const res = await authed('POST', `/v1/runs/${runId}/input`, { action: 'answer', text: '#1001' })
+  expect(res.statusCode).toBe(202)
+  expect(res.json()).toEqual({ run_id: runId, status: 'queued' })
+  const events = await new PgRunStore(pool, 'default').readEvents(runId)
+  expect(events.slice(-2).map((e) => e.type)).toEqual(['tool.responded', 'run.state_changed'])
+  expect(events.at(-2)).toMatchObject({ payload: { toolCallId: 'c1', content: '#1001', isError: false }, labels: ['untrusted'] })
+  expect(events.at(-1)!.payload).toEqual({ from: 'waiting_human', to: 'running' })
+  expect(await queueRows(runId)).toBe(1)
+})
+
+test('answer is not allowed for approval, and continue and approve are not allowed for input', async () => {
+  const approvalRun = await runWaitingForApproval('r-a')
+  const inputRun = await runWaitingFor('input', 'r-i', askHumanCall())
+  const cases: [string, object, string[]][] = [
+    [approvalRun, { action: 'answer', text: 'x' }, ['approve', 'reject', 'cancel']],
+    [inputRun, { action: 'continue' }, ['answer', 'cancel']],
+    [inputRun, { action: 'approve' }, ['answer', 'cancel']],
+  ]
+  for (const [id, body, allowed] of cases) {
+    const before = await eventTypes(id)
+    const res = await authed('POST', `/v1/runs/${id}/input`, body)
+    expect(res.statusCode).toBe(409)
+    expect(res.json().error.code).toBe('action_not_allowed')
+    for (const a of allowed) expect(res.json().error.fix).toContain(a)
+    expect(await eventTypes(id)).toEqual(before)
+  }
+})
+
+// `message` is accepted in every non-ended state: it steers the run at its next LLM call and never answers a call.
+test('a message to a run waiting for input leaves the ask_human call open; the answer still resolves it first', async () => {
+  const runId = await runWaitingFor('input', 'r-m', askHumanCall())
+  expect((await authed('POST', `/v1/runs/${runId}/input`, { action: 'message', text: 'hello' })).statusCode).toBe(202)
+  expect(projectRun(await new PgRunStore(pool, 'default').readEvents(runId), '').inFlight).toEqual(['c1'])
+  expect((await authed('POST', `/v1/runs/${runId}/input`, { action: 'answer', text: '#1001' })).statusCode).toBe(202)
+  const proj = projectRun(await new PgRunStore(pool, 'default').readEvents(runId), '')
+  expect(proj.inFlight).toEqual([])
+  const roles = proj.messages.map((m) => m.role)
+  expect(roles.lastIndexOf('tool')).toBeLessThan(roles.lastIndexOf('user'))
 })
 
 // cancel is left out: it also cancels a run that is not waiting.

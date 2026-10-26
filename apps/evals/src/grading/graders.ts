@@ -6,6 +6,9 @@ export function gradeDeterministic(s: Scenario, o: Outcome): string[] {
   const failures: string[] = []
   const { expect } = s
   if (o.status !== expect.status) failures.push(`status: expected ${expect.status}, got ${o.status}`)
+  if (expect.waitingReason !== undefined && o.waitingReason !== expect.waitingReason) {
+    failures.push(`waitingReason: expected ${expect.waitingReason}, got ${o.waitingReason ?? 'none'}`)
+  }
 
   const requested = o.events.flatMap((e) => (e.type === 'tool.requested' ? [e.payload] : []))
   for (const want of expect.toolsCalled ?? []) {

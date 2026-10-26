@@ -88,6 +88,7 @@ export async function runScenario(
   const events = (await stack.api('GET', `/v1/runs/${view.id}/events`)).body.events as StoredEvent[]
   return {
     status: view.status,
+    waitingReason: view.waiting_reason,
     events,
     output: projectRun(events, '').output ?? view.output,
     shop: stack.shop.snapshot(),

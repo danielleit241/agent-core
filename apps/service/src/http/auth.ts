@@ -18,17 +18,17 @@ export const ADMIN_TENANT = 'default'
 const sha256 = (s: string): Buffer => createHash('sha256').update(s).digest()
 
 /**
- * Finds who the Authorization header belongs to. The admin key gives tenant `default` with admin rights; a tenant key
+ * Finds who the Authorization header belongs to. The admin key (compared by its SHA-256) gives tenant `default` with admin rights; a tenant key
  * (checked by `resolve`) gives its tenant. Every failure throws the same 401, so a caller cannot tell the causes apart.
  */
 export async function authenticate(
   header: string | undefined,
-  adminKey: string,
+  adminKeyHash: Buffer,
   resolve: (key: string) => Promise<string | null>,
 ): Promise<Auth> {
   const given = header?.match(/^Bearer (.+)$/i)?.[1]
   if (given !== undefined) {
-    if (timingSafeEqual(sha256(given), sha256(adminKey))) return { tenantId: ADMIN_TENANT, admin: true }
+    if (timingSafeEqual(sha256(given), adminKeyHash)) return { tenantId: ADMIN_TENANT, admin: true }
     const tenantId = await resolve(given)
     if (tenantId !== null) return { tenantId, admin: false }
   }

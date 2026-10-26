@@ -1,3 +1,4 @@
+import { hashAdminKey } from '../../src/bootstrap'
 import type { FastifyInstance } from 'fastify'
 import { afterAll, beforeAll, beforeEach, expect, test } from 'vitest'
 import { createSecretBox } from '@agent-core/core'
@@ -19,7 +20,7 @@ beforeAll(() => {
 beforeEach(async () => {
   await migrator.query('DROP SCHEMA public CASCADE; CREATE SCHEMA public')
   await runMigrations(migrator, { runtimeUser: 'agentcore_runtime' })
-  app = buildApp({ secrets: box, pool, adminKey: ADMIN_KEY, models: { default: 'real-a' } })
+  app = buildApp({ secrets: box, pool, adminKeyHash: hashAdminKey(ADMIN_KEY), models: { default: 'real-a' } })
 })
 afterAll(async () => {
   await pool.end()

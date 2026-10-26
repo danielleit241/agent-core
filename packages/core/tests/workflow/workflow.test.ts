@@ -335,3 +335,27 @@ test("a child run gets the parent's principal", async () => {
   await advance('r1', deps)
   expect(subruns.started[0]!.principal).toEqual({ id: 'cus_1', roles: ['customer'] })
 })
+
+test('an aborted LLM call leaves no error and no state change', async () => {
+  let calls = 0
+  const llm: LLMPort = {
+    complete: (req) =>
+      new Promise((resolve, reject) => {
+        if (calls++ > 0 || req.signal === undefined) {
+          resolve({ message: { role: 'assistant', content: 'hello' }, usage: { inputTokens: 1, outputTokens: 1 }, stopReason: 'end' })
+          return
+        }
+        req.signal.addEventListener('abort', () => reject(new Error('aborted')))
+      }),
+  }
+  const { store, deps } = await start({ start: 's', steps: { s: { kind: 'llm', prompt: 'p' } } }, { llm })
+  const ctl = new AbortController()
+  const pending = advance('r1', { ...deps, signal: ctl.signal })
+  await new Promise((r) => setTimeout(r, 10))
+  ctl.abort()
+  expect(await pending).toBe('running')
+  const log = await store.readEvents('r1')
+  expect(log.at(-1)!.type).toBe('llm.requested')
+  expect(log.map((e) => e.type)).not.toContain('error.raised')
+  expect(await advance('r1', { ...deps, signal: new AbortController().signal })).toBe('completed')
+})

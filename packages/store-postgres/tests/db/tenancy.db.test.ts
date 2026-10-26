@@ -149,10 +149,12 @@ test('T-5 a returned connection carries no role or tenant', async () => {
   }
 })
 
-test('T-6 claim role cannot read deliveries body, runs or events', async () => {
+test('T-6 claim role cannot read deliveries body, run data other than status, or events', async () => {
   await seed('a')
   await expect(withClaim(runtime, (c) => c.query('SELECT body FROM webhook_deliveries'))).rejects.toMatchObject({ code: '42501' })
-  await expect(withClaim(runtime, (c) => c.query('SELECT 1 FROM runs'))).rejects.toMatchObject({ code: '42501' })
+  await expect(withClaim(runtime, (c) => c.query('SELECT agent_id FROM runs'))).rejects.toMatchObject({ code: '42501' })
+  // The status column alone is readable, for the run counts in /metrics.
+  await expect(withClaim(runtime, (c) => c.query('SELECT status FROM runs'))).resolves.toMatchObject({ rowCount: 1 })
   await expect(withClaim(runtime, (c) => c.query('SELECT 1 FROM events'))).rejects.toMatchObject({ code: '42501' })
   const scan = await withClaim(runtime, (c) => c.query('SELECT id, tenant_id, status, next_attempt_at FROM webhook_deliveries'))
   expect(scan.rowCount).toBe(1)

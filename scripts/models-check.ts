@@ -2,7 +2,7 @@
 const baseUrl = (process.env.AGENT_CORE_URL ?? 'http://localhost:7300').replace(/\/+$/, '')
 const adminKey = process.env.AGENT_CORE_ADMIN_KEY
 if (!adminKey) {
-  console.error('models:check: set AGENT_CORE_ADMIN_KEY')
+  console.error('models:check: set AGENT_CORE_ADMIN_KEY to the admin key (the one in your .env, or the one printed at first start)')
   process.exit(1)
 }
 const apply = process.argv.includes('--apply')

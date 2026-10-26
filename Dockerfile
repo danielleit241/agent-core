@@ -23,6 +23,11 @@ RUN pnpm install --frozen-lockfile --prod=false
 COPY packages packages
 COPY apps apps
 
+# /data holds master.key; the node user must own it. `agent-core` runs the CLI inside the container.
+RUN mkdir /data && chown node:node /data \
+  && printf '#!/bin/sh\nexec node --import tsx /app/apps/service/src/cli/main.ts "$@"\n' > /usr/local/bin/agent-core \
+  && chmod +x /usr/local/bin/agent-core
+
 USER node
 EXPOSE 7300
 CMD ["node", "--import", "tsx", "apps/service/src/main.ts"]

@@ -32,20 +32,33 @@ The first reference agent is `retail-support`: it looks up orders and refunds th
 
 ## Quickstart
 
+### Docker only
+
+```bash
+docker compose up -d --build   # Postgres and agent-core on http://localhost:7300
+docker compose logs agent-core # the generated admin key is printed once (ak_admin....)
+```
+
+The container needs no `.env`. To enable runs, copy `.env.example` to `.env`, set `LLM_BASE_URL`, `LLM_API_KEY` and `LLM_MODEL_DEFAULT`, then run `docker compose up -d` again. The compose file sets `DATABASE_URL` and `MIGRATOR_DATABASE_URL` for the container, so the `localhost:5433` values in `.env` do not apply there. `master.key` and the admin key live in the `agent-core-data` volume. Run the CLI inside the container with `docker compose exec agent-core agent-core log verify <run-id>`. `pnpm db:up` still starts only Postgres.
+
+### From source
+
 Prerequisites: Node.js 24, pnpm 10 and Docker.
 
 ```bash
 pnpm install
-cp .env.example .env     # set LLM_API_KEY, LLM_MODEL_DEFAULT and AGENT_CORE_MASTER_KEY (openssl rand -base64 32); any OpenAI-compatible endpoint works
+cp .env.example .env     # set LLM_BASE_URL, LLM_API_KEY and LLM_MODEL_DEFAULT; any OpenAI-compatible endpoint works
 pnpm db:up               # Postgres on localhost:5433
 pnpm mock:shop           # terminal 2: mock shop MCP server on http://127.0.0.1:7400/mcp
 pnpm dev                 # terminal 1: agent-core on http://localhost:7300
 ```
 
-Then connect the shop, create an agent and start a run. The key is `AGENT_CORE_ADMIN_KEY` from `.env`.
+On the first start, without `AGENT_CORE_ADMIN_KEY`, the service prints a generated admin key once (`ak_admin.…`). Store it: only its hash is kept. To use your own key, or if you lose it, set `AGENT_CORE_ADMIN_KEY` and restart. Without `AGENT_CORE_MASTER_KEY` the service creates `master.key` in `AGENT_CORE_DATA_DIR` (default `./.data`); back it up, or set the variable for production. Without LLM settings the service still starts, and `GET /readyz` reports `llm_not_configured`.
+
+A run that names no `agent` uses the built-in `default` agent. Then connect the shop, create an agent and start a run. Put the admin key in `AUTH` below.
 
 ```bash
-AUTH="Authorization: Bearer change-me"
+AUTH="Authorization: Bearer <your admin key>"
 JSON="Content-Type: application/json"
 
 # 1. Connect the mock shop, then confirm the safety the service proposes for each tool.
@@ -84,12 +97,14 @@ curl -s localhost:7300/v1/runs/$RUN/events -H "$AUTH"
 
 - **Tool safety.** `GET /v1/connections/{id}/tools` shows what the model sees and each tool's safety. Hints only make a tool stricter; loosening needs `PATCH /v1/connections/{id}/tools/{tool}`. A tool whose definition changed since review is hidden from the model until you confirm it again.
 - **Webhook tools.** Register a connection with `"kind":"webhook"`. Each call is a signed `POST` with an idempotency key. Contract: [packages/tools/README.md](packages/tools/README.md).
-- **Run input.** Everything a human sends to a run goes to `POST /v1/runs/{id}/input` with an `action`: `approve`, `reject`, `outcome_happened`, `outcome_not_happened`, `continue`, `cancel`, or `message` with a `text` that steers the run at its next LLM call. `cancel` also stops a running run before its next step.
+- **Run input.** Everything a human sends to a run goes to `POST /v1/runs/{id}/input` with an `action`: `approve`, `reject`, `outcome_happened`, `outcome_not_happened`, `continue`, `cancel`, `answer` with a `text` (the reply to a run that waits with `"waiting_reason":"input"` or `"escalated"`, after `agent_core.ask_human` or `agent_core.escalate`), or `message` with a `text` that steers the run at its next LLM call. `cancel` also stops a running run before its next step.
 - **Unknown outcomes.** When a write's result is lost, the run waits with `"waiting_reason":"unknown_outcome"`. Answer with `outcome_happened`, `outcome_not_happened` or `cancel`.
 - **Workflows.** An agent's `workflows` map names fixed step graphs; `POST /v1/runs` with `"workflow":"<name>"` runs one. Steps: `tool` (through the same rule gate and approval as an agent), `approval` (`{ "approved": true|false }`), `llm` (one call, no tools, optional `output_schema`) and `subrun` (a child run of another agent). Values come from `{ "$ref": "$input.text" }` or `{ "$ref": "<step>.<field>" }`; `next` branches with the rule operators. Workflows must be acyclic. The run keeps a copy of the workflow it started with.
 - **Connection protection.** A connection takes an optional `limits` block: `calls_per_minute` (default 60) and `concurrency` (default 4), shared by all runs and workers of the tenant. A circuit breaker opens after 5 failed calls in a row, stays open 30 s, then lets one trial call through. A call that must wait is deferred with a `retryAt` (`tool.deferred`); the run neither fails nor waits for a human. After an hour of waiting a call that was never sent gets the tool error `Connection unavailable.`; a write that was sent before waits for a human as an unknown outcome. Registering a connection again without `limits` keeps its limits.
 - **Follow-ups.** An agent whose `allow` names `agent_core.schedule_followup` can pause a run with `after_seconds` (60 s to 30 days) and a `note`. The run is `sleeping` until then, survives a restart, and gets the note back when it wakes. At most 10 follow-ups per run.
 - **Limits.** An agent's `limits` block bounds LLM calls, tokens, cost per run and per tenant per day, run time, time waiting for a human and tool output size. A breach pauses the run with `"waiting_reason":"limit"`; answer with `continue` (one more allowance) or `cancel`. A wait past `wait_human_s` fails the run.
+- **Stream, health and metrics.** `GET /v1/runs/{id}/stream` sends the run's events as server-sent events (`id: <seq>`, `event: <type>`, `data: <event JSON>`); resume with the `Last-Event-ID` header or `?after=<seq>`. The stream closes when the run ends. Use a client that can send the `Authorization` header (not the browser `EventSource`). `GET /readyz` answers 200 when the database and migrations are ready, else 503 with a code and a fix per check. `GET /metrics` serves Prometheus text with run, queue and delivery counts, HTTP and LLM counters; neither needs auth. `pnpm cli log verify <run-id>` (with `AGENT_CORE_URL` and `AGENT_CORE_API_KEY`) recomputes the hash chain of a run's event log: exit 0 intact, 1 broken, 2 unreadable.
+- **Doctor and dead letters.** `agent-core doctor` (inside the container: `docker compose exec agent-core agent-core doctor`) reads the service environment and prints one line per check, `ok`, `warn` or `fail` with a fix; it also makes one real call to the default model, and exits 1 when a check fails. A webhook delivery that runs out of retries is `failed`: `GET /v1/deliveries?status=failed` lists your failed deliveries (newest first, `limit` up to 200, no body) and `POST /v1/deliveries/{id}/retry` sends one again from attempt 0. The service deletes `delivered` deliveries after 7 days and `failed` ones after 30 days.
 - **Models.** `pnpm models:check` probes each model alias and proposes a profile; `GET /v1/models` shows the profiles.
 
 ## Contributing

@@ -20,7 +20,8 @@
     "mock:shop": "tsx scripts/mock-shop.ts",
     "eval": "tsx --env-file-if-exists=.env apps/evals/src/cli/cli.ts",
     "smoke:live": "tsx --env-file-if-exists=.env scripts/smoke-live.ts",
-    "models:check": "tsx --env-file-if-exists=.env scripts/models-check.ts"
+    "models:check": "tsx --env-file-if-exists=.env scripts/models-check.ts",
+    "cli": "tsx --env-file-if-exists=.env apps/service/src/cli/main.ts"
   },
   "dependencies": {},
   "devDependencies": {

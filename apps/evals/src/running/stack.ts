@@ -3,7 +3,7 @@ import type { AddressInfo } from 'node:net'
 import { fileURLToPath } from 'node:url'
 import { createSecretBox } from '@agent-core/core'
 import type { LLMPort } from '@agent-core/core'
-import { createServiceStack } from '@agent-core/service'
+import { createServiceStack, hashAdminKey } from '@agent-core/service'
 import { assertTestDatabase, assertTestPool, createPool, runMigrations, runtimeTestUrl } from '@agent-core/store-postgres'
 import { startShop } from '@agent-core/shop'
 import { withoutLlmRetry } from './no-llm-retry'
@@ -38,7 +38,7 @@ export async function startEvalStack(opts: { llm: LLMPort }): Promise<EvalStack>
     shop = await startShop()
     service = createServiceStack({
       pool,
-      adminKey: ADMIN_KEY,
+      adminKeyHash: hashAdminKey(ADMIN_KEY),
       secrets: createSecretBox(Buffer.alloc(32, 7)),
       llm: withoutLlmRetry(opts.llm),
       workerId: 'eval-worker',

@@ -6,24 +6,27 @@ import type { NewEvent, RunStatus, SecretBox, StoredEvent, WaitingReason } from 
 import { ConfigRepo, PgRunStore, StateConflictError, childRunIds, createRunWithEvent, getRun, getRunHead, makeDue } from '@agent-core/store-postgres'
 import type { createPool } from '@agent-core/store-postgres'
 import { ApiError, apiError, validationError } from '../errors'
+import { DEFAULT_AGENT, resolveAgent } from '../../default-agent'
 import { getRunView } from '../../runs/views'
 import { keyReused, readIdempotencyKey, requestHash } from '../idempotency'
 
 const POLL_MS = 100
 
 const RunBody = z.object({
-  agent: z.string().min(1),
+  /** Without it the run uses the built-in default agent. */
+  agent: z.string().min(1).optional(),
   /** A workflow of the agent; without it the run is an agent run. */
   workflow: z.string().min(1).optional(),
   input: z.object({ text: z.string().min(1) }),
   // Bounded: the principal goes into the LLM context.
   principal: z.object({ id: z.string().max(200), roles: z.array(z.string().max(64)).max(20) }).optional(),
 })
-const ACTIONS = ['approve', 'reject', 'outcome_happened', 'outcome_not_happened', 'continue', 'cancel'] as const
+const ACTIONS = ['approve', 'reject', 'outcome_happened', 'outcome_not_happened', 'continue', 'answer', 'cancel'] as const
 type Action = (typeof ACTIONS)[number]
 /** Everything a human sends to a run. `message` steers it; the other actions answer a wait or cancel it. */
 const InputBody = z.union([
-  z.object({ action: z.enum(ACTIONS) }).strict(),
+  z.object({ action: z.enum(ACTIONS).exclude(['answer']) }).strict(),
+  z.object({ action: z.literal('answer'), text: z.string().min(1).max(32_000) }).strict(),
   z.object({ action: z.literal('message'), text: z.string().min(1).max(32_000) }).strict(),
 ])
 const ENDED: readonly RunStatus[] = ['completed', 'failed', 'cancelled']
@@ -34,6 +37,8 @@ const ALLOWED: Partial<Record<WaitingReason, readonly Action[]>> = {
   unknown_outcome: ['outcome_happened', 'outcome_not_happened', 'cancel'],
   limit: ['continue', 'cancel'],
   breaker: ['continue', 'cancel'],
+  input: ['answer', 'cancel'],
+  escalated: ['answer', 'cancel'],
 }
 const allowedFor = (reason: WaitingReason | null): readonly Action[] => (reason && ALLOWED[reason]) || ['cancel']
 
@@ -42,7 +47,7 @@ const HAPPENED_TEXT = 'A human confirmed that this action happened. Its result i
 const notCancellable = (fix: string) => apiError('run_not_cancellable', 'The run cannot be cancelled in its current state.', fix, 409)
 const runEnded = () => apiError('run_ended', 'The run has ended and takes no more input.', 'Start a new run with POST /v1/runs.', 409)
 
-const runNotFound = (id: string) =>
+export const runNotFound = (id: string) =>
   apiError('run_not_found', `Run "${id}" does not exist.`, 'Check the run id returned by POST /v1/runs.', 404)
 
 /** Parses `wait` as `N` or `Ns`, 1 to 30. Returns seconds, or undefined when absent. */
@@ -75,7 +80,7 @@ export function checkChain(
   return { valid: true }
 }
 
-export function registerRunRoutes(app: FastifyInstance, deps: { pool: ReturnType<typeof createPool>; secrets: SecretBox; closing: AbortSignal }): void {
+export function registerRunRoutes(app: FastifyInstance, deps: { pool: ReturnType<typeof createPool>; secrets: SecretBox; closing: AbortSignal; llmConfigured: boolean }): void {
   const { pool } = deps
   const configFor = (req: FastifyRequest) => new ConfigRepo(pool, req.auth.tenantId, deps.secrets)
   const storeFor = (req: FastifyRequest) => new PgRunStore(pool, req.auth.tenantId)
@@ -93,6 +98,9 @@ export function registerRunRoutes(app: FastifyInstance, deps: { pool: ReturnType
 
   app.post<{ Querystring: { wait?: string } }>('/v1/runs', async (req, reply) => {
     const { tenantId } = req.auth
+    if (!deps.llmConfigured) {
+      throw apiError('llm_not_configured', 'The LLM is not configured, so no run can start.', 'Set LLM_BASE_URL and LLM_MODEL_DEFAULT, then restart.', 503)
+    }
     const config = configFor(req)
     const wait = parseWait(req.query.wait)
     const key = readIdempotencyKey(req)
@@ -107,11 +115,15 @@ export function registerRunRoutes(app: FastifyInstance, deps: { pool: ReturnType
     const parsed = RunBody.safeParse(req.body)
     if (!parsed.success) throw validationError(parsed.error)
     const body = parsed.data
-    const agent = await config.getAgent(body.agent)
+    if (body.agent === undefined && body.workflow !== undefined) {
+      throw apiError('agent_required', 'A workflow run needs an agent.', 'Add "agent" with the agent that defines the workflow.', 422)
+    }
+    const agentId = body.agent ?? DEFAULT_AGENT.id
+    const agent = await resolveAgent(config, agentId)
     if (!agent) {
       throw apiError(
         'unknown_agent',
-        `Agent "${body.agent}" does not exist.`,
+        `Agent "${agentId}" does not exist.`,
         'Create the agent with POST /v1/agents first.',
         422,
       )
@@ -122,7 +134,7 @@ export function registerRunRoutes(app: FastifyInstance, deps: { pool: ReturnType
     if (body.workflow !== undefined && definition === undefined) {
       throw apiError(
         'unknown_workflow',
-        `Agent "${body.agent}" has no workflow "${body.workflow}".`,
+        `Agent "${agentId}" has no workflow "${body.workflow}".`,
         "Name a workflow from the agent's \"workflows\", or leave \"workflow\" out for an agent run.",
         422,
       )
@@ -131,14 +143,14 @@ export function registerRunRoutes(app: FastifyInstance, deps: { pool: ReturnType
     const created = await createRunWithEvent(pool, {
       tenantId,
       runId: `run_${randomUUID()}`,
-      agentId: body.agent,
+      agentId,
       agentVersion: agent.version,
       idempotencyKey: key,
       requestHash: key === undefined ? undefined : requestHash(req),
       created: {
         type: 'run.created',
         payload: {
-          agentId: body.agent,
+          agentId,
           input: body.input,
           ...(body.principal ? { principal: body.principal } : {}),
           ...(definition === undefined ? {} : { workflow: { name: body.workflow!, definition } }),
@@ -176,7 +188,11 @@ export function registerRunRoutes(app: FastifyInstance, deps: { pool: ReturnType
     const head = await getRunHead(pool, tenantId, req.params.id)
     const events = await storeFor(req).readEvents(req.params.id)
     const chain = checkChain(events, head)
-    return { events, chain: chain.valid ? { valid: true } : { valid: false, broken_at_seq: chain.brokenAtSeq } }
+    return {
+      events,
+      chain: chain.valid ? { valid: true } : { valid: false, broken_at_seq: chain.brokenAtSeq },
+      head: { last_seq: head?.lastSeq ?? null, last_hash: head?.lastHash ?? null },
+    }
   })
 
   /**
@@ -309,6 +325,14 @@ export function registerRunRoutes(app: FastifyInstance, deps: { pool: ReturnType
         ...proj.awaitingApproval.map(
           (toolCallId): NewEvent => ({ type: 'approval.resolved', payload: { toolCallId, action }, labels: ['trusted'] }),
         ),
+        stateTo('running'),
+      ]
+    } else if (body.action === 'answer') {
+      // `ask_human` and `escalate` stay in flight until now; the answer is their result.
+      const toolCallId = proj.inFlight[0]
+      if (toolCallId === undefined) throw notWaiting
+      events = [
+        { type: 'tool.responded', payload: { toolCallId, content: body.text, isError: false }, labels: ['untrusted'] },
         stateTo('running'),
       ]
     } else {

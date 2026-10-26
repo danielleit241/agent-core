@@ -10,6 +10,10 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions exist
 
 ### Added
 
+- `agent-core log verify` also compares the events with the head stored on the run, so deleted tail events are caught. `GET /v1/runs/{id}/events` returns `head`.
+- The service stores a check value of the master key and refuses to start with a different key. `agent-core doctor` fails the `master_key` check on a mismatch.
+- Without LLM settings the run worker does not start: queued runs stay queued until the service restarts with the settings.
+- Setting `AGENT_CORE_ADMIN_KEY` deletes the stored generated admin key hash.
 - Roadmap, agent guide, contributing guide, security policy, code of conduct, MIT license.
 - M0 walking skeleton: pure core (types, rule gate, runner, projection), Postgres event log with a hash chain, job queue and worker, OpenAI-compatible LLM adapter, MCP tool client, signed outbound webhooks with retries, HTTP Config and Control API, end-to-end refund-with-approval test.
 - README quickstart.
@@ -37,9 +41,19 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions exist
 - Follow-ups: the first built-in tool, `agent_core.schedule_followup`. The model sees it only when an `allow` rule of the agent names it. A call puts the run in the new `sleeping` state until `wakeAt`; the queue job stays due at that time, so a restart does not lose it. On waking the run gets `Follow-up at <time>. Note: <note>` as an `untrusted` tool result and continues. Sleep does not count as run time; a message does not wake the run. At most 10 follow-ups per run. A connection tool named with the prefix `agent_core.` gives `422 reserved_tool_name`.
 - Run input: `POST /v1/runs/{id}/input` carries every human action (`approve`, `reject`, `outcome_happened`, `outcome_not_happened`, `continue`, `cancel`) and a `message` that steers the run: it reaches the next LLM request as user text, labelled `untrusted`, and is never lost when it arrives during the final LLM call. `cancel` now also stops a running run, or one that waits for an LLM retry, before its next step (`input.received`, then `cancelled`). A message to an ended run gives `409 run_ended`.
 - Loop detection: the `loop` limit (default 3) stops a run before a fourth call with the same tool and the same arguments, and before an LLM call that follows 3 tool turns in a row whose every call and result repeat an earlier one. The run waits with `"waiting_reason":"limit"` and `limit.reached` names `loop`.
+- Built-in tools `agent_core.ask_human` and `agent_core.escalate`, on for every agent. `ask_human { question }` makes the run wait with `"waiting_reason":"input"`; `escalate { reason }` makes it wait with `"waiting_reason":"escalated"`. The state event carries the `question` or the agent's reason (`escalation`). New input action `answer` with `text` (1 to 32000 characters): it becomes the tool result of the open call, labelled `untrusted`, and the run continues. Allowed actions for both waits: `answer`, `cancel`. Eval scenario `order-number-missing`; `out-of-scope` now expects `escalated`.
+- Self-diagnosis and housekeeping: `agent-core doctor` prints `ok`, `warn` or `fail` per check (`env`, `db`, `migrations`, `runtime_user`, `admin_key`, `master_key`, `llm`, `llm_probe`) with a fix, and exits 1 on any `fail`; it only reads and never creates a key. `GET /v1/deliveries?status=failed` lists the tenant's dead-letter deliveries (newest first, `limit` 50 to 200, no body); `POST /v1/deliveries/{id}/retry` queues a failed delivery again (`409 delivery_not_failed` otherwise). The delivery worker deletes `delivered` rows older than 7 days and `failed` rows older than 30 days, once an hour (migration 010 adds `webhook_deliveries.updated_at`).
+- `GET /v1/runs/{id}/stream`: server-sent events of a run (`id` is the seq; resume with `Last-Event-ID` or `?after=`). The stream ends when the run ends. `GET /readyz` (database and migrations) and `GET /metrics` (Prometheus text) need no auth. `agent-core log verify <run-id>` (`pnpm cli log verify`) recomputes the hash chain of a run's log.
+- Start without setup: only `DATABASE_URL` and `MIGRATOR_DATABASE_URL` are required. Without `AGENT_CORE_ADMIN_KEY` the service generates an admin key on first start, prints it once and stores only its SHA-256 (`service_settings`). Without `AGENT_CORE_MASTER_KEY` it reads or creates `master.key` in `AGENT_CORE_DATA_DIR` (default `./.data`). Without `LLM_BASE_URL` or `LLM_MODEL_DEFAULT` it still starts: `/readyz` reports `llm_not_configured` and `POST /v1/runs` answers 503.
+- A built-in `default` agent (no connections, no tools but the built-ins) serves `POST /v1/runs` when `agent` is left out. The id `default` is reserved (422 `reserved_agent_id`); a `workflow` without `agent` is 422 `agent_required`.
+
+### Changed
+
+- `/readyz` also reports the `llm` and `master_key` checks.
 
 ### Fixed
 
+- When the worker stops or loses its lock, an LLM call in progress is aborted at once, so the job is released quickly instead of waiting for the provider timeout.
 - A filtered or refused LLM answer now fails the run with reason `filtered` instead of completing it.
 - The event log refuses a state change written from a stale status, so a run cancelled while a worker was starting it stays cancelled.
 - A tool always runs with the safety computed from its source and confirmations, never a stored copy; tools stored before this change run strict until confirmed.
@@ -65,6 +79,7 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions exist
 
 ### Changed
 
+- The waiting reason `needs_input` is now `input`, and `escalated` is new.
 - Confirmations stored before tool fingerprints existed no longer count: those tools run strict, behind approval, until confirmed again.
 - The runner, not the tool adapters, retries tool calls: reads and writes with an idempotency key get up to 3 attempts with the same key, and each failed attempt is logged as `error.raised`. A keyed write that still fails after it was sent waits on an unknown outcome.
 - A transient LLM error (network, timeout, 429, 5xx) no longer fails the run. The run stays `running` and is retried after 30, 60, 120, 240 and 300 seconds (±20%), or longer when the provider's `Retry-After` asks for it (a hint can only lengthen a wait, and no wait is over 5 minutes, so the last wait is 240 to 300 seconds); the sixth failure in a row fails it. `error.raised` gains `retryAt`.

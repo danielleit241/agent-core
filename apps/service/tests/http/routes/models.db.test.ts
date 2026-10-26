@@ -1,3 +1,4 @@
+import { hashAdminKey } from '../../../src/bootstrap'
 import type { FastifyInstance } from 'fastify'
 import { afterAll, beforeAll, beforeEach, expect, test } from 'vitest'
 import { DEFAULT_MODEL_PROFILE } from '@agent-core/core'
@@ -35,7 +36,7 @@ beforeEach(async () => {
   await runMigrations(migrator, { runtimeUser: 'agentcore_runtime' })
   probed = []
   probeFails = false
-  app = buildApp({ secrets: box, pool, adminKey: ADMIN_KEY, models: { default: 'real-a', smart: 'real-b' }, probe })
+  app = buildApp({ secrets: box, pool, adminKeyHash: hashAdminKey(ADMIN_KEY), models: { default: 'real-a', smart: 'real-b' }, probe })
 })
 afterAll(async () => {
   await pool.end()
@@ -86,7 +87,7 @@ test('check with an unknown alias is 404 and probes nothing', async () => {
 })
 
 test('check without a probe is 501', async () => {
-  app = buildApp({ secrets: box, pool, adminKey: ADMIN_KEY, models: { default: 'real-a' } })
+  app = buildApp({ secrets: box, pool, adminKeyHash: hashAdminKey(ADMIN_KEY), models: { default: 'real-a' } })
   const res = await authed('POST', '/v1/models/check')
   expect(res.statusCode).toBe(501)
   expect(res.json().error.code).toBe('model_check_unavailable')
@@ -158,7 +159,7 @@ test('check probes each model once and in parallel, even when two aliases share 
     running--
     return result
   }
-  const shared = buildApp({ secrets: box, pool, adminKey: ADMIN_KEY, models: { default: 'real-a', smart: 'real-b', cheap: 'real-a' }, probe: slow })
+  const shared = buildApp({ secrets: box, pool, adminKeyHash: hashAdminKey(ADMIN_KEY), models: { default: 'real-a', smart: 'real-b', cheap: 'real-a' }, probe: slow })
   const res = await shared.inject({ method: 'POST', url: '/v1/models/check', headers: { authorization: `Bearer ${ADMIN_KEY}` } })
   expect(res.statusCode).toBe(200)
   expect(probed.sort()).toEqual(['real-a', 'real-b'])
@@ -175,7 +176,7 @@ test('when one probe fails, the others are still stored and the error names the 
     if (model === 'real-b') throw new Error('boom')
     return result
   }
-  const mixed = buildApp({ secrets: box, pool, adminKey: ADMIN_KEY, models: { default: 'real-a', smart: 'real-b' }, probe: half })
+  const mixed = buildApp({ secrets: box, pool, adminKeyHash: hashAdminKey(ADMIN_KEY), models: { default: 'real-a', smart: 'real-b' }, probe: half })
   const res = await mixed.inject({ method: 'POST', url: '/v1/models/check', headers: { authorization: `Bearer ${ADMIN_KEY}` } })
   expect(res.statusCode).toBe(502)
   expect(res.json().error.message).toBe('The model check failed for alias "smart".')

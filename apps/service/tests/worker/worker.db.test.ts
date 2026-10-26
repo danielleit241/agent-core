@@ -383,6 +383,39 @@ test('stop aborts the in-flight run and puts the job back for another worker', a
   expect(await runStatus('r10')).toBe('running')
 })
 
+test('stop aborts an LLM call that only settles on abort, without waiting for the provider', async () => {
+  const { version } = await new ConfigRepo(pool, 'default', box).putAgent(agent)
+  await seedRun('r10b', 'helper', version)
+  let calls = 0
+  const hanging: LLMPort = {
+    complete: (req) =>
+      new Promise((_resolve, reject) => {
+        calls++
+        req.signal?.addEventListener('abort', () => reject(new Error('aborted')))
+      }),
+  }
+  const settled: string[] = []
+  const worker = startRunWorker({
+    secrets: box,
+    pool,
+    llm: hanging,
+    tools,
+    workerId: 'w1',
+    pollMs: 20,
+    onRunSettled: async (id) => {
+      settled.push(id)
+    },
+  })
+  await waitFor(() => calls === 1)
+  const started = Date.now()
+  await worker.stop()
+  expect(Date.now() - started).toBeLessThan(2000)
+  expect(settled).toEqual([])
+  const rows = await pool.query('SELECT locked_by FROM queue WHERE run_id = $1', ['r10b'])
+  expect(rows.rows).toEqual([{ locked_by: null }])
+  expect((await new PgRunStore(pool, 'default').readEvents('r10b')).map((e) => e.type)).not.toContain('error.raised')
+})
+
 test('a worker whose lock was taken writes nothing and does not fail, settle or release the run', async () => {
   await new ConfigRepo(pool, 'default', box).putAgent({ ...agent, model: 'default' })
   await seedRun('r-lost', 'helper', 1)
@@ -895,4 +928,23 @@ test('a subrun step starts a child run of another agent; the parent sleeps, then
   const parent = await new PgRunStore(pool, 'default').readEvents('r-parent')
   expect(parent.find((e) => e.type === 'step.completed')!.payload).toEqual({ stepId: 'write', output: { status: 'completed', text: 'done' } })
   expect(await queueRows()).toBe(0)
+})
+
+test('stop() while a job is held leaves no queue row locked by the worker', async () => {
+  const { version } = await new ConfigRepo(pool, 'default', box).putAgent(agent)
+  await seedRun('r-shut', 'helper', version)
+  let release!: () => void
+  const gate = new Promise<void>((r) => (release = r))
+  // The LLM port gets no abort signal, so the call ends when the provider answers: here, when the gate opens.
+  const slow = toolCallingLlm(() => gate)
+  const settled: string[] = []
+  const worker = startRunWorker({ secrets: box, pool, llm: slow, tools, workerId: 'w-shut', pollMs: 20, onRunSettled: async (id) => void settled.push(id) })
+  await waitFor(() => slow.calls === 1)
+  expect((await pool.query("SELECT 1 FROM queue WHERE locked_by = 'w-shut'")).rowCount).toBe(1)
+  const stopping = worker.stop()
+  release()
+  await stopping
+  expect((await pool.query("SELECT 1 FROM queue WHERE locked_by = 'w-shut'")).rowCount).toBe(0)
+  expect(await queueRows()).toBe(1)
+  expect(settled).toEqual([])
 })

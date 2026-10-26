@@ -277,8 +277,11 @@ async function llmStep(
       ],
       tools: [],
       ...(schema === undefined ? {} : { output: { name: `step_${id}`, schema } }),
+      ...(deps.signal === undefined ? {} : { signal: deps.signal }),
     })
   } catch (err) {
+    // The worker stopped the call. The open `llm.requested` is the same state as a crash mid-call; resume handles it.
+    if (deps.signal?.aborted) return 'running'
     const retryAt = llmRetryAt(err, proj, deps)
     if (retryAt !== null) {
       await deps.store.append(runId, [{ type: 'error.raised', payload: { message: errorMessage(err), retryable: true, retryAt }, labels: [] }])

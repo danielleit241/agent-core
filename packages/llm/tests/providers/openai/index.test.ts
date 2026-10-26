@@ -481,3 +481,22 @@ test('structured output: a filtered answer returns filtered without a retry', as
     expect(calls.n).toBe(1)
   }
 })
+
+test('aborting the caller signal stops the request and the retries', async () => {
+  let calls = 0
+  const fakeFetch = ((_url: unknown, init?: RequestInit) => {
+    calls++
+    return new Promise<Response>((_resolve, reject) => {
+      init?.signal?.addEventListener('abort', () => reject(new Error('aborted https://secret.example/v1')))
+    })
+  }) as typeof fetch
+  const port = createOpenAICompatible({ baseUrl: 'https://secret.example/v1', apiKey: 'k', models: { default: 'fake' }, fetch: fakeFetch, retryDelaysMs: [60_000, 60_000] })
+  const ctl = new AbortController()
+  const started = Date.now()
+  const pending = port.complete({ ...req, signal: ctl.signal }).catch((e: unknown) => e)
+  setTimeout(() => ctl.abort(), 20)
+  const err = (await pending) as Error
+  expect(Date.now() - started).toBeLessThan(2000)
+  expect(calls).toBe(1)
+  expect(err.message).toBe('LLM request aborted')
+})

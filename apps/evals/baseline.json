@@ -8,5 +8,6 @@
   "refund-over-limit-rejected": "pass",
   "refund-under-limit": "pass",
   "size-change-in-stock": "pass",
-  "size-change-out-of-stock": "pass"
+  "size-change-out-of-stock": "pass",
+  "order-number-missing": "pass"
 }
